@@ -26,6 +26,7 @@ body {
 }
 button { font-family: inherit; }
 ::selection { background: #b03a2e; color: #fdfdfc; }
+html, body { max-width: 100%; overflow-x: hidden; }
 
 #frame {
   position: relative;   /* 並べ替え中の行をここにぶら下げる */
@@ -195,6 +196,9 @@ ul.frag-list li.frag:last-child { border-bottom: 1px solid var(--line); }
   padding: 0 4px; line-height: 14px; min-width: 14px; text-align: center; font-family: var(--mono);
 }
 .rich-text-block { margin: 0 0 10px; font-size: 16px; line-height: 1.6; color: var(--fg); white-space: pre-wrap; }
+/* ⚠️ 長い URL は空白が無いので既定では折り返されず、画面の外まで行を押し広げる。
+   本文を出すところは全て anywhere で必ず折る（2026-09-13 に iPhone で実際にはみ出した）。 */
+.rich-text-block, .frag-text, .pick-text, .assembled-text, .search-excerpt { overflow-wrap: anywhere; }
 .rich-text-block:last-child { margin-bottom: 0; }
 /* 行内書式。差し色は朱ひとつだけ（§9）なのでリンクも朱、下線は細く。 */
 .rich-text-block strong { font-weight: 700; }
