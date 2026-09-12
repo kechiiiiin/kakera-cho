@@ -1,6 +1,13 @@
 import type { JSX, RefObject } from 'preact';
 import { useRef, useState } from 'preact/hooks';
-import { buildPhotoInsertion, parsePhotoTokens, removePhotoTokenAt } from '../lib/markdown';
+import type { TextEdit } from '../lib/markdown';
+import {
+  buildPhotoInsertion,
+  insertLink,
+  parsePhotoTokens,
+  removePhotoTokenAt,
+  toggleBold,
+} from '../lib/markdown';
 import { autoGrow } from './format';
 import { pickPhotos, uploadPhotos } from './photo';
 
@@ -8,6 +15,9 @@ import { pickPhotos, uploadPhotos } from './photo';
  * かけらの本文を書くところ。composer（新規）と、流れ／かたちのその場編集で共用する。
  *
  *  - 「写真」ボタンはカーソル位置に画像記法を挿入する（本文の途中なら前後に改行を足して独立した行に）
+ *  - 「太字」「リンク」は Markdown の記法を差し込むだけ（リッチエディタにはしない。素の textarea のまま）。
+ *    ⚠️ リンクの URL は prompt() で尋ねない（iOS で辛い）。記法を入れてカーソルを置くだけ
+ *  - Cmd/Ctrl+B で太字をトグルできる（増やすのはこれ一つだけ）
  *  - 本文へ画像ファイルを**ドラッグ＆ドロップ**しても同じ経路で貼れる（ボタンと処理を共有する）
  *  - テキストエリアの下に貼った写真のサムネを並べ、× でその1枚だけ本文から外す
  *  - 失敗は alert ではなくその場のテキストで知らせる（iOS の alert はスクロール位置が飛ぶ）
@@ -106,6 +116,33 @@ export function Editor({
     void insertFiles(files);
   }
 
+  /**
+   * 書式ボタンの共通処理。
+   * 本文を差し替えたあと、必ず textarea にフォーカスを戻して選択範囲を置き直す
+   * （insertFiles と同じく requestAnimationFrame で、Preact が値を描き直した後に当てる）。
+   */
+  function applyEdit(make: (text: string, start: number, end: number) => TextEdit): void {
+    const ta = ref.current;
+    const start = ta?.selectionStart ?? value.length;
+    const end = ta?.selectionEnd ?? value.length;
+    const next = make(value, start, end);
+    onInput(next.text);
+    requestAnimationFrame(() => {
+      const el = ref.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(next.selectionStart, next.selectionEnd);
+      autoGrow(el);
+    });
+  }
+
+  function onKeyDown(e: KeyboardEvent): void {
+    if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
+    if (e.key !== 'b' && e.key !== 'B') return;
+    e.preventDefault();
+    applyEdit(toggleBold);
+  }
+
   function removePhoto(i: number): void {
     const fresh = parsePhotoTokens(value);
     const target = fresh[i];
@@ -124,6 +161,7 @@ export function Editor({
         onDragOver={onDragOver}
         onDragLeave={() => setDropping(false)}
         onDrop={onDrop}
+        onKeyDown={onKeyDown}
         onInput={(e) => {
           const el = e.currentTarget;
           autoGrow(el);
@@ -144,9 +182,17 @@ export function Editor({
       ) : null}
       {error ? <p class="warn-note">{error}</p> : null}
       <div class="composer-actions">
-        <button type="button" class="icon-btn" disabled={!!busy} onClick={onPickPhotos}>
-          {busy ? `送っています ${busy}` : '写真'}
-        </button>
+        <div class="composer-tools">
+          <button type="button" class="icon-btn" disabled={!!busy} onClick={onPickPhotos}>
+            {busy ? `送っています ${busy}` : '写真'}
+          </button>
+          <button type="button" class="icon-btn" onClick={() => applyEdit(toggleBold)}>
+            太字
+          </button>
+          <button type="button" class="icon-btn" onClick={() => applyEdit(insertLink)}>
+            リンク
+          </button>
+        </div>
         {inlineAction ?? <span />}
       </div>
       {belowAction}

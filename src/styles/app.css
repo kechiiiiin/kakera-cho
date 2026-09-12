@@ -93,6 +93,8 @@ textarea.dropping { outline: 1px dashed var(--accent); outline-offset: 6px; }
   display: flex; justify-content: space-between; align-items: center;
   margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line);
 }
+/* 書く欄の道具（写真・太字・リンク）。⚠️ 絵文字とアイコン画像は使わない（§9）。 */
+.composer-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .icon-btn {
   display: inline-flex; align-items: center; gap: 6px;
   border: 1px solid var(--line); background: transparent; color: var(--muted);
@@ -194,6 +196,15 @@ ul.frag-list li.frag:last-child { border-bottom: 1px solid var(--line); }
 }
 .rich-text-block { margin: 0 0 10px; font-size: 16px; line-height: 1.6; color: var(--fg); white-space: pre-wrap; }
 .rich-text-block:last-child { margin-bottom: 0; }
+/* 行内書式。差し色は朱ひとつだけ（§9）なのでリンクも朱、下線は細く。 */
+.rich-text-block strong { font-weight: 700; }
+.rich-text-block em { font-style: italic; }
+.rich-text-block del { color: var(--muted); }
+.rich-text-block code {
+  font-family: var(--mono); font-size: .92em;
+  background: var(--line); border-radius: 2px; padding: 0 4px;
+}
+.rich-text-block a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
 #app.mode-read .rich-text-block {
   font-family: var(--serif); font-size: 17px; line-height: 1.9; margin: 0 0 1.5em; color: var(--fg);
 }

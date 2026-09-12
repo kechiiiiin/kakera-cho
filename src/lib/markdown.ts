@@ -140,3 +140,266 @@ export function replacePhotoUrls(text: string, map: Map<string, string>): string
     return to ? whole.replace(url, to) : whole;
   });
 }
+
+// ───────────────────────────────────────────────────────────────
+// 行内書式（読む画面で開くぶん）
+//
+// 解釈するのは**行内だけ**: **太字** / *斜体* / [リンク](url) / `コード` / ~~打ち消し~~。
+// 見出し `#`・区切り線 `---`・引用 `>`・リスト・表は**解釈しない**（一言メモに行を組み替える
+// 記法は大げさで、`---` は日記を組むときの区切りと衝突する）。
+//
+// ⚠️ ここは**データ（木）を返すだけ**で、HTML 文字列は一切作らない。描くのは RichText 側で
+// Preact の要素を組み立てる。文字列連結で HTML を作らない限り、本文に script タグや
+// onerror 付きの img と書かれても、ただの文字として出る。
+// ⚠️ ライブラリは足さない（依存ゼロが今の流儀）。小さな手書きのパーサで足りる。
+// ───────────────────────────────────────────────────────────────
+
+export type InlineNode =
+  | { type: 'text'; value: string }
+  | { type: 'code'; value: string }
+  | { type: 'link'; href: string; children: InlineNode[] }
+  | { type: 'strong'; children: InlineNode[] }
+  | { type: 'em'; children: InlineNode[] }
+  | { type: 'del'; children: InlineNode[] };
+
+/** バックスラッシュで打ち消せる記号。 */
+const ESCAPABLE = '\\`*_~[]()!#-';
+
+/**
+ * リンクにしてよい URL か。**ホワイトリスト方式で http / https だけ**通す。
+ * `javascript:` `data:` `vbscript:` はもちろん、スキームの無い相対 URL もリンクにしない。
+ * 通らなかったものは記法のまま素の文字として出す（黙って消さない）。
+ */
+export function isSafeHref(url: string): boolean {
+  const u = url.trim();
+  // 空白・制御文字・山括弧・引用符を含むものは弾く（`java&#9;script:` のような小細工よけ）
+  if (!u || /[\s<>"']/.test(u)) return false;
+  for (let i = 0; i < u.length; i++) {
+    const code = u.charCodeAt(i);
+    if (code < 0x21 || code === 0x7f) return false;
+  }
+  return /^https?:\/\/./i.test(u);
+}
+
+/** 強調の記号は段落（空行）をまたがない。暴走した書式が後ろ全部を飲み込まないため。 */
+function blankLineAt(text: string, i: number): boolean {
+  return text.charAt(i) === '\n' && text.charAt(i + 1) === '\n';
+}
+
+/** 閉じ記号の位置。見つからなければ -1。 */
+function findClosing(text: string, from: number, mark: string): number {
+  let i = from;
+  while (i < text.length) {
+    if (text.charAt(i) === '\\') {
+      i += 2;
+      continue;
+    }
+    if (blankLineAt(text, i)) return -1;
+    if (text.startsWith(mark, i)) {
+      // 単独の * を探しているとき、** の片割れを閉じ記号にしない
+      if (mark === '*' && text.charAt(i + 1) === '*') {
+        i += 2;
+        continue;
+      }
+      return i;
+    }
+    i++;
+  }
+  return -1;
+}
+
+interface LinkMatch {
+  label: string;
+  href: string;
+  /** 元の記法そのまま（安全でない URL のとき、この文字列をそのまま出す） */
+  raw: string;
+  end: number;
+}
+
+/** `[ラベル](URL)` を i の位置から読む。読めなければ null。 */
+function matchLink(text: string, i: number): LinkMatch | null {
+  let depth = 0;
+  let j = i;
+  for (; j < text.length; j++) {
+    const c = text.charAt(j);
+    if (c === '\\') {
+      j++;
+      continue;
+    }
+    if (blankLineAt(text, j)) return null;
+    if (c === '[') depth++;
+    else if (c === ']') {
+      depth--;
+      if (depth === 0) break;
+    }
+  }
+  if (j >= text.length || text.charAt(j) !== ']' || text.charAt(j + 1) !== '(') return null;
+  let close = -1;
+  for (let k = j + 2; k < text.length; k++) {
+    const c = text.charAt(k);
+    if (c === '\\') {
+      k++;
+      continue;
+    }
+    if (c === '\n') return null; // URL は行をまたがない
+    if (c === ')') {
+      close = k;
+      break;
+    }
+  }
+  if (close < 0) return null;
+  const dest = text.slice(j + 2, close).trim();
+  const href = dest.split(/\s+/)[0] ?? ''; // `url "title"` の title は捨てる
+  return { label: text.slice(i + 1, j), href, raw: text.slice(i, close + 1), end: close + 1 };
+}
+
+const DELIMS: ReadonlyArray<{ mark: string; type: 'strong' | 'del' | 'em' }> = [
+  { mark: '**', type: 'strong' },
+  { mark: '~~', type: 'del' },
+  { mark: '*', type: 'em' },
+];
+
+/** 行内書式を木に開く。解釈できなかった記号はそのまま文字として残る。 */
+export function parseInline(text: string): InlineNode[] {
+  const out: InlineNode[] = [];
+  let buf = '';
+  let i = 0;
+
+  const flush = (): void => {
+    if (buf) {
+      out.push({ type: 'text', value: buf });
+      buf = '';
+    }
+  };
+
+  while (i < text.length) {
+    const c = text.charAt(i);
+
+    // 打ち消し（\* など）
+    if (c === '\\' && i + 1 < text.length && ESCAPABLE.includes(text.charAt(i + 1))) {
+      buf += text.charAt(i + 1);
+      i += 2;
+      continue;
+    }
+
+    // 画像記法はここでは開かない（写真として別に扱う）。リンクに化けないよう丸ごと文字にする。
+    if (c === '!' && text.charAt(i + 1) === '[') {
+      const img = matchLink(text, i + 1);
+      if (img) {
+        buf += text.slice(i, img.end);
+        i = img.end;
+        continue;
+      }
+    }
+
+    // `コード`
+    if (c === '`') {
+      const close = text.indexOf('`', i + 1);
+      if (close > i + 1) {
+        flush();
+        out.push({ type: 'code', value: text.slice(i + 1, close) });
+        i = close + 1;
+        continue;
+      }
+    }
+
+    // [リンク](url)
+    if (c === '[') {
+      const m = matchLink(text, i);
+      if (m) {
+        flush();
+        if (isSafeHref(m.href)) {
+          out.push({ type: 'link', href: m.href.trim(), children: parseInline(m.label) });
+        } else {
+          out.push({ type: 'text', value: m.raw }); // 安全でない URL は素の文字として出す
+        }
+        i = m.end;
+        continue;
+      }
+    }
+
+    // **太字** / ~~打ち消し~~ / *斜体*
+    let matched = false;
+    for (const d of DELIMS) {
+      if (!text.startsWith(d.mark, i)) continue;
+      const from = i + d.mark.length;
+      const close = findClosing(text, from, d.mark);
+      if (close <= from) continue;
+      // 中身が空白で始まる／終わるものは書式にしない（`5 * 3 * 2 = 30` を斜体にしないため）
+      const inner = text.slice(from, close);
+      if (/^\s/.test(inner) || /\s$/.test(inner)) continue;
+      flush();
+      out.push({ type: d.type, children: parseInline(inner) });
+      i = close + d.mark.length;
+      matched = true;
+      break;
+    }
+    if (matched) continue;
+
+    buf += c;
+    i++;
+  }
+
+  flush();
+  return out;
+}
+
+// ───────────────────────────────────────────────────────────────
+// 書く欄の書式ボタン（textarea のまま扱う。DOM には触らない）
+// ───────────────────────────────────────────────────────────────
+
+export interface TextEdit {
+  text: string;
+  selectionStart: number;
+  selectionEnd: number;
+}
+
+/**
+ * 選択範囲を `**` で囲む／既に囲まれていれば外す。
+ * 選択が無ければ `****` を入れてカーソルを真ん中へ。
+ */
+export function toggleBold(text: string, start: number, end: number): TextEdit {
+  if (start === end) {
+    return {
+      text: text.slice(0, start) + '****' + text.slice(start),
+      selectionStart: start + 2,
+      selectionEnd: start + 2,
+    };
+  }
+  const selected = text.slice(start, end);
+
+  // 選択そのものが **…** のとき
+  if (selected.length >= 4 && selected.startsWith('**') && selected.endsWith('**')) {
+    const inner = selected.slice(2, -2);
+    return {
+      text: text.slice(0, start) + inner + text.slice(end),
+      selectionStart: start,
+      selectionEnd: start + inner.length,
+    };
+  }
+  // 選択の外側が **…** のとき
+  if (start >= 2 && text.slice(start - 2, start) === '**' && text.slice(end, end + 2) === '**') {
+    return {
+      text: text.slice(0, start - 2) + selected + text.slice(end + 2),
+      selectionStart: start - 2,
+      selectionEnd: start - 2 + selected.length,
+    };
+  }
+  return {
+    text: text.slice(0, start) + '**' + selected + '**' + text.slice(end),
+    selectionStart: start + 2,
+    selectionEnd: start + 2 + selected.length,
+  };
+}
+
+/**
+ * 選択範囲を `[選んだ文字]()` にしてカーソルを `()` の中へ。
+ * 選択が無ければ `[]()` を入れてカーソルを `[]` の中へ。
+ * ⚠️ URL は prompt() で尋ねない（iOS で辛い）。記法を入れてカーソルを置くだけ。
+ */
+export function insertLink(text: string, start: number, end: number): TextEdit {
+  const selected = text.slice(start, end);
+  const next = text.slice(0, start) + '[' + selected + ']()' + text.slice(end);
+  const caret = selected ? start + selected.length + 3 : start + 1;
+  return { text: next, selectionStart: caret, selectionEnd: caret };
+}
