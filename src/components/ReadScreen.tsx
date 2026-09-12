@@ -10,8 +10,10 @@ import { KakeraEdit } from './KakeraEdit';
  *  明朝の組版。⚠️ 時刻は出さない。かけらの間は手書き風の罫（CSS の ::after）。
  *  ⚠️ 公開済みの印は出さない（読む場所は読むことに徹する）。
  *
- * ただし「直す」だけは置く——原本を直す場所が無いと、日記を組み直しても直せないため
- * （設計 §8「かたちに入ったかけらを直す」。ここは設計が正で、モックが不足）。
+ * 原本を直す場所はここしかないので編集の導線は要る（設計 §8「かたちに入ったかけらを直す」。
+ * ここは設計が正で、モックが不足）。ただし**既定は読むだけ**にして、
+ * ナビ行の「直す」で編集モードに入ったときだけ、かけらごとの操作を出す。
+ * 導線を出しっぱなしにすると明朝で組んだ意味が無くなるため。
  */
 export function ReadScreen({
   detail,
@@ -31,6 +33,7 @@ export function ReadScreen({
   onDissolve: () => Promise<void>;
 }): JSX.Element {
   const [openId, setOpenId] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
   const { katachi, kakera, nikki } = detail;
 
   return (
@@ -38,6 +41,16 @@ export function ReadScreen({
       <div class="back-row">
         <button type="button" class="back-btn" onClick={onBack}>
           ‹ 一覧へ戻る
+        </button>
+        <button
+          type="button"
+          class={'mode-btn' + (editing ? ' on' : '')}
+          onClick={() => {
+            setOpenId(null);
+            setEditing(!editing);
+          }}
+        >
+          {editing ? '読む' : '直す'}
         </button>
       </div>
 
@@ -53,7 +66,7 @@ export function ReadScreen({
       <div>
         {kakera.map((k) => (
           <div class="read-frag" key={k.id}>
-            {openId === k.id ? (
+            {editing && openId === k.id ? (
               <KakeraEdit
                 kakera={k}
                 onSave={async (body) => {
@@ -69,6 +82,7 @@ export function ReadScreen({
             ) : (
               <>
                 <RichText text={k.body} imgClass="read-photo" />
+                {editing ? (
                 <div class="read-frag-tools">
                   <button type="button" class="btn-ghost" onClick={() => setOpenId(k.id)}>
                     直す
@@ -84,6 +98,7 @@ export function ReadScreen({
                     流れへ戻す
                   </button>
                 </div>
+                ) : null}
               </>
             )}
           </div>
@@ -97,7 +112,7 @@ export function ReadScreen({
       </div>
 
       {/* 日記になったかたちは解けない（astro-blog に記事だけ残るため・設計 §3） */}
-      {!nikki ? (
+      {editing && !nikki ? (
         <div style="margin-top:14px;">
           <button
             type="button"

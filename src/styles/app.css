@@ -87,6 +87,8 @@ textarea {
   line-height: 1.7; resize: none; min-height: 4.6em; padding: 0; outline: none;
 }
 textarea::placeholder { color: var(--muted); }
+/* 写真をドラッグして本文に重ねている間。差し色は朱ひとつだけ（§9）。 */
+textarea.dropping { outline: 1px dashed var(--accent); outline-offset: 6px; }
 .composer-actions {
   display: flex; justify-content: space-between; align-items: center;
   margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line);
@@ -298,7 +300,13 @@ ul.frag-list li.frag:last-child { border-bottom: 1px solid var(--line); }
   opacity: .75; margin: 2.4em auto 0;
 }
 .read-frag-tools { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
-.back-row { margin-bottom: 18px; }
+.back-row { margin-bottom: 18px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+/* 読む画面のモード切り替え。既定は読むだけで、押したときだけ編集の導線が出る。 */
+.mode-btn {
+  border: 1px solid var(--line); background: transparent; color: var(--muted);
+  font-family: inherit; font-size: 13px; padding: 4px 12px; border-radius: 2px; cursor: pointer;
+}
+.mode-btn.on { border-color: var(--accent); color: var(--accent); }
 .back-btn {
   border: none; background: none; color: var(--muted); font-size: 12.5px; font-weight: 500;
   cursor: pointer; padding: 8px 0; min-height: 40px; display: inline-flex; align-items: center; gap: 4px;

@@ -8,6 +8,7 @@ import { pickPhotos, uploadPhotos } from './photo';
  * かけらの本文を書くところ。composer（新規）と、流れ／かたちのその場編集で共用する。
  *
  *  - 「写真」ボタンはカーソル位置に画像記法を挿入する（本文の途中なら前後に改行を足して独立した行に）
+ *  - 本文へ画像ファイルを**ドラッグ＆ドロップ**しても同じ経路で貼れる（ボタンと処理を共有する）
  *  - テキストエリアの下に貼った写真のサムネを並べ、× でその1枚だけ本文から外す
  *  - 失敗は alert ではなくその場のテキストで知らせる（iOS の alert はスクロール位置が飛ぶ）
  *
@@ -38,13 +39,14 @@ export function Editor({
   const ref = taRef ?? fallbackRef;
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [dropping, setDropping] = useState(false);
 
   const tokens = parsePhotoTokens(value);
 
-  async function onPickPhotos(): Promise<void> {
+  /** 選ばれた／落とされた写真を上げて、カーソル位置に画像記法を差し込む。 */
+  async function insertFiles(files: File[]): Promise<void> {
+    if (!files.length || busy) return;
     setError(null);
-    const files = await pickPhotos();
-    if (!files.length) return;
     setBusy(`0 / ${files.length}`);
     const { urls, error: err } = await uploadPhotos(
       files,
@@ -75,6 +77,35 @@ export function Editor({
     });
   }
 
+  async function onPickPhotos(): Promise<void> {
+    setError(null);
+    await insertFiles(await pickPhotos());
+  }
+
+  /**
+   * ドロップされたものから画像だけを拾う。
+   * 画像以外（テキスト・リンク・PDF）は素通しして、ブラウザの既定の挙動に任せる。
+   */
+  function imagesFrom(dt: DataTransfer | null): File[] {
+    if (!dt) return [];
+    return Array.from(dt.files).filter((f) => f.type.startsWith('image/'));
+  }
+
+  function onDragOver(e: DragEvent): void {
+    if (!imagesFrom(e.dataTransfer).length) return;
+    e.preventDefault(); // これを止めないと drop が発火しない
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+    if (!dropping) setDropping(true);
+  }
+
+  function onDrop(e: DragEvent): void {
+    const files = imagesFrom(e.dataTransfer);
+    setDropping(false);
+    if (!files.length) return; // 画像でなければブラウザに任せる
+    e.preventDefault();
+    void insertFiles(files);
+  }
+
   function removePhoto(i: number): void {
     const fresh = parsePhotoTokens(value);
     const target = fresh[i];
@@ -86,9 +117,13 @@ export function Editor({
     <>
       <textarea
         ref={ref}
+        class={dropping ? 'dropping' : undefined}
         value={value}
         placeholder={placeholder}
         rows={3}
+        onDragOver={onDragOver}
+        onDragLeave={() => setDropping(false)}
+        onDrop={onDrop}
         onInput={(e) => {
           const el = e.currentTarget;
           autoGrow(el);
