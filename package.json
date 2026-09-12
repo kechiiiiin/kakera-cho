@@ -10,7 +10,9 @@
     "preview": "astro build && wrangler dev",
     "deploy": "astro build && wrangler deploy",
     "db:local": "wrangler d1 execute kakera --local --file=./schema.sql",
-    "db:remote": "wrangler d1 execute kakera --remote --file=./schema.sql"
+    "db:remote": "wrangler d1 execute kakera --remote --file=./schema.sql",
+    "db:migrate:local": "wrangler d1 execute kakera --local --file=./migrations/0001_fts_trigram_search.sql",
+    "db:migrate:remote": "wrangler d1 execute kakera --remote --file=./migrations/0001_fts_trigram_search.sql"
   },
   "dependencies": {
     "@astrojs/cloudflare": "^12.6.10",

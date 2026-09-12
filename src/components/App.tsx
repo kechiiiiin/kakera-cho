@@ -1,6 +1,6 @@
 import type { JSX } from 'preact';
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
-import type { Kakera, KatachiDetail, KatachiSummary } from '../lib/kakera/types';
+import type { Kakera, KatachiDetail, KatachiSummary, SearchResult } from '../lib/kakera/types';
 import { nowJst } from '../lib/time';
 import { ulid } from '../lib/ulid';
 import { api } from './api';
@@ -39,6 +39,11 @@ export default function App(): JSX.Element {
   const [katachiList, setKatachiList] = useState<KatachiSummary[]>([]);
   const [katachiLoaded, setKatachiLoaded] = useState(false);
   const [detail, setDetail] = useState<KatachiDetail | null>(null);
+
+  // かたちの検索（第二段）。query が空なら検索せず、元の月ごとの一覧に戻る。
+  const [query, setQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<SearchResult[] | null>(null);
+  const searchSeq = useRef(0);
 
   // 新しいかけらの下書き。id と written_at は「書き始めた瞬間」に決める——
   // 写真の置き場所（kakera/YYYY/MM/DD_hhmm_<ULID>_n）がこの二つから決まるため。
@@ -92,6 +97,21 @@ export default function App(): JSX.Element {
   useEffect(() => {
     window.scrollTo(0, 0);
   }, [view]);
+
+  // 打つたびに引く（デバウンス250ms）。空にしたら検索結果を捨てて元の一覧に戻る。
+  useEffect(() => {
+    const q = query.trim();
+    setSearchResults(null); // 次の結果が来るまで「調べています」を出す
+    if (!q) return;
+    const seq = ++searchSeq.current;
+    const timer = window.setTimeout(() => {
+      void guard(async () => {
+        const results = await api.search(q);
+        if (searchSeq.current === seq) setSearchResults(results);
+      });
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [query, guard]);
 
   function goTab(t: Tab): void {
     setView(t === 'write' ? { t: 'write' } : t === 'katachi' ? { t: 'katachi' } : { t: 'nikki' });
@@ -191,7 +211,14 @@ export default function App(): JSX.Element {
         ) : null}
 
         {view.t === 'katachi' ? (
-          <KatachiListScreen list={katachiList} loaded={katachiLoaded} onOpen={openKatachi} />
+          <KatachiListScreen
+            list={katachiList}
+            loaded={katachiLoaded}
+            onOpen={openKatachi}
+            query={query}
+            onQueryChange={setQuery}
+            searchResults={searchResults}
+          />
         ) : null}
 
         {view.t === 'nikki' ? (

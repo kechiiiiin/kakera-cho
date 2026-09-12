@@ -114,6 +114,25 @@ export function buildPhotoInsertion(before: string, after: string, url: string):
   return ins;
 }
 
+/**
+ * 検索結果に添える抜粋（設計 §7「どのかけらがヒットしたか」）。
+ * 画像記法を除いた本文から、ヒットした位置の前後を切り出す。見つからなければ冒頭を切り出す。
+ */
+export function buildExcerpt(body: string, query: string, radius = 24): string {
+  const plain = textForExcerpt(body);
+  const q = query.trim();
+  const idx = q ? plain.toLowerCase().indexOf(q.toLowerCase()) : -1;
+  if (idx < 0) {
+    return plain.length > radius * 2 ? plain.slice(0, radius * 2).trim() + '…' : plain;
+  }
+  const start = Math.max(0, idx - radius);
+  const end = Math.min(plain.length, idx + q.length + radius);
+  let excerpt = plain.slice(start, end).trim();
+  if (start > 0) excerpt = '…' + excerpt;
+  if (end < plain.length) excerpt = excerpt + '…';
+  return excerpt;
+}
+
 /** 本文の URL を差し替える（日記に出すときだけ公開バケットの URL にする）。 */
 export function replacePhotoUrls(text: string, map: Map<string, string>): string {
   return text.replace(IMAGE_TOKEN_RE, (whole, url: string) => {

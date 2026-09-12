@@ -40,3 +40,16 @@ export interface KatachiDetail {
   /** 日記に出したかけらの id（`日記に出した` の印に使う） */
   published_ids: string[];
 }
+
+/** 検索でヒットしたかけら1枚（抜粋つき）。 */
+export interface SearchMatch {
+  kakera_id: string;
+  /** ヒットした位置の前後を切り出した本文（画像記法は除いてある）。 */
+  excerpt: string;
+}
+
+/** 検索結果の1行＝ヒットしたかたち＋その中のどのかけらがヒットしたか。 */
+export interface SearchResult extends Katachi {
+  has_nikki: boolean;
+  matches: SearchMatch[];
+}

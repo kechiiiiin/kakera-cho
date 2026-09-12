@@ -1,6 +1,6 @@
 // 画面から API を叩くだけの薄い層（iOS から同じ API を使うので、ここに業務の判断を書かない）。
 
-import type { Kakera, KatachiDetail, KatachiSummary } from '../lib/kakera/types';
+import type { Kakera, KatachiDetail, KatachiSummary, SearchResult } from '../lib/kakera/types';
 
 export class ApiFailure extends Error {
   status: number;
@@ -71,4 +71,7 @@ export const api = {
 
   uploadPhoto: (form: FormData) =>
     req<{ key: string; url: string }>('/api/photo', { method: 'POST', body: form }),
+
+  search: (q: string) =>
+    req<{ results: SearchResult[] }>(`/api/search?q=${encodeURIComponent(q)}`).then((r) => r.results),
 };

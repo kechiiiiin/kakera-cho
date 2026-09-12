@@ -1,7 +1,7 @@
 // D1 への問い合わせ。ここがドメインの処理の入口で、API ルートは薄い殻にする（iOS から同じ API を使うため）。
 
-import type { Kakera, Katachi, KatachiDetail, KatachiSummary, Nikki } from './types';
-import { textForExcerpt } from '../markdown';
+import type { Kakera, Katachi, KatachiDetail, KatachiSummary, Nikki, SearchMatch, SearchResult } from './types';
+import { buildExcerpt, textForExcerpt } from '../markdown';
 import { nowJst } from '../time';
 import { ApiError } from '../http';
 
@@ -248,4 +248,94 @@ export async function recordNikki(
     );
   });
   await db.batch(stmts);
+}
+
+/* ---------------- 検索（第二段・かたちの全文検索。設計 §3／migrations/0001） ---------------- */
+
+/** trigram は3文字未満のクエリを扱えないので、その手前は LIKE に落とす。 */
+const MIN_TRIGRAM_LEN = 3;
+
+/** 文字数（サロゲートペアも1文字と数える）。 */
+function charLength(s: string): number {
+  return Array.from(s).length;
+}
+
+/**
+ * 利用者が打った文字列を素直な一語として扱う。
+ * FTS5 のクエリ構文（" * AND OR NEAR 等）をそのまま渡すと構文エラーで 500 になるため、
+ * ダブルクォートで包んで中の " を "" にエスケープしてから MATCH に渡す。
+ */
+function escapeFtsPhrase(q: string): string {
+  return '"' + q.replace(/"/g, '""') + '"';
+}
+
+/** LIKE の特殊文字（% _ \）をエスケープする。 */
+function escapeLikePattern(q: string): string {
+  return q.replace(/[\\%_]/g, (c) => '\\' + c);
+}
+
+interface SearchRow {
+  kakera_id: string;
+  katachi_id: string | null;
+  body: string;
+}
+
+/**
+ * かたちの全文検索。かたちに属さないかけら（流れ）は対象外——
+ * kakera_fts 自体は kakera 全体（流れも含む）を索引しているが（後から流れも検索できるように）、
+ * ここで katachi_id IS NOT NULL に絞る。
+ */
+export async function searchKatachi(db: D1Database, rawQuery: string): Promise<SearchResult[]> {
+  const q = rawQuery.trim();
+  if (!q) return [];
+
+  let rows: SearchRow[];
+  if (charLength(q) < MIN_TRIGRAM_LEN) {
+    const { results } = await db
+      .prepare(
+        `SELECT id AS kakera_id, katachi_id, body FROM kakera
+          WHERE katachi_id IS NOT NULL AND body LIKE ? ESCAPE '\\'`
+      )
+      .bind('%' + escapeLikePattern(q) + '%')
+      .all<SearchRow>();
+    rows = results ?? [];
+  } else {
+    const { results } = await db
+      .prepare(
+        `SELECT kakera.id AS kakera_id, kakera.katachi_id AS katachi_id, kakera.body AS body
+           FROM kakera_fts
+           JOIN kakera ON kakera.id = kakera_fts.kakera_id
+          WHERE kakera_fts MATCH ? AND kakera.katachi_id IS NOT NULL`
+      )
+      .bind(escapeFtsPhrase(q))
+      .all<SearchRow>();
+    rows = results ?? [];
+  }
+  if (!rows.length) return [];
+
+  const katachiIds = [...new Set(rows.map((r) => r.katachi_id!))];
+  const placeholders = katachiIds.map(() => '?').join(',');
+  const { results: katachiRows } = await db
+    .prepare(
+      `SELECT k.*, (SELECT 1 FROM nikki n WHERE n.katachi_id = k.id) AS has_nikki
+         FROM katachi k WHERE k.id IN (${placeholders}) ORDER BY k.date DESC`
+    )
+    .bind(...katachiIds)
+    .all<Katachi & { has_nikki: number | null }>();
+
+  const matchesByKatachi = new Map<string, SearchMatch[]>();
+  for (const r of rows) {
+    const list = matchesByKatachi.get(r.katachi_id!) ?? [];
+    list.push({ kakera_id: r.kakera_id, excerpt: buildExcerpt(r.body, q) });
+    matchesByKatachi.set(r.katachi_id!, list);
+  }
+
+  return (katachiRows ?? []).map((k) => ({
+    id: k.id,
+    date: k.date,
+    title: k.title,
+    updated_at: k.updated_at,
+    has_nikki: !!k.has_nikki,
+    matches: matchesByKatachi.get(k.id) ?? [],
+  }));
 }
