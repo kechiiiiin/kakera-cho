@@ -1,0 +1,22 @@
+# これは「名前の一覧」。値は書かない。
+# 本物は .dev.vars（.gitignore 済み）にコピーして埋める。
+# 本番は `npx wrangler secret put <名前>` で登録する（README 参照）。
+
+# astro-blog への write（細粒度 PAT・contents: write）
+BLOG_GITHUB_TOKEN=
+
+# kakera-data への write（別の細粒度 PAT・contents: write）
+DATA_GITHUB_TOKEN=
+
+# Cloudflare Access の JWT 検証用
+# 例: https://kechiiiiin.cloudflareaccess.com
+CF_ACCESS_TEAM_DOMAIN=
+# Access アプリの Application Audience (AUD) タグ
+CF_ACCESS_AUD=
+
+# 入れるメール（カンマ区切り）。空だと全員拒否（fail-closed）
+ALLOWED_EMAILS=
+
+# ローカル開発でだけ認証を迂回する。本番では絶対に設定しない。
+# （そもそも本番ビルドではこの分岐がコードから消える。src/middleware.ts を見ること）
+DEV_BYPASS_AUTH=1

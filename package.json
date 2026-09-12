@@ -1,0 +1,29 @@
+{
+  "name": "kakera-cho",
+  "type": "module",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build && node scripts/postbuild.mjs",
+    "check": "astro check",
+    "preview": "astro build && wrangler dev",
+    "deploy": "astro build && wrangler deploy",
+    "db:local": "wrangler d1 execute kakera --local --file=./schema.sql",
+    "db:remote": "wrangler d1 execute kakera --remote --file=./schema.sql"
+  },
+  "dependencies": {
+    "@astrojs/cloudflare": "^12.6.10",
+    "@astrojs/preact": "^4.1.1",
+    "astro": "^5.14.1",
+    "jose": "^6.1.0",
+    "octokit": "^5.0.3",
+    "preact": "^10.27.2",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.4",
+    "typescript": "^5.9.2",
+    "wrangler": "^4.38.0"
+  }
+}

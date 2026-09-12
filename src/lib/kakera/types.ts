@@ -1,0 +1,42 @@
+// 画面とサーバで共有する形。語彙は設計 §1 のまま（かけら／かたち／日記）。
+
+export interface Kakera {
+  id: string;
+  body: string;
+  /** ISO8601(JST・+09:00 付き)。書いた日時。★不変 */
+  written_at: string;
+  katachi_id: string | null;
+  sort_order: number | null;
+  updated_at: string;
+}
+
+export interface Katachi {
+  id: string;
+  /** 'YYYY-MM-DD' */
+  date: string;
+  title: string;
+  updated_at: string;
+}
+
+export interface Nikki {
+  katachi_id: string;
+  slug: string;
+  published_at: string;
+  updated_at: string;
+}
+
+/** かたち一覧の1行（日記になっているかの印つき）。 */
+export interface KatachiSummary extends Katachi {
+  has_nikki: boolean;
+  /** 題が無いときに薄く出す、1枚目の冒頭 */
+  lead: string;
+}
+
+/** かたち1つ＋中のかけら。 */
+export interface KatachiDetail {
+  katachi: Katachi;
+  kakera: Kakera[];
+  nikki: Nikki | null;
+  /** 日記に出したかけらの id（`日記に出した` の印に使う） */
+  published_ids: string[];
+}

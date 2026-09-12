@@ -1,0 +1,27 @@
+---
+import App from '../components/App';
+import '../styles/app.css';
+
+export const prerender = false;
+---
+
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>かけら帳</title>
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="theme-color" content="#fdfdfc" />
+    <meta name="apple-mobile-web-app-title" content="かけら帳" />
+    <!-- ⚠️ Google Fonts は読み込まない（端末の書体で組む・設計 §9） -->
+    <!-- ⚠️ apple-mobile-web-app-capable は入れない。standalone だと Access の
+         Google ログイン画面への遷移が壊れることがある（blog-cms スマホ対応の知見） -->
+  </head>
+  <body>
+    <!-- #frame は並べ替え中の行をぶら下げる位置の基準（src/components/drag.ts） -->
+    <div id="frame">
+      <App client:load />
+    </div>
+  </body>
+</html>

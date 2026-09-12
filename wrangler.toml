@@ -1,0 +1,39 @@
+name = "kakera-cho"
+main = "./dist/_worker.js/index.js"
+compatibility_date = "2026-09-12"
+compatibility_flags = ["nodejs_compat"]
+
+# workers.dev の素のホスト名を生やさない。
+# 公開口は Cloudflare Access で保護した kakera.kechiiiiin.com だけにする（多層防御）。
+workers_dev = false
+
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+
+# 秘密（BLOG_GITHUB_TOKEN / DATA_GITHUB_TOKEN / CF_ACCESS_TEAM_DOMAIN /
+# CF_ACCESS_AUD / ALLOWED_EMAILS）は `wrangler secret put` で登録する。
+# ローカルは .dev.vars（.gitignore 済み）。README の手順を見ること。
+
+[vars]
+BLOG_REPO = "astro-blog"
+DATA_REPO = "kakera-data"
+GITHUB_OWNER = "kechiiiiin"
+
+# 原本の真実。バインディング名は DB（設計 §3）
+[[d1_databases]]
+binding = "DB"
+database_name = "kakera"
+database_id = "f48cb138-3956-475b-bb78-b32ed3008350"
+
+# かけらに貼った写真の非公開バケット。
+# ⚠️ カスタムドメインを繋がない（閲覧は /api/photo/* が認証の裏からプロキシする）。
+[[r2_buckets]]
+binding = "PHOTOS"
+bucket_name = "kakera-photos"
+
+# astro-blog の既存の公開バケット（images.kechiiiiin.com）。
+# 日記に出すときだけ、その写真をここへコピーして公開版の URL を差し替える（設計 §10）。
+[[r2_buckets]]
+binding = "IMAGES"
+bucket_name = "images"
