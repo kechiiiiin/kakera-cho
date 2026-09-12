@@ -272,7 +272,11 @@ ul.frag-list li.frag:last-child { border-bottom: 1px solid var(--line); }
   width: 100%; border: 1px solid var(--line); border-radius: 2px;
   background: transparent; color: var(--fg);
   font-family: inherit; font-size: 16px; padding: 10px 11px;
+  min-width: 0;   /* ⚠️ iOS の input[type=date] は固有の最小幅を持ち、width:100% でも縮まない */
+  max-width: 100%;
 }
+/* iOS は date の中身を中央に寄せるので、左揃えに戻して他の欄と並びを揃える。 */
+.field input[type="date"] { text-align: left; }
 .field input[type="date"] { font-family: var(--mono); }
 .field textarea.preview { min-height: 220px; line-height: 1.7; resize: vertical; font-size: 15px; }
 .form-note { font-size: 12px; color: var(--muted); margin-top: -10px; margin-bottom: 18px; }
