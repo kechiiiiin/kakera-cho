@@ -275,8 +275,17 @@ ul.frag-list li.frag:last-child { border-bottom: 1px solid var(--line); }
   min-width: 0;   /* ⚠️ iOS の input[type=date] は固有の最小幅を持ち、width:100% でも縮まない */
   max-width: 100%;
 }
-/* iOS は date の中身を中央に寄せるので、左揃えに戻して他の欄と並びを揃える。 */
-.field input[type="date"] { text-align: left; }
+/* ⚠️ iOS の date は独自の装飾を被せており、その装飾が幅を決めている。
+   min-width:0 だけでは縮まず画面からはみ出す（2026-09-13 に実機で確認）。
+   装飾ごと外して、内側の値の中央寄せも打ち消す。タップでピッカーは出る。 */
+.field input[type="date"] {
+  -webkit-appearance: none; appearance: none;
+  display: block; text-align: left;
+}
+.field input[type="date"]::-webkit-date-and-time-value {
+  text-align: left; margin: 0; min-width: 0; width: 100%;
+}
+.field input[type="date"]::-webkit-calendar-picker-indicator { margin-left: auto; }
 .field input[type="date"] { font-family: var(--mono); }
 .field textarea.preview { min-height: 220px; line-height: 1.7; resize: vertical; font-size: 15px; }
 .form-note { font-size: 12px; color: var(--muted); margin-top: -10px; margin-bottom: 18px; }
