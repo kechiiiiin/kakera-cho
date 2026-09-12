@@ -7,6 +7,12 @@ compatibility_flags = ["nodejs_compat"]
 # 公開口は Cloudflare Access で保護した kakera.kechiiiiin.com だけにする（多層防御）。
 workers_dev = false
 
+# 公開口。ダッシュボードで割り当てた Custom Domain をここにも書いておく。
+# 設定がリポジトリに残るので、以後は deploy するだけで宛先まで揃う。
+[[routes]]
+pattern = "kakera.kechiiiiin.com"
+custom_domain = true
+
 [assets]
 directory = "./dist"
 binding = "ASSETS"
