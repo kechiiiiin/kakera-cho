@@ -57,7 +57,10 @@ export const POST: APIRoute = ({ locals, request }) =>
       key = `${base}_${i + 1}.${ext}`;
     }
 
-    await env.PHOTOS.put(key, file.stream(), {
+    // ⚠️ R2 は長さの分からないストリームを受け取らない（file.stream() を渡すと
+    //    "Provided readable stream must have a known length" で落ちる）。
+    //    上限 20MB なので、素直に全部読んでから渡す。
+    await env.PHOTOS.put(key, await file.arrayBuffer(), {
       httpMetadata: { contentType: type },
     });
 

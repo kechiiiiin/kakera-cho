@@ -19,10 +19,16 @@ export const GET: APIRoute = ({ locals, params }) =>
     const obj = await env.PHOTOS.get(key);
     if (!obj) return fail(404, 'その写真はありません');
 
-    const headers = new Headers();
-    obj.writeHttpMetadata(headers);
-    headers.set('etag', obj.httpEtag);
-    // 認証の裏なので共有キャッシュには載せない
-    headers.set('cache-control', 'private, max-age=31536000, immutable');
-    return new Response(obj.body, { headers });
+    // ⚠️ R2 のストリームをそのまま Response に載せない（開発サーバが噛み砕けず 500 になる）。
+    //    写真は 20MB までなので、読み切ってから返す。
+    const bytes = await obj.arrayBuffer();
+    return new Response(bytes, {
+      headers: {
+        'content-type': obj.httpMetadata?.contentType ?? 'application/octet-stream',
+        'content-length': String(bytes.byteLength),
+        etag: obj.httpEtag,
+        // 認証の裏なので共有キャッシュには載せない
+        'cache-control': 'private, max-age=31536000, immutable',
+      },
+    });
   });

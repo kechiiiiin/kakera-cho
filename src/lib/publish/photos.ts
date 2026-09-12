@@ -62,7 +62,8 @@ export async function copyPhotosForPublish(
     const obj = await env.PHOTOS.get(key);
     if (!obj) continue;
     const publicKey = publicKeyFor(key);
-    await env.IMAGES.put(publicKey, obj.body, {
+    // ⚠️ R2 は長さの分からないストリームを受け取らない。obj.body をそのまま渡さない
+    await env.IMAGES.put(publicKey, await obj.arrayBuffer(), {
       httpMetadata: { contentType: obj.httpMetadata?.contentType ?? 'image/jpeg' },
     });
     map.set(url, publicUrlFor(publicKey));
