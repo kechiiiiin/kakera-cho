@@ -324,6 +324,7 @@ export default function App(): JSX.Element {
         {view.t === 'assemble' && detail && detail.katachi.id === view.id ? (
           <AssembleScreen
             detail={detail}
+            onDetail={setDetail}
             onBack={() => setView({ t: 'read', id: view.id })}
             onPublish={(input) =>
               guard(async () => {

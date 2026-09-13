@@ -18,6 +18,11 @@ export interface Katachi {
   /** 'YYYY-MM-DD' */
   date: string;
   title: string;
+  /**
+   * 日記の説明文（原本・実名のまま。空なら frontmatter に書かない）。「日記にする」画面で書く。
+   * ★ここを変えても updated_at は進めない（migrations/0007）
+   */
+  description: string;
   updated_at: string;
 }
 

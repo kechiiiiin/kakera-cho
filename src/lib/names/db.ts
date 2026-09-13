@@ -5,7 +5,9 @@ import type { Kakera, KatachiDetail } from '../kakera/types';
 import { ApiError } from '../http';
 import { nowJst } from '../time';
 import { ulid } from '../ulid';
-import { choiceMap, cleanEditText, findHits, type NameChoice, type NameEntry } from './replace';
+import { DESCRIPTION_SEG, choiceMap, cleanEditText, findHits, type NameChoice, type NameEntry } from './replace';
+
+export { DESCRIPTION_SEG };
 
 /* ---------------- 辞書 ---------------- */
 
@@ -68,6 +70,7 @@ export async function updateNameEntry(
   ];
   if (before.source !== e.source) {
     stmts.push(db.prepare('DELETE FROM name_choice WHERE source = ?').bind(before.source));
+    stmts.push(db.prepare('DELETE FROM description_name_choice WHERE source = ?').bind(before.source));
   }
   await db.batch(stmts);
   return { id, source: e.source, target: e.target, updated_at: now };
@@ -80,14 +83,23 @@ export async function deleteNameEntry(db: D1Database, id: string): Promise<void>
   await db.batch([
     db.prepare('DELETE FROM name_map WHERE id = ?').bind(id),
     db.prepare('DELETE FROM name_choice WHERE source = ?').bind(before.source),
+    db.prepare('DELETE FROM description_name_choice WHERE source = ?').bind(before.source),
   ]);
 }
 
 /* ---------------- 選択 ---------------- */
 
-/** 画面とやり取りする選択の形。seg は 'title' か、かけらの id。 */
+/** 画面とやり取りする選択の形。seg は 'title'・'description'（日記の説明文）か、かけらの id。 */
 export interface SegChoice extends NameChoice {
   seg: string;
+}
+
+interface DescriptionChoiceRow {
+  pos: number;
+  source: string;
+  action: 'approve' | 'edit' | 'reject';
+  text: string | null;
+  basis: string;
 }
 
 interface ChoiceRow {
@@ -149,9 +161,12 @@ export function validateChoices(
   dict: NameEntry[],
   title: string,
   kakera: Kakera[],
-  choices: SegChoice[]
+  choices: SegChoice[],
+  /** 日記の説明文（D1 に保存した原本）。空なら説明の選択は全部落ちる */
+  description = ''
 ): SegChoice[] {
   const texts = new Map<string, string>([['title', title], ...kakera.map((k): [string, string] => [k.id, k.body])]);
+  if (description) texts.set(DESCRIPTION_SEG, description);
   const bySeg = new Map<string, SegChoice[]>();
   for (const c of choices) {
     if (!texts.has(c.seg)) continue;
@@ -182,12 +197,15 @@ export interface LoadedChoices {
   reset_kakera_ids: string[];
   /** 選択があったのに、タイトルの文字列が変わっていて白紙に戻したか */
   reset_title: boolean;
+  /** 選択があったのに、説明の文字列が変わっていて白紙に戻したか */
+  reset_description: boolean;
 }
 
 /**
  * 保存してある選択を読む。
  *  かけら: 保存したときの kakera.updated_at と今が違えば、そのかけらの選択は白紙
  *  タイトル: 保存したときのタイトルの文字列と今が違えば白紙
+ *  説明: 保存したときの説明の文字列（D1 の katachi.description）と今が違えば白紙
  *  辞書から消えた語・位置のずれた選択は validateChoices で落ちる
  */
 export async function loadChoices(
@@ -195,7 +213,8 @@ export async function loadChoices(
   dict: NameEntry[],
   katachiId: string,
   title: string,
-  kakera: Kakera[]
+  kakera: Kakera[],
+  description = ''
 ): Promise<LoadedChoices> {
   const ids = kakera.map((k) => k.id);
   const rows: ChoiceRow[] = [];
@@ -213,10 +232,23 @@ export async function loadChoices(
     rows.push(...(results ?? []));
   }
 
+  const descRows = await db
+    .prepare('SELECT pos, source, action, text, basis FROM description_name_choice WHERE katachi_id = ?')
+    .bind(katachiId)
+    .all<DescriptionChoiceRow>();
+
   const updatedAt = new Map(kakera.map((k) => [k.id, k.updated_at]));
   const resetKakera = new Set<string>();
   let resetTitle = false;
+  let resetDescription = false;
   const fresh: SegChoice[] = [];
+  for (const r of descRows.results ?? []) {
+    if (r.basis !== description) {
+      resetDescription = true;
+      continue;
+    }
+    fresh.push({ seg: DESCRIPTION_SEG, pos: r.pos, source: r.source, action: r.action, ...(r.text ? { text: r.text } : {}) });
+  }
   for (const r of rows) {
     if (r.scope === 'title') {
       if (r.basis !== title) {
@@ -233,30 +265,45 @@ export async function loadChoices(
     }
   }
   return {
-    choices: validateChoices(dict, title, kakera, fresh),
+    choices: validateChoices(dict, title, kakera, fresh, description),
     reset_kakera_ids: ids.filter((id) => resetKakera.has(id)),
     reset_title: resetTitle,
+    reset_description: resetDescription,
   };
 }
 
 /**
  * 選択を保存する（検め済みのものを渡す）。
- * このかたちのタイトルと、渡したかけらの選択を丸ごと入れ替える（選んでいないかけらの選択は残す）。
+ * このかたちのタイトル・説明と、渡したかけらの選択を丸ごと入れ替える（選んでいないかけらの選択は残す）。
+ * 説明の basis は D1 に保存した説明の文字列（呼ぶ側が D1 から読んだものを渡す）。
  */
 export async function saveChoices(
   db: D1Database,
   katachiId: string,
   title: string,
   kakera: Kakera[],
-  valid: SegChoice[]
+  valid: SegChoice[],
+  description = ''
 ): Promise<void> {
   const now = nowJst();
   const updatedAt = new Map(kakera.map((k) => [k.id, k.updated_at]));
   const stmts: D1PreparedStatement[] = [
     db.prepare("DELETE FROM name_choice WHERE scope = 'title' AND ref_id = ?").bind(katachiId),
+    db.prepare('DELETE FROM description_name_choice WHERE katachi_id = ?').bind(katachiId),
     ...kakera.map((k) => db.prepare("DELETE FROM name_choice WHERE scope = 'kakera' AND ref_id = ?").bind(k.id)),
   ];
   for (const c of valid) {
+    if (c.seg === DESCRIPTION_SEG) {
+      if (!description) continue;
+      stmts.push(
+        db
+          .prepare(
+            'INSERT INTO description_name_choice (katachi_id, pos, source, action, text, basis, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+          )
+          .bind(katachiId, c.pos, c.source, c.action, c.text ?? null, description, now)
+      );
+      continue;
+    }
     const isTitle = c.seg === 'title';
     const basis = isTitle ? title : updatedAt.get(c.seg);
     if (basis === undefined) continue;

@@ -7,22 +7,28 @@ import { RichText, RowThumb } from './RichText';
 import { OrderList } from './OrderList';
 import { isClickSuppressed } from './drag';
 import { ConvertScreen } from './ConvertScreen';
-import type { PublishNikkiInput } from './api';
+import { api, type PublishNikkiInput } from './api';
+import { DESCRIPTION_MAX, descriptionLength, flattenDescription } from '../lib/publish/diary-file';
 
 /**
  * 日記にする → 変換 → 書き出し（公開名変換設計）。
- *  日記にする: 出すかけらを選ぶ＋公開版だけの並びをドラッグで組む＋タイトル（変換ページにタイトルを出すため、ここへ移した）。
+ *  日記にする: 出すかけらを選ぶ＋公開版だけの並びをドラッグで組む＋タイトル（変換ページにタイトルを出すため、ここへ移した）
+ *  ＋説明（任意・og:description / X のカード）。説明はタイトルと違い D1 に覚える（書き足すときも最初から入っている）。
+ *  「変換へ進む」で変わっていれば先に保存し、変換ページと書き出しはサーバが D1 の説明を使う。
  *  既に日記になっているときは、出したかけらが最初から選択済みで並んでいる（`日記に出した` の印つき）。
  *  ここで組み直した内容で全体が上書きされる。
  *  変換: 名前を公開用に置き換えた姿を見せて、箇所ごとに選び直す（ConvertScreen）。
  */
 export function AssembleScreen({
   detail,
+  onDetail,
   onBack,
   onPublish,
   say,
 }: {
   detail: KatachiDetail;
+  /** 説明を保存したあとの最新のかたち（戻って開き直したときに古い説明を出さないため） */
+  onDetail: (next: KatachiDetail) => void;
   onBack: () => void;
   onPublish: (input: PublishNikkiInput) => Promise<void>;
   say: (msg: string) => void;
@@ -32,6 +38,10 @@ export function AssembleScreen({
   const [step, setStep] = useState<'pick' | 'convert'>('pick');
   // 初期値は katachi.title。組み直し方式なので、変えた題も次の書き出しで初期値に戻る
   const [title, setTitle] = useState(katachi.title);
+  const [description, setDescription] = useState(katachi.description ?? '');
+  const [saving, setSaving] = useState(false);
+  const descLen = descriptionLength(flattenDescription(description));
+  const descOver = descLen > DESCRIPTION_MAX;
 
   const byId = new Map(kakera.map((k) => [k.id, k]));
   const chosen = order.map((id) => byId.get(id)).filter((k): k is Kakera => !!k);
@@ -60,6 +70,27 @@ export function AssembleScreen({
     }
     const pos = insertPosition(order, id);
     setOrder([...order.slice(0, pos), id, ...order.slice(pos)]);
+  }
+
+  async function toConvert(): Promise<void> {
+    const next = flattenDescription(description);
+    if (descriptionLength(next) > DESCRIPTION_MAX) {
+      say(`説明は${DESCRIPTION_MAX}文字までにしてください`);
+      return;
+    }
+    if (next !== (katachi.description ?? '')) {
+      setSaving(true);
+      try {
+        onDetail(await api.updateKatachi(katachi.id, { description: next }));
+      } catch (e) {
+        say('説明を保存できませんでした: ' + (e instanceof Error ? e.message : String(e)));
+        return;
+      } finally {
+        setSaving(false);
+      }
+    }
+    setDescription(next);
+    setStep('convert');
   }
 
   if (step === 'convert') {
@@ -134,6 +165,23 @@ export function AssembleScreen({
         />
       </div>
       <div class="field">
+        <label for="pub-desc">説明（任意）</label>
+        <input
+          type="text"
+          id="pub-desc"
+          value={description}
+          placeholder="X のカードに出る短い一文"
+          enterKeyHint="done"
+          onInput={(e) => setDescription(e.currentTarget.value)}
+        />
+      </div>
+      <p class="form-note">
+        <span class={descOver ? 'count-over' : undefined}>
+          {descLen} / {DESCRIPTION_MAX}
+        </span>
+        　X のカードに出ます。空ならブログの紹介文になります。
+      </p>
+      <div class="field">
         <label for="pub-date">公開日（かたちの日付）</label>
         <input type="text" id="pub-date" value={katachi.date} readOnly />
       </div>
@@ -142,12 +190,12 @@ export function AssembleScreen({
         type="button"
         class="btn-cta"
         style="width:100%;"
-        disabled={!order.length}
-        onClick={() => setStep('convert')}
+        disabled={!order.length || saving}
+        onClick={() => void toConvert()}
       >
-        変換へ進む
+        {saving ? '説明を保存しています' : '変換へ進む'}
       </button>
-      <p class="form-note export-note">次の画面で、名前を公開用に置き換えます。かけらは実名のまま残ります。</p>
+      <p class="form-note export-note">次の画面で、名前を公開用に置き換えます（タイトルと説明にも）。かけらは実名のまま残ります。</p>
       {nikki ? (
         <p class="form-note export-note">
           既にある日記を、この内容で丸ごと上書きします（差分の追記ではありません）。X には再投稿されません。

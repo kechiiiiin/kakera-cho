@@ -26,6 +26,8 @@ export interface NameChoiceLoad extends LoadedChoices {
   entries: NameEntry[];
   /** 日記に使うタイトル（入力が空ならかたちの題） */
   title: string;
+  /** D1 に保存してある日記の説明文（原本・改行は畳み済み）。空なら frontmatter に書かない */
+  description: string;
 }
 
 export class ApiFailure extends Error {
@@ -86,7 +88,7 @@ export const api = {
   createKatachi: (input: { id: string; date: string; title: string; kakera_ids: string[] }) =>
     req<KatachiDetail>('/api/katachi', { method: 'POST', body: JSON.stringify(input) }),
 
-  updateKatachi: (id: string, patch: { date?: string; title?: string }) =>
+  updateKatachi: (id: string, patch: { date?: string; title?: string; description?: string }) =>
     req<KatachiDetail>(`/api/katachi/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
 
   dissolveKatachi: (id: string) => req<{ ok: true }>(`/api/katachi/${id}`, { method: 'DELETE' }),

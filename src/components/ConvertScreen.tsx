@@ -5,6 +5,7 @@ import type { SegChoice } from '../lib/names/db';
 import { composeBody } from '../lib/markdown';
 import { renderDiaryFile } from '../lib/publish/diary-file';
 import {
+  DESCRIPTION_SEG,
   choiceMap,
   cleanEditText,
   convertText,
@@ -31,7 +32,8 @@ import { MarkedBody, renderSpan, type MarkRender, type MarkStatus, type PhotoTog
 
 /**
  * 変換（公開名変換設計・モックが正）。
- *  組み上がった日記のタイトルと本文を出し、辞書に当たった箇所に印。開いた時点で全箇所が辞書どおり。
+ *  組み上がった日記のタイトル・説明・本文を出し、辞書に当たった箇所に印。
+ *  説明は D1 に保存したもの（「日記にする」画面が先に保存する）を、読み込みの応答から受け取って出す。開いた時点で全箇所が辞書どおり。
  *  印を押すと下からシート: 承認（辞書どおり）／手で直す（その箇所だけ）／拒否（実名のまま）。
  *  選択はかけらごとに D1 へ覚える（押すたびに保存）。拒否が残ったまま書き出すときは念押しを出す。
  *  写真: 写真ごとに「日記に出す／出さない」。開いた時点では全部出す。出さない写真は「公開される姿」
@@ -41,7 +43,7 @@ import { MarkedBody, renderSpan, type MarkRender, type MarkStatus, type PhotoTog
  */
 
 interface Seg {
-  /** 'title' か、かけらの id */
+  /** 'title'・'description' か、かけらの id */
   seg: string;
   text: string;
   tokens: NameToken[];
@@ -101,6 +103,8 @@ export function ConvertScreen({
   const [carriedPhotos, setCarriedPhotos] = useState(0);
   const [resetKakera, setResetKakera] = useState<string[]>([]);
   const [resetTitle, setResetTitle] = useState(false);
+  const [description, setDescription] = useState('');
+  const [resetDescription, setResetDescription] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
   const [view, setView] = useState<ViewMode>('marks');
   const [sheet, setSheet] = useState<Sheet | null>(null);
@@ -125,6 +129,8 @@ export function ConvertScreen({
         setCarried(r.choices.length > 0);
         setResetKakera(r.reset_kakera_ids);
         setResetTitle(r.reset_title);
+        setDescription(r.description ?? '');
+        setResetDescription(!!r.reset_description);
       })
       .catch((e: unknown) => {
         if (!alive) return;
@@ -207,8 +213,11 @@ export function ConvertScreen({
     return { seg, text, tokens, hits: findHits(text, dict, tokens), kakera, num };
   };
   const titleSeg = makeSeg('title', title, null, 0);
+  // 説明が空なら段を作らない（frontmatter にも書かない）
+  const descSeg = description ? makeSeg(DESCRIPTION_SEG, description, null, 0) : null;
   const bodySegs = chosen.map((k, i) => makeSeg(k.id, k.body, k, i + 1));
-  const segs = [titleSeg, ...bodySegs];
+  const segs = [titleSeg, ...(descSeg ? [descSeg] : []), ...bodySegs];
+  const isHead = (seg: string) => seg === 'title' || seg === DESCRIPTION_SEG;
   const segOf = (seg: string) => segs.find((s) => s.seg === seg) ?? null;
 
   const choiceOf = (seg: string, hit: NameHit) => choices.find((c) => c.seg === seg && c.pos === hit.pos);
@@ -219,12 +228,12 @@ export function ConvertScreen({
   // 公開版の本文。書き出し（nikki.ts）と同じ convertForPublish を通す（名前の置き換え＋出さない写真を除く）
   const converted = (s: Seg) => {
     const ch = choiceMap(choices.filter((c) => c.seg === s.seg));
-    return s.seg === 'title'
+    return isHead(s.seg)
       ? convertText(s.text, dict, ch).text
       : convertForPublish(s.text, dict, ch, hiddenKeysOf(photos, s.seg)).text;
   };
   // 出さない写真ぶん切り落とす範囲。そこに掛かる当たり箇所（代替文字の名前）は公開されないので数えない
-  const dropsOf = (s: Seg) => (s.seg === 'title' ? [] : hiddenPhotoSpans(s.text, hiddenKeysOf(photos, s.seg), s.tokens));
+  const dropsOf = (s: Seg) => (isHead(s.seg) ? [] : hiddenPhotoSpans(s.text, hiddenKeysOf(photos, s.seg), s.tokens));
 
   const photoCount = { shown: 0, hidden: 0 };
   for (const s of bodySegs) {
@@ -296,7 +305,7 @@ export function ConvertScreen({
   });
 
   const segLabel = (s: Seg) =>
-    s.seg === 'title' ? 'タイトル' : `かけら ${s.num}` + (s.kakera ? `・${timeOf(s.kakera.written_at)}` : '');
+    s.seg === 'title' ? 'タイトル' : s.seg === DESCRIPTION_SEG ? '説明' : `かけら ${s.num}` + (s.kakera ? `・${timeOf(s.kakera.written_at)}` : '');
 
   async function publish(confirmRealNames: boolean): Promise<void> {
     setBusy(true);
@@ -309,6 +318,7 @@ export function ConvertScreen({
   }
 
   const titleOut = converted(titleSeg);
+  const descOut = descSeg ? converted(descSeg) : '';
   const resetNums = bodySegs.filter((s) => resetKakera.includes(s.seg)).map((s) => s.num);
   // 空になるかけら（写真をすべて出さないにした等）と、全体が空かどうか。
   // composeBody は空のかけらを飛ばして連結するので、trim が空＝1枚も中身が残らなかったとき
@@ -336,6 +346,7 @@ export function ConvertScreen({
         </p>
       ) : null}
       {resetTitle ? <p class="carry">タイトルの文字が変わったので、タイトルの選択は辞書どおりに戻しました。</p> : null}
+      {resetDescription ? <p class="carry">説明の文字が変わったので、説明の選択は辞書どおりに戻しました。</p> : null}
       {!dict.length ? (
         <p class="warn-note">名前の辞書が空です。このまま書き出すと、名前は置き換わりません（日記タブの「名前の辞書」から足せます）。</p>
       ) : null}
@@ -396,13 +407,14 @@ export function ConvertScreen({
             astro-blog に書き出す中身です。リンク先・裸の URL・写真の URL は元のまま（写真の URL だけ、書き出すときに公開用へ差し替わります）。日記に出さない写真は入りません。
           </p>
           <pre class="conv-md">
-            {renderDiaryFile(titleOut, detail.katachi.date, composeBody(bodySegs.map(converted)))}
+            {renderDiaryFile(titleOut, detail.katachi.date, composeBody(bodySegs.map(converted)), descOut)}
           </pre>
         </>
       ) : view === 'plain' ? (
         <>
           <p class="plain-note">公開されたら、こう読めます（印なし）。</p>
           <p class="title-out">{titleOut || detail.katachi.date}</p>
+          {descOut ? <p class="desc-out">{descOut}</p> : null}
           {bodySegs
             .map((s) => ({ s, out: converted(s) }))
             // 写真だけのかけらで写真を出さないと中身が空になる。書き出し（composeBody）と同じく飛ばす
@@ -421,6 +433,18 @@ export function ConvertScreen({
             {title ? renderSpan(renderOf(titleSeg), 0, title.length) : <span class="title-empty">{detail.katachi.date}</span>}
           </p>
           <p class="title-note">タイトルは X にも投稿されます</p>
+          <div class="blk-label" style="margin-top:14px;">
+            説明
+            {resetDescription ? <span class="tag-reset">文字が変わったので白紙</span> : null}
+          </div>
+          {descSeg ? (
+            <>
+              <p class="desc-out" style="margin-top:0;">{renderSpan(renderOf(descSeg), 0, descSeg.text.length)}</p>
+              <p class="title-note">説明は X のカードにも出ます</p>
+            </>
+          ) : (
+            <p class="desc-out desc-empty" style="margin-top:0;">なし（ブログの紹介文が出ます）</p>
+          )}
           {bodySegs.map((s) => (
             <div class="conv-block" key={s.seg}>
               <hr class="conv-sep" />
@@ -557,6 +581,7 @@ export function ConvertScreen({
                       <p class="sh-foot">
                         どれを選んでも、かけらの原本は変わりません。
                         {s.seg === 'title' ? 'タイトルは X にも投稿されます。' : ''}
+                        {s.seg === DESCRIPTION_SEG ? '説明は X のカードにも出ます。' : ''}
                       </p>
                       <div class="sh-actions">
                         <button type="button" class="btn-ghost" onClick={() => setSheet(null)}>
@@ -596,6 +621,9 @@ export function ConvertScreen({
                       このまま書き出すと、公開される日記に実名が出ます。
                       {rejects.some((x) => x.s.seg === 'title') ? (
                         <b class="sh-warn">タイトルに入っているので X にも出ます。</b>
+                      ) : null}
+                      {rejects.some((x) => x.s.seg === DESCRIPTION_SEG) ? (
+                        <b class="sh-warn">説明に入っているので X のカードにも出ます。</b>
                       ) : null}
                       行を押すとその箇所へ戻ります。
                     </p>

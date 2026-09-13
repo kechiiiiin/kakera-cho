@@ -96,6 +96,7 @@ export async function listKatachi(db: D1Database): Promise<KatachiSummary[]> {
     id: r.id,
     date: r.date,
     title: r.title,
+    description: r.description ?? '',
     updated_at: r.updated_at,
     has_nikki: !!r.has_nikki,
     lead: textForExcerpt(r.lead_body ?? ''),
@@ -212,6 +213,18 @@ export async function updateKatachi(
       .run();
   }
   return { detail: await getKatachiDetail(db, id), oldDate: before.date };
+}
+
+/**
+ * 日記の説明文を覚える（原本・実名のまま）。変わったかどうかを返す（控えを書き直すかの判断に使う）。
+ * ★katachi.updated_at は進めない（日付か題が変わったときだけ進む、の意味を崩さない・migrations/0007）。
+ */
+export async function saveKatachiDescription(db: D1Database, id: string, description: string): Promise<boolean> {
+  const r = await db
+    .prepare('UPDATE katachi SET description = ? WHERE id = ? AND description != ?')
+    .bind(description, id, description)
+    .run();
+  return (r.meta?.changes ?? 0) > 0;
 }
 
 /**
@@ -529,6 +542,7 @@ export async function searchKatachi(db: D1Database, rawQuery: string): Promise<S
     id: k.id,
     date: k.date,
     title: k.title,
+    description: k.description ?? '',
     updated_at: k.updated_at,
     has_nikki: !!k.has_nikki,
     matches: matchesByKatachi.get(k.id) ?? [],

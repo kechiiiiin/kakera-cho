@@ -37,6 +37,11 @@ export interface PublishInput {
   /** 公開名変換を済ませたタイトル（X にも出る・commit メッセージにも入る） */
   title: string;
   /**
+   * 公開名変換を済ませた説明文（og:description / X のカードに出る）。空なら frontmatter に書かない。
+   * ⚠️ 呼ぶ側が D1 に保存した説明から置き換え直したもの。
+   */
+  description?: string;
+  /**
    * 公開名変換を済ませた本文（出す順）。
    * ⚠️ 呼ぶ側が原本（D1 のかけら）から置き換え直したもの。画面から届いた本文を渡さない。
    */
@@ -87,7 +92,7 @@ export async function publishNikki(
   // JSON を書けなかったら日記も書かずに止める。
   await publishLinkCards(env, ref, input.date, body, gh);
 
-  const content = renderDiaryFile(input.title, input.date, body);
+  const content = renderDiaryFile(input.title, input.date, body, input.description ?? '');
   const verb = input.alreadyPublished ? 'update' : 'create';
   await gh.putText(ref, path, content, `${verb}(diary): ${input.title || input.date}`);
   return { path };

@@ -50,6 +50,8 @@ export function renderKatachiFile(
     '---',
     `date: ${katachi.date}`,
     `title: ${yamlString(katachi.title)}`,
+    // 日記の説明文（原本なので実名のまま）。空なら書かない（説明の無いかたちの控えは今までと同じ形）
+    ...(katachi.description ? [`description: ${yamlString(katachi.description)}`] : []),
     `nikki: ${hasNikki ? 'true' : 'false'}`,
     '---',
     '',

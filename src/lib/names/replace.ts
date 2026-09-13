@@ -23,6 +23,9 @@ export interface NameEntry {
 
 export type ChoiceAction = 'approve' | 'edit' | 'reject';
 
+/** 日記の説明文の選択の seg（'title' と同じく予約語。かけらの id＝ULID の大文字英数字とは衝突しない）。 */
+export const DESCRIPTION_SEG = 'description';
+
 /** 辞書に当たった箇所。pos は原本（置き換える前の文字列）の中の位置（UTF-16 の添字）。 */
 export interface NameHit {
   pos: number;

@@ -6,6 +6,7 @@ import { publishNikki } from '../../../../lib/publish/astro-blog';
 import { composeBody } from '../../../../lib/markdown';
 import { syncKatachi } from '../../../../lib/backup/sync';
 import {
+  DESCRIPTION_SEG,
   listNameMap,
   parseSegChoices,
   pickKakera,
@@ -30,7 +31,8 @@ export const prerender = false;
  *
  * ★毎回ファイルを丸ごと上書きする（差分追記ではない）。
  * ★nikki に行が無いのに astro-blog に同じ日付のファイルがあれば 409（publishNikki 側の安全弁）。
- * ★公開名変換: 本文とタイトルは**サーバ側で原本から置き換え直す**。画面から届いた本文は受け取らない。
+ * ★公開名変換: 本文とタイトルと説明は**サーバ側で原本から置き換え直す**。画面から届いた本文は受け取らない。
+ *   説明は画面から受け取らず、D1 に保存した katachi.description を使う（「日記にする」画面が先に PATCH で保存する）。
  *   届いた選択は、原本から計算し直した当たり箇所と「位置と置き換え元」が一致するものだけ当て、
  *   一致しないものは辞書どおりに倒す。
  * ★実名のまま出る箇所（拒否）が残るときは、confirm_real_names: true が無ければ 409（念押しを経ていない）。
@@ -56,13 +58,15 @@ export const POST: APIRoute = ({ locals, params, request }) =>
     const title = resolveNikkiTitle(input.title, detail.katachi.title);
 
     const entries = await listNameMap(env.DB);
-    const valid = validateChoices(entries, title, chosen, parseSegChoices(input.choices));
+    const description = detail.katachi.description ?? '';
+    const valid = validateChoices(entries, title, chosen, parseSegChoices(input.choices), description);
     const bySeg = (seg: string) => choiceMap(valid.filter((c) => c.seg === seg));
 
     const sentPhotos = parsePhotoChoices(input.photos);
     const photos = sentPhotos ? validatePhotoChoices(chosen, sentPhotos) : await loadPhotoChoices(env.DB, chosen);
 
     const titleOut = convertText(title, entries, bySeg('title'));
+    const descriptionOut = convertText(description, entries, bySeg(DESCRIPTION_SEG));
     const bodiesOut = chosen.map((k) => convertForPublish(k.body, entries, bySeg(k.id), hiddenKeysOf(photos, k.id)));
 
     // 写真をすべて出さないにしたかけらが重なる等で、書き出す本文がまるごと空になるときは止める（composeBody は
@@ -74,7 +78,7 @@ export const POST: APIRoute = ({ locals, params, request }) =>
       );
     }
 
-    const rejects = [titleOut, ...bodiesOut].reduce(
+    const rejects = [titleOut, descriptionOut, ...bodiesOut].reduce(
       (n, r) => n + r.applied.filter((c) => c.action === 'reject').length,
       0
     );
@@ -83,12 +87,13 @@ export const POST: APIRoute = ({ locals, params, request }) =>
     }
 
     // 選択を覚える（書き出しに失敗しても、選んだことは残す）
-    await saveChoices(env.DB, id, title, chosen, valid);
+    await saveChoices(env.DB, id, title, chosen, valid, description);
     if (sentPhotos) await savePhotoChoices(env.DB, chosen, photos);
 
     const { path } = await publishNikki(env, {
       date: detail.katachi.date,
       title: titleOut.text,
+      description: descriptionOut.text,
       bodies: bodiesOut.map((r) => r.text),
       hiddenPhotoKeys: new Set(photos.map((p) => p.key)),
       alreadyPublished: !!detail.nikki,
