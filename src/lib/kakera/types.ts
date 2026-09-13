@@ -7,8 +7,11 @@ export interface Kakera {
   body: string;
   /** ISO8601(JST・+09:00 付き)。書いた日時。★不変 */
   written_at: string;
+  /** 置き場所（katachi_kakera から導出。NULL = 流れ）。kakera の列ではない */
   katachi_id: string | null;
+  /** かたちの中での並び（katachi_kakera から導出） */
   sort_order: number | null;
+  /** 本文を直したときだけ進む（公開名変換の選択の basis） */
   updated_at: string;
 }
 

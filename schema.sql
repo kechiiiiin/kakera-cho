@@ -1,5 +1,7 @@
--- かけら帳のスキーマ（設計「かけら帳設計・詳細」§3 のまま）
+-- かけら帳の初期スキーマ（設計「かけら帳設計・詳細」§3 のまま）
 -- 適用: npm run db:local / npm run db:remote
+-- ⚠️ これは「初期」の形。新しく立てる環境では、このあと migrations/0001〜0004 を順に流して最終形にする。
+--    特に 0004 で kakera.katachi_id / sort_order は落ち、置き場所は katachi_kakera に移る。
 
 -- かけら
 CREATE TABLE IF NOT EXISTS kakera (

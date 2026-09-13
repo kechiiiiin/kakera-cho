@@ -8,16 +8,31 @@ import { isSafePhotoKey, photoUrlFor } from '../publish/photos';
 import { nowJst } from '../time';
 import { ApiError } from '../http';
 
-/** かけらの流れ（まだかたちになっていないものだけ・新しい順）。 */
+// 置き場所（どのかたちの何番目か）は katachi_kakera だけが持つ（migrations/0004）。
+// kakera の行は「中身」だけ。★置き場所の操作で kakera の行（updated_at）に触らないこと——
+// 公開名変換の選択は kakera.updated_at を basis にしているので、触ると本文を直していないのに白紙に戻る。
+//
+// 画面と控えの形（Kakera.katachi_id / sort_order）は変えず、ここで LEFT JOIN して導出する。
+
+/** かけら＋置き場所。別名は k（kakera）と kk（katachi_kakera）。 */
+const KAKERA_SELECT = `SELECT k.id, k.body, k.written_at, kk.katachi_id, kk.sort_order, k.updated_at
+  FROM kakera k LEFT JOIN katachi_kakera kk ON kk.kakera_id = k.id`;
+
+/** かけらの流れ（まだかたちになっていないもの＝置き場所の行が無いものだけ・新しい順）。 */
 export async function listNagare(db: D1Database): Promise<Kakera[]> {
   const { results } = await db
-    .prepare('SELECT * FROM kakera WHERE katachi_id IS NULL ORDER BY written_at DESC')
+    .prepare(
+      `SELECT k.id, k.body, k.written_at, NULL AS katachi_id, NULL AS sort_order, k.updated_at
+         FROM kakera k
+        WHERE NOT EXISTS (SELECT 1 FROM katachi_kakera kk WHERE kk.kakera_id = k.id)
+        ORDER BY k.written_at DESC`
+    )
     .all<Kakera>();
   return results ?? [];
 }
 
 export async function getKakera(db: D1Database, id: string): Promise<Kakera | null> {
-  return await db.prepare('SELECT * FROM kakera WHERE id = ?').bind(id).first<Kakera>();
+  return await db.prepare(`${KAKERA_SELECT} WHERE k.id = ?`).bind(id).first<Kakera>();
 }
 
 export async function insertKakera(
@@ -25,18 +40,16 @@ export async function insertKakera(
   k: { id: string; body: string; written_at: string }
 ): Promise<Kakera> {
   const now = nowJst();
-  const existing = await getKakera(db, k.id);
+  const existing = await db.prepare('SELECT id FROM kakera WHERE id = ?').bind(k.id).first<{ id: string }>();
   if (existing) throw new ApiError(409, 'その id のかけらはもうあります');
   await db
-    .prepare(
-      'INSERT INTO kakera (id, body, written_at, katachi_id, sort_order, updated_at) VALUES (?, ?, ?, NULL, NULL, ?)'
-    )
+    .prepare('INSERT INTO kakera (id, body, written_at, updated_at) VALUES (?, ?, ?, ?)')
     .bind(k.id, k.body, k.written_at, now)
     .run();
   return { ...k, katachi_id: null, sort_order: null, updated_at: now };
 }
 
-/** 本文だけを直す。written_at は不変なので絶対に触らない。 */
+/** 本文だけを直す。written_at は不変なので絶対に触らない。kakera.updated_at を進めるのはここだけ。 */
 export async function updateKakeraBody(db: D1Database, id: string, body: string): Promise<Kakera> {
   const now = nowJst();
   const res = await db
@@ -50,16 +63,13 @@ export async function updateKakeraBody(db: D1Database, id: string, body: string)
 }
 
 /**
- * かけらを物理削除する。
- * ⚠️ DDL に外部キーを張っていないので、nikki_kakera の行はアプリ側で必ず消す（設計 §3）。
+ * かけらを物理削除する。置き場所の行は ON DELETE CASCADE で消える。
+ * ★nikki_kakera は消さない（書き出したときの記録。astro-blog にはその文章がまだ載っている）。
  */
 export async function deleteKakera(db: D1Database, id: string): Promise<Kakera> {
   const k = await getKakera(db, id);
   if (!k) throw new ApiError(404, 'そのかけらはありません');
-  await db.batch([
-    db.prepare('DELETE FROM nikki_kakera WHERE kakera_id = ?').bind(id),
-    db.prepare('DELETE FROM kakera WHERE id = ?').bind(id),
-  ]);
+  await db.prepare('DELETE FROM kakera WHERE id = ?').bind(id).run();
   return k;
 }
 
@@ -70,8 +80,8 @@ export async function listKatachi(db: D1Database): Promise<KatachiSummary[]> {
     .prepare(
       `SELECT k.*,
               (SELECT 1 FROM nikki n WHERE n.katachi_id = k.id) AS has_nikki,
-              (SELECT f.body FROM kakera f WHERE f.katachi_id = k.id
-                 ORDER BY f.sort_order LIMIT 1) AS lead_body
+              (SELECT f.body FROM katachi_kakera kk JOIN kakera f ON f.id = kk.kakera_id
+                WHERE kk.katachi_id = k.id ORDER BY kk.sort_order LIMIT 1) AS lead_body
          FROM katachi k
         ORDER BY k.date DESC`
     )
@@ -99,7 +109,12 @@ export async function getNikkiRow(db: D1Database, katachiId: string): Promise<Ni
 /** かたちの中のかけら（並び順）。 */
 export async function kakeraOfKatachi(db: D1Database, katachiId: string): Promise<Kakera[]> {
   const { results } = await db
-    .prepare('SELECT * FROM kakera WHERE katachi_id = ? ORDER BY sort_order')
+    .prepare(
+      `SELECT k.id, k.body, k.written_at, kk.katachi_id, kk.sort_order, k.updated_at
+         FROM katachi_kakera kk JOIN kakera k ON k.id = kk.kakera_id
+        WHERE kk.katachi_id = ?
+        ORDER BY kk.sort_order`
+    )
     .bind(katachiId)
     .all<Kakera>();
   return results ?? [];
@@ -120,6 +135,7 @@ export async function getKatachiDetail(db: D1Database, id: string): Promise<Kata
     katachi,
     kakera,
     nikki,
+    // 書き出したときの記録そのまま。今このかたちにいない・もう無いかけらの id も混ざりうる
     published_ids: (published.results ?? []).map((r) => r.kakera_id),
   };
 }
@@ -139,19 +155,29 @@ export async function createKatachi(
       .bind(input.id, input.date, input.title, now),
   ];
   input.kakera_ids.forEach((kid, i) => {
-    // 未かたちのものだけを取り込む（二重取り込みの防止）
+    // 流れにいるものだけを取り込む（二重取り込みの防止）。無い id・他のかたちにいる id は黙って飛ばす。
+    // ★kakera の行には触らない（updated_at を進めない）
     stmts.push(
       db
         .prepare(
-          'UPDATE kakera SET katachi_id = ?, sort_order = ?, updated_at = ? WHERE id = ? AND katachi_id IS NULL'
+          `INSERT INTO katachi_kakera (katachi_id, kakera_id, sort_order)
+           SELECT ?, k.id, ? FROM kakera k
+            WHERE k.id = ? AND NOT EXISTS (SELECT 1 FROM katachi_kakera kk WHERE kk.kakera_id = k.id)`
         )
-        .bind(input.id, (i + 1) * 100, now, kid)
+        .bind(input.id, (i + 1) * 100, kid)
     );
   });
   await db.batch(stmts);
   return await getKatachiDetail(db, input.id);
 }
 
+/**
+ * かたちの日付・題・並びを変える。
+ * ★katachi.updated_at は日付か題が実際に変わったときだけ進める（並べ替えだけなら katachi の行に触らない）。
+ * ★並べ替えは katachi_kakera だけを書き換える（kakera.updated_at は進めない）。
+ * ★日記になったかたちは日付を変えられない（変えると次の書き出しで別の日付のファイルができ、
+ *   古い日付の記事が astro-blog に取り残されるため）。
+ */
 export async function updateKatachi(
   db: D1Database,
   id: string,
@@ -159,31 +185,38 @@ export async function updateKatachi(
 ): Promise<{ detail: KatachiDetail; oldDate: string }> {
   const before = await getKatachiRow(db, id);
   if (!before) throw new ApiError(404, 'そのかたちはありません');
-  const now = nowJst();
 
-  if (patch.date !== undefined && patch.date !== before.date) {
+  const nextDate = patch.date ?? before.date;
+  const nextTitle = patch.title ?? before.title;
+
+  if (nextDate !== before.date) {
+    const nikki = await getNikkiRow(db, id);
+    if (nikki) throw new ApiError(409, '日記になったかたちは日付を変えられません');
     const dup = await db
       .prepare('SELECT id FROM katachi WHERE date = ? AND id != ?')
-      .bind(patch.date, id)
+      .bind(nextDate, id)
       .first<{ id: string }>();
-    if (dup) throw new ApiError(409, `${patch.date} のかたちはもうあります（1日にひとつです）`);
+    if (dup) throw new ApiError(409, `${nextDate} のかたちはもうあります（1日にひとつです）`);
   }
 
-  const stmts: D1PreparedStatement[] = [
-    db
-      .prepare('UPDATE katachi SET date = ?, title = ?, updated_at = ? WHERE id = ?')
-      .bind(patch.date ?? before.date, patch.title ?? before.title, now, id),
-  ];
+  const stmts: D1PreparedStatement[] = [];
+  if (nextDate !== before.date || nextTitle !== before.title) {
+    stmts.push(
+      db
+        .prepare('UPDATE katachi SET date = ?, title = ?, updated_at = ? WHERE id = ?')
+        .bind(nextDate, nextTitle, nowJst(), id)
+    );
+  }
   if (patch.order) {
     patch.order.forEach((kid, i) => {
       stmts.push(
         db
-          .prepare('UPDATE kakera SET sort_order = ?, updated_at = ? WHERE id = ? AND katachi_id = ?')
-          .bind((i + 1) * 100, now, kid, id)
+          .prepare('UPDATE katachi_kakera SET sort_order = ? WHERE katachi_id = ? AND kakera_id = ?')
+          .bind((i + 1) * 100, id, kid)
       );
     });
   }
-  await db.batch(stmts);
+  if (stmts.length) await db.batch(stmts);
   return { detail: await getKatachiDetail(db, id), oldDate: before.date };
 }
 
@@ -197,34 +230,33 @@ export async function dissolveKatachi(db: D1Database, id: string): Promise<Katac
   const nikki = await getNikkiRow(db, id);
   if (nikki) throw new ApiError(409, '日記になったかたちは解けません');
 
-  const now = nowJst();
+  // 置き場所の行は ON DELETE CASCADE でも消えるが、並びを読み違えないよう明示して先に消す。
+  // ★kakera の行には触らない。nikki_kakera も触らない（書き出しの記録。日記済みはそもそもここに来ない）
   await db.batch([
-    db
-      .prepare('UPDATE kakera SET katachi_id = NULL, sort_order = NULL, updated_at = ? WHERE katachi_id = ?')
-      .bind(now, id),
-    db.prepare('DELETE FROM nikki_kakera WHERE katachi_id = ?').bind(id),
+    db.prepare('DELETE FROM katachi_kakera WHERE katachi_id = ?').bind(id),
     db.prepare('DELETE FROM katachi WHERE id = ?').bind(id),
   ]);
   return katachi;
 }
 
-/** かけら1枚をかたちから外して流れへ戻す（日記の有無にかかわらず可）。 */
+/**
+ * かけら1枚をかたちから外して流れへ戻す（日記の有無にかかわらず可）。
+ * ★置き場所の行だけを消す。kakera.updated_at は進めず、nikki_kakera（書き出しの記録）も消さない。
+ */
 export async function detachKakera(db: D1Database, katachiId: string, kakeraId: string): Promise<Kakera> {
   const k = await getKakera(db, kakeraId);
   if (!k || k.katachi_id !== katachiId) throw new ApiError(404, 'そのかたちにそのかけらはありません');
-  const now = nowJst();
-  await db.batch([
-    db
-      .prepare('UPDATE kakera SET katachi_id = NULL, sort_order = NULL, updated_at = ? WHERE id = ?')
-      .bind(now, kakeraId),
-    db
-      .prepare('DELETE FROM nikki_kakera WHERE katachi_id = ? AND kakera_id = ?')
-      .bind(katachiId, kakeraId),
-  ]);
-  return { ...k, katachi_id: null, sort_order: null, updated_at: now };
+  await db
+    .prepare('DELETE FROM katachi_kakera WHERE katachi_id = ? AND kakera_id = ?')
+    .bind(katachiId, kakeraId)
+    .run();
+  return { ...k, katachi_id: null, sort_order: null };
 }
 
-/** 日記にした記録を書く（毎回組み直すので、出したかけらは丸ごと入れ替える）。 */
+/**
+ * 日記にした記録を書く（毎回組み直すので、出したかけらは丸ごと入れ替える）。
+ * ★nikki_kakera を書き換えてよいのはここだけ。
+ */
 export async function recordNikki(
   db: D1Database,
   katachiId: string,
@@ -382,7 +414,7 @@ interface SearchRow {
 /**
  * かたちの全文検索。かたちに属さないかけら（流れ）は対象外——
  * kakera_fts 自体は kakera 全体（流れも含む）を索引しているが（後から流れも検索できるように）、
- * ここで katachi_id IS NOT NULL に絞る。
+ * ここで katachi_kakera に行があるもの（INNER JOIN）に絞る。
  */
 export async function searchKatachi(db: D1Database, rawQuery: string): Promise<SearchResult[]> {
   const q = rawQuery.trim();
@@ -392,8 +424,9 @@ export async function searchKatachi(db: D1Database, rawQuery: string): Promise<S
   if (charLength(q) < MIN_TRIGRAM_LEN) {
     const { results } = await db
       .prepare(
-        `SELECT id AS kakera_id, katachi_id, body FROM kakera
-          WHERE katachi_id IS NOT NULL AND body LIKE ? ESCAPE '\\'`
+        `SELECT k.id AS kakera_id, kk.katachi_id AS katachi_id, k.body AS body
+           FROM kakera k JOIN katachi_kakera kk ON kk.kakera_id = k.id
+          WHERE k.body LIKE ? ESCAPE '\\'`
       )
       .bind('%' + escapeLikePattern(q) + '%')
       .all<SearchRow>();
@@ -401,10 +434,11 @@ export async function searchKatachi(db: D1Database, rawQuery: string): Promise<S
   } else {
     const { results } = await db
       .prepare(
-        `SELECT kakera.id AS kakera_id, kakera.katachi_id AS katachi_id, kakera.body AS body
+        `SELECT k.id AS kakera_id, kk.katachi_id AS katachi_id, k.body AS body
            FROM kakera_fts
-           JOIN kakera ON kakera.id = kakera_fts.kakera_id
-          WHERE kakera_fts MATCH ? AND kakera.katachi_id IS NOT NULL`
+           JOIN kakera k ON k.id = kakera_fts.kakera_id
+           JOIN katachi_kakera kk ON kk.kakera_id = k.id
+          WHERE kakera_fts MATCH ?`
       )
       .bind(escapeFtsPhrase(q))
       .all<SearchRow>();

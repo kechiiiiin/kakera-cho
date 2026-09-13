@@ -12,7 +12,7 @@
 **ここに書いていないことは決まっていない。**
 
 - 実装: Astro SSR / Cloudflare Workers / Preact / zod / octokit / jose
-- 原本の真実: **D1**（`kakera` / `katachi` / `nikki` / `nikki_kakera` / `device`）
+- 原本の真実: **D1**（`kakera` / `katachi` / `katachi_kakera`（置き場所） / `nikki` / `nikki_kakera`（書き出しの記録） / `device`）
 - 原本の控え: **`kakera-data`（private）** に Markdown（保存の都度・`waitUntil` で裏に回す）
 - 公開先: **`astro-blog`** の `src/content/diary/YYYY-MM-DD.md` へ octokit で直接 commit
 - 写真: 非公開バケット **`kakera-photos`**。日記に出すときだけ公開バケット `images` へコピー
