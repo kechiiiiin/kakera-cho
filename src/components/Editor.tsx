@@ -1,5 +1,5 @@
 import type { JSX, RefObject } from 'preact';
-import { useRef, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import type { TextEdit } from '../lib/markdown';
 import {
   buildPhotoInsertion,
@@ -52,6 +52,12 @@ export function Editor({
   const [dropping, setDropping] = useState(false);
 
   const tokens = parsePhotoTokens(value);
+
+  // 開いた瞬間と、写真の差し込みなど外から本文が変わったときも、本文の高さまで伸ばす。
+  // ⚠️ 入力のときだけ伸ばしていたので、長いかけらを開くと狭い箱の中でスクロールしていた（2026-09-13）。
+  useEffect(() => {
+    autoGrow(ref.current);
+  }, [value]);
 
   /** 選ばれた／落とされた写真を上げて、カーソル位置に画像記法を差し込む。 */
   async function insertFiles(files: File[]): Promise<void> {
