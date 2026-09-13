@@ -18,11 +18,14 @@ export const prerender = false;
  */
 export const GET: APIRoute = ({ locals, params }) =>
   handle(async () => {
-    const { env } = ctxOf(locals);
+    const { env, waitUntil } = ctxOf(locals);
     if (!params.id) throw new ApiError(400, 'id がありません');
     const detail = await getKatachiDetail(env.DB, params.id);
     const byId = new Map(detail.kakera.map((k) => [k.id, k]));
     const rows = await loadPublishBodies(env.DB, params.id, detail.kakera.map((k) => k.id));
     const bodies = rows.filter((r) => byId.has(r.kakera_id)).map((r) => viewOf(byId.get(r.kakera_id)!, r));
+    // 日記にする直前に、まだ無いカードを裏で取りに行く（応答は待たせない）。
+    // 保存時の取得に漏れた URL（前に書いたかけら・失敗の7日を過ぎたもの）も、書き出しまでに揃いやすくする。
+    waitUntil(ensureCards(env, [...detail.kakera.map((k) => k.body), ...bodies.map((b) => b.body)]));
     return json({ bodies, cards: await cardsForBodies(env.DB, bodies.map((b) => b.body)) });
   });

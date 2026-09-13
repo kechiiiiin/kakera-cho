@@ -68,6 +68,8 @@ export function isCardCandidate(url: string): boolean {
     return false;
   }
   if (u.hostname === 'images.kechiiiiin.com') return false;
+  // かけら帳自身は Access の裏なので、取りに行ってもログイン画面の OGP しか取れない
+  if (u.hostname === 'kakera.kechiiiiin.com') return false;
   if (NOT_CARD_EXT.test(u.pathname)) return false;
   return true;
 }

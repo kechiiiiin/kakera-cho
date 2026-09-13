@@ -1,7 +1,10 @@
 name = "kakera-cho"
 main = "./dist/_worker.js/index.js"
 compatibility_date = "2026-09-12"
-compatibility_flags = ["nodejs_compat"]
+# global_fetch_strictly_public: 同じゾーン（kechiiiiin.com）への fetch を「インターネットからの要求」として扱う。
+# 無いと www.kechiiiiin.com を取りに行ったとき astro-blog の Worker を素通りして元のサーバー（存在しない）へ向かい、
+# 時間切れになる（2026-09-14 に自分のブログ記事のリンクカードが timeout で取れなかった）。既定で有効になる日付は無い。
+compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]
 
 # workers.dev の素のホスト名を生やさない。
 # 公開口は Cloudflare Access で保護した kakera.kechiiiiin.com だけにする（多層防御）。
