@@ -1,5 +1,7 @@
 // 画面とサーバで共有する形。語彙は設計 §1 のまま（かけら／かたち／日記）。
 
+import type { LinkCards } from '../card/types';
+
 export interface Kakera {
   id: string;
   body: string;
@@ -39,6 +41,8 @@ export interface KatachiDetail {
   nikki: Nikki | null;
   /** 日記に出したかけらの id（`日記に出した` の印に使う） */
   published_ids: string[];
+  /** 中のかけらに出てくる URL のリンクカード（取得口で同梱する。無ければ全部素のリンク） */
+  cards?: LinkCards;
 }
 
 /** 検索でヒットしたかけら1枚（抜粋つき）。 */

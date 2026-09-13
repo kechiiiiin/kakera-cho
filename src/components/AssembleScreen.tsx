@@ -1,7 +1,8 @@
 import type { JSX } from 'preact';
 import { useState } from 'preact/hooks';
 import type { Kakera, KatachiDetail } from '../lib/kakera/types';
-import { composeBody, textForExcerpt } from '../lib/markdown';
+import { composeBody } from '../lib/markdown';
+import { textForPick } from '../lib/card/pick';
 import { dateHeading } from './format';
 import { RichText, RowThumb } from './RichText';
 import { OrderList } from './OrderList';
@@ -113,7 +114,7 @@ export function AssembleScreen({
             <div class="pick-row" key={k.id} onClick={() => toggle(k.id)}>
               <div class={'checkbox' + (checked ? ' checked' : '')}>{checked ? '✓' : ''}</div>
               <div class="pick-text">
-                {textForExcerpt(k.body)}
+                <span class="pick-excerpt">{textForPick(k.body, detail.cards)}</span>
                 {published_ids.includes(k.id) ? <div class="tag-published">日記に出した</div> : null}
               </div>
               <RowThumb text={k.body} />
@@ -131,7 +132,8 @@ export function AssembleScreen({
         <OrderList
           items={chosen.map((k) => ({
             id: k.id,
-            content: <RichText text={k.body} imgClass="assembled-photo" />,
+            // 「日記はこう並びます」は公開後の見え方のプレビューなので、カードも埋め込みも出す
+            content: <RichText text={k.body} imgClass="assembled-photo" cards={detail.cards} />,
           }))}
           onReorder={setOrder}
         />

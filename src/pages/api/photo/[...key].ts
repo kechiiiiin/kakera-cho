@@ -27,6 +27,8 @@ export const GET: APIRoute = ({ locals, params }) =>
         'content-type': obj.httpMetadata?.contentType ?? 'application/octet-stream',
         'content-length': String(bytes.byteLength),
         etag: obj.httpEtag,
+        // リンクカードの画像は他人のサーバーから来たもの。宣言した形式以外として解釈させない
+        'x-content-type-options': 'nosniff',
         // 認証の裏なので共有キャッシュには載せない
         'cache-control': 'private, max-age=31536000, immutable',
       },

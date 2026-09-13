@@ -3,6 +3,7 @@ import { ApiError, handle, json, readJson } from '../../../lib/http';
 import { ctxOf } from '../../../lib/ctx';
 import { deleteKakera, updateKakeraBody } from '../../../lib/kakera/db';
 import { syncKakera, syncKakeraDeleted } from '../../../lib/backup/sync';
+import { ensureCards } from '../../../lib/card/ensure';
 
 export const prerender = false;
 
@@ -17,6 +18,8 @@ export const PATCH: APIRoute = ({ locals, params, request }) =>
 
     const kakera = await updateKakeraBody(env.DB, id, input.body.trim());
     waitUntil(syncKakera(env, kakera));
+    // 足した URL のカードを裏で取る。⚠️ 消えた URL の行は消さない（他のかけらが貼っているかもしれない）
+    waitUntil(ensureCards(env, [kakera.body]));
     return json({ kakera });
   });
 

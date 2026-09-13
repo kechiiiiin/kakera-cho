@@ -159,6 +159,31 @@ export function parseEmbedTokens(text: string): EmbedToken[] {
   return tokens;
 }
 
+export interface StandaloneUrl {
+  start: number;
+  end: number;
+  url: string;
+}
+
+/**
+ * 本文から「その行がまるごと URL だけ」の行を拾う（リンクカード設計 §8.3）。行の途中の URL は拾わない。
+ * 行そのものが、裸の URL として読んだときの URL と一字一句同じときだけ対象
+ * （前後に文字や空白、文末の句読点が付いていたら対象外）。
+ * ⚠️ 埋め込み（X / YouTube）かどうかはここでは見ない。振り分けは呼ぶ側（card/url.ts・RichText）。
+ */
+export function parseStandaloneUrls(text: string): StandaloneUrl[] {
+  const out: StandaloneUrl[] = [];
+  let pos = 0;
+  for (const line of text.split('\n')) {
+    if (line && isSafeHref(line)) {
+      const m = matchBareUrl(line, 0);
+      if (m && m.url === line) out.push({ start: pos, end: pos + line.length, url: line });
+    }
+    pos += line.length + 1; // +1 は '\n'
+  }
+  return out;
+}
+
 /** 画像記法を取り除いた素の本文（一覧の抜粋・タイトル代わりに使う）。 */
 export function textForExcerpt(text: string): string {
   return text.replace(IMAGE_TOKEN_RE, '').replace(/\s+/g, ' ').trim();
@@ -257,7 +282,7 @@ export function isSafeHref(url: string): boolean {
  * 文末の句読点や閉じ括弧は URL から外す（`https://example.com。` の `。` は文の一部）。
  * 括弧は釣り合っているぶんだけ残す（`https://ja.wikipedia.org/wiki/x_(y)` を壊さない）。
  */
-function matchBareUrl(text: string, i: number): { url: string; end: number } | null {
+export function matchBareUrl(text: string, i: number): { url: string; end: number } | null {
   const m = /^https?:\/\/[\x21-\x7E]+/.exec(text.slice(i));
   if (!m) return null;
   let url = m[0];

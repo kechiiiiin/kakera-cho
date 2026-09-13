@@ -1,7 +1,10 @@
 // D1 への問い合わせ。ここがドメインの処理の入口で、API ルートは薄い殻にする（iOS から同じ API を使うため）。
 
 import type { Kakera, Katachi, KatachiDetail, KatachiSummary, Nikki, SearchMatch, SearchResult } from './types';
+import type { LinkCard, LinkCards } from '../card/types';
 import { buildExcerpt, textForExcerpt } from '../markdown';
+import { domainOf, parseCardUrls } from '../card/url';
+import { isSafePhotoKey, photoUrlFor } from '../publish/photos';
 import { nowJst } from '../time';
 import { ApiError } from '../http';
 
@@ -248,6 +251,102 @@ export async function recordNikki(
     );
   });
   await db.batch(stmts);
+}
+
+/* ---------------- リンクカード（リンクカード設計 §3／migrations/0002） ---------------- */
+
+export interface LinkCardRow {
+  url: string;
+  status: 'ok' | 'failed';
+  title: string | null;
+  description: string | null;
+  site_name: string | null;
+  final_url: string | null;
+  image_key: string | null;
+  error: string | null;
+  fetched_at: string;
+  updated_at: string;
+}
+
+/** D1 の束縛変数は1文あたり100個まで。余裕を持って刻む。 */
+const IN_CHUNK = 90;
+
+export async function getLinkCardRows(db: D1Database, urls: string[]): Promise<LinkCardRow[]> {
+  const unique = [...new Set(urls)];
+  const out: LinkCardRow[] = [];
+  for (let i = 0; i < unique.length; i += IN_CHUNK) {
+    const part = unique.slice(i, i + IN_CHUNK);
+    const { results } = await db
+      .prepare(`SELECT * FROM link_card WHERE url IN (${part.map(() => '?').join(',')})`)
+      .bind(...part)
+      .all<LinkCardRow>();
+    out.push(...(results ?? []));
+  }
+  return out;
+}
+
+export async function upsertLinkCard(
+  db: D1Database,
+  row: Omit<LinkCardRow, 'fetched_at' | 'updated_at'>
+): Promise<void> {
+  const now = nowJst();
+  await db
+    .prepare(
+      `INSERT INTO link_card (url, status, title, description, site_name, final_url, image_key, error, fetched_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(url) DO UPDATE SET
+         status = excluded.status, title = excluded.title, description = excluded.description,
+         site_name = excluded.site_name, final_url = excluded.final_url, image_key = excluded.image_key,
+         error = excluded.error, fetched_at = excluded.fetched_at, updated_at = excluded.updated_at`
+    )
+    .bind(row.url, row.status, row.title, row.description, row.site_name, row.final_url, row.image_key, row.error, now, now)
+    .run();
+}
+
+/** 画面に渡す形にする。failed は呼ぶ側で落としておく。 */
+function toLinkCard(row: LinkCardRow): LinkCard {
+  const domain = domainOf(row.final_url ?? row.url) || domainOf(row.url);
+  const image = row.image_key && isSafePhotoKey(row.image_key) ? photoUrlFor(row.image_key) : null;
+  return {
+    url: row.url,
+    title: row.title || domain,
+    description: row.description ?? '',
+    siteName: row.site_name || domain,
+    domain,
+    image,
+  };
+}
+
+/**
+ * かけらの本文に出てくる「カードにしうる URL」のキャッシュを1クエリで引く（status='ok' だけ）。
+ * ⚠️ 流れ・かたちの取得口に同梱するためのもの。ここが失敗しても（表がまだ無い等）画面は壊さず、
+ * カードなし＝素のリンクで出す。
+ */
+export async function cardsForBodies(db: D1Database, bodies: string[]): Promise<LinkCards> {
+  const keys = bodies.flatMap((b) => parseCardUrls(b).map((t) => t.key));
+  if (!keys.length) return {};
+  try {
+    const rows = await getLinkCardRows(db, keys);
+    const cards: LinkCards = {};
+    for (const r of rows) if (r.status === 'ok') cards[r.url] = toLinkCard(r);
+    return cards;
+  } catch (e) {
+    console.error('[link-card] キャッシュを引けませんでした', e instanceof Error ? e.message : e);
+    return {};
+  }
+}
+
+/** かたちの詳細にカードを添える（GET / POST / PATCH /api/katachi の戻り）。 */
+export async function withCards(db: D1Database, detail: KatachiDetail): Promise<KatachiDetail> {
+  return { ...detail, cards: await cardsForBodies(db, detail.kakera.map((k) => k.body)) };
+}
+
+/** URL を含みうるかけらの本文（補填用）。 */
+export async function listBodiesWithUrls(db: D1Database): Promise<string[]> {
+  const { results } = await db
+    .prepare("SELECT body FROM kakera WHERE body LIKE '%http%' ORDER BY written_at DESC")
+    .all<{ body: string }>();
+  return (results ?? []).map((r) => r.body);
 }
 
 /* ---------------- 検索（第二段・かたちの全文検索。設計 §3／migrations/0001） ---------------- */

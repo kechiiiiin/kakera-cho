@@ -23,7 +23,8 @@ export function keyFromPhotoUrl(url: string): string | null {
 export function isSafePhotoKey(key: string): boolean {
   if (!key || key.length > 512) return false;
   if (key.includes('..') || key.startsWith('/')) return false;
-  return /^kakera\/\d{4}\/\d{2}\/[A-Za-z0-9_.-]+$/.test(key);
+  // kakera/cards/… はリンクカードの画像（リンクカード設計 §5.1）
+  return /^kakera\/(?:\d{4}\/\d{2}|cards)\/[A-Za-z0-9_.-]+$/.test(key);
 }
 
 /**

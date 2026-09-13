@@ -1,7 +1,7 @@
 import type { APIRoute } from 'astro';
 import { ApiError, handle, json, readJson } from '../../../lib/http';
 import { ctxOf } from '../../../lib/ctx';
-import { createKatachi, listKatachi } from '../../../lib/kakera/db';
+import { createKatachi, listKatachi, withCards } from '../../../lib/kakera/db';
 import { isUlid } from '../../../lib/ulid';
 import { isDateKey } from '../../../lib/time';
 import { syncKatachiCreated } from '../../../lib/backup/sync';
@@ -36,5 +36,5 @@ export const POST: APIRoute = ({ locals, request }) =>
       kakera_ids: ids as string[],
     });
     waitUntil(syncKatachiCreated(env, detail.katachi.id));
-    return json(detail, 201);
+    return json(await withCards(env.DB, detail), 201);
   });

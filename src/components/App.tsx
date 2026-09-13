@@ -1,6 +1,7 @@
 import type { JSX } from 'preact';
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import type { Kakera, KatachiDetail, KatachiSummary, SearchResult } from '../lib/kakera/types';
+import type { LinkCards } from '../lib/card/types';
 import { nowJst } from '../lib/time';
 import { ulid } from '../lib/ulid';
 import { api } from './api';
@@ -35,6 +36,7 @@ function isReadWorld(view: View): boolean {
 export default function App(): JSX.Element {
   const [view, setView] = useState<View>({ t: 'write' });
   const [nagare, setNagare] = useState<Kakera[]>([]);
+  const [nagareCards, setNagareCards] = useState<LinkCards>({});
   const [nagareLoaded, setNagareLoaded] = useState(false);
   const [katachiList, setKatachiList] = useState<KatachiSummary[]>([]);
   const [katachiLoaded, setKatachiLoaded] = useState(false);
@@ -72,7 +74,9 @@ export default function App(): JSX.Element {
   );
 
   const loadNagare = useCallback(async () => {
-    setNagare(await api.nagare());
+    const { kakera, cards } = await api.nagare();
+    setNagare(kakera);
+    setNagareCards(cards);
     setNagareLoaded(true);
   }, []);
 
@@ -154,6 +158,7 @@ export default function App(): JSX.Element {
         {view.t === 'write' ? (
           <WriteScreen
             nagare={nagare}
+            cards={nagareCards}
             loaded={nagareLoaded}
             draft={draft}
             draftId={draftMeta.current.id}
@@ -192,6 +197,7 @@ export default function App(): JSX.Element {
         {view.t === 'compose' ? (
           <ComposeScreen
             nagare={nagare}
+            cards={nagareCards}
             onBack={() => setView({ t: 'write' })}
             onCreate={(input) =>
               guard(async () => {

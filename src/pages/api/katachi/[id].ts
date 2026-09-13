@@ -6,6 +6,7 @@ import {
   getKatachiDetail,
   kakeraOfKatachi,
   updateKatachi,
+  withCards,
 } from '../../../lib/kakera/db';
 import { isDateKey } from '../../../lib/time';
 import { syncKatachiDissolved, syncKatachiRenamed } from '../../../lib/backup/sync';
@@ -17,7 +18,7 @@ export const GET: APIRoute = ({ locals, params }) =>
   handle(async () => {
     const { env } = ctxOf(locals);
     if (!params.id) throw new ApiError(400, 'id がありません');
-    return json(await getKatachiDetail(env.DB, params.id));
+    return json(await withCards(env.DB, await getKatachiDetail(env.DB, params.id)));
   });
 
 /** PATCH /api/katachi/:id — {date?, title?, order?[]} ※date 変更は控えの改名も行う */
@@ -46,7 +47,7 @@ export const PATCH: APIRoute = ({ locals, params, request }) =>
 
     // 日付が変わったら控えのファイルを改名する（旧ファイルを消す）
     waitUntil(syncKatachiRenamed(env, id, oldDate));
-    return json(detail);
+    return json(await withCards(env.DB, detail));
   });
 
 /**

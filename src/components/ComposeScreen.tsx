@@ -1,7 +1,8 @@
 import type { JSX } from 'preact';
 import { useState } from 'preact/hooks';
 import type { Kakera } from '../lib/kakera/types';
-import { textForExcerpt } from '../lib/markdown';
+import type { LinkCards } from '../lib/card/types';
+import { textForPick } from '../lib/card/pick';
 import { dateHeading, dateOf, timeOf } from './format';
 import { RowThumb } from './RichText';
 import { OrderList } from './OrderList';
@@ -15,10 +16,13 @@ import { isClickSuppressed } from './drag';
  */
 export function ComposeScreen({
   nagare,
+  cards,
   onBack,
   onCreate,
 }: {
   nagare: Kakera[];
+  /** URL をタイトルに畳むためだけに使う（ここのために取りに行かない） */
+  cards: LinkCards;
   onBack: () => void;
   onCreate: (input: { date: string; title: string; order: string[] }) => Promise<void>;
 }): JSX.Element {
@@ -80,7 +84,7 @@ export function ComposeScreen({
               <div class="pick-row" key={k.id} onClick={() => toggle(k.id)}>
                 <div class={'checkbox' + (checked ? ' checked' : '')}>{checked ? '✓' : ''}</div>
                 <div class="pick-text">
-                  {textForExcerpt(k.body)}
+                  <span class="pick-excerpt">{textForPick(k.body, cards)}</span>
                   <div class="pick-time">
                     {dateHeading(dateOf(k.written_at))} {timeOf(k.written_at)}
                   </div>
@@ -125,7 +129,7 @@ export function ComposeScreen({
           items={order
             .map((id) => byId.get(id))
             .filter((k): k is Kakera => !!k)
-            .map((k) => ({ id: k.id, content: textForExcerpt(k.body) }))}
+            .map((k) => ({ id: k.id, content: <span class="pick-excerpt">{textForPick(k.body, cards)}</span> }))}
           onReorder={setOrder}
         />
       )}

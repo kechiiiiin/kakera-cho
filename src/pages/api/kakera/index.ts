@@ -1,18 +1,24 @@
 import type { APIRoute } from 'astro';
 import { ApiError, handle, json, readJson } from '../../../lib/http';
 import { ctxOf } from '../../../lib/ctx';
-import { insertKakera, listNagare } from '../../../lib/kakera/db';
+import { cardsForBodies, insertKakera, listNagare } from '../../../lib/kakera/db';
 import { isUlid } from '../../../lib/ulid';
 import { isWrittenAt, normalizeToJst } from '../../../lib/time';
 import { backupKakera, dataRepo } from '../../../lib/backup/kakera-data';
+import { ensureCards } from '../../../lib/card/ensure';
 
 export const prerender = false;
 
-/** GET /api/kakera?unassigned=1 — 流れ（未かたちのみ・新しい順） */
+/**
+ * GET /api/kakera?unassigned=1 — 流れ（未かたちのみ・新しい順）＋リンクカード
+ * ⚠️ カードは同じ戻りに同梱する（往復を足さない＝トップの即表示を崩さない）。増えるのは D1 の1クエリだけ。
+ */
 export const GET: APIRoute = ({ locals }) =>
   handle(async () => {
     const { env } = ctxOf(locals);
-    return json({ kakera: await listNagare(env.DB) });
+    const kakera = await listNagare(env.DB);
+    const cards = await cardsForBodies(env.DB, kakera.map((k) => k.body));
+    return json({ kakera, cards });
   });
 
 /** POST /api/kakera — {id, body, written_at} ※id は端末採番の ULID */
@@ -37,6 +43,8 @@ export const POST: APIRoute = ({ locals, request }) =>
     // 控えは保存を押した都度。裏に回してレスポンスを待たせない
     const ref = dataRepo(env);
     if (ref) waitUntil(backupKakera(ref, kakera, 'create'));
+    // 行として独立した URL のカードも裏で取る（レスポンスを待たせない）
+    waitUntil(ensureCards(env, [kakera.body]));
 
     return json({ kakera }, 201);
   });

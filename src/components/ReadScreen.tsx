@@ -81,7 +81,7 @@ export function ReadScreen({
               />
             ) : (
               <>
-                <RichText text={k.body} imgClass="read-photo" />
+                <RichText text={k.body} imgClass="read-photo" cards={detail.cards} />
                 {editing ? (
                 <div class="read-frag-tools">
                   <button type="button" class="btn-ghost" onClick={() => setOpenId(k.id)}>

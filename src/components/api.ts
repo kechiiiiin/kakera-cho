@@ -1,6 +1,7 @@
 // 画面から API を叩くだけの薄い層（iOS から同じ API を使うので、ここに業務の判断を書かない）。
 
 import type { Kakera, KatachiDetail, KatachiSummary, SearchResult } from '../lib/kakera/types';
+import type { LinkCards } from '../lib/card/types';
 
 export class ApiFailure extends Error {
   status: number;
@@ -36,7 +37,12 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  nagare: () => req<{ kakera: Kakera[] }>('/api/kakera?unassigned=1').then((r) => r.kakera),
+  /** 流れ＋そこに出てくる URL のリンクカード（同じ往復で届く） */
+  nagare: () =>
+    req<{ kakera: Kakera[]; cards?: LinkCards }>('/api/kakera?unassigned=1').then((r) => ({
+      kakera: r.kakera,
+      cards: r.cards ?? {},
+    })),
 
   createKakera: (input: { id: string; body: string; written_at: string }) =>
     req<{ kakera: Kakera }>('/api/kakera', { method: 'POST', body: JSON.stringify(input) }).then((r) => r.kakera),

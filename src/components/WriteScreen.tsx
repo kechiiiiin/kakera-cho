@@ -1,6 +1,7 @@
 import type { JSX } from 'preact';
 import { useRef, useState } from 'preact/hooks';
 import type { Kakera } from '../lib/kakera/types';
+import type { LinkCards } from '../lib/card/types';
 import { dateOf, dayGroupHeading, timeOf } from './format';
 import { RichText } from './RichText';
 import { Editor } from './Editor';
@@ -17,6 +18,7 @@ import { KakeraEdit } from './KakeraEdit';
  */
 export function WriteScreen({
   nagare,
+  cards,
   loaded,
   draftId,
   draftWrittenAt,
@@ -28,6 +30,8 @@ export function WriteScreen({
   onGoCompose,
 }: {
   nagare: Kakera[];
+  /** 流れと同じ往復で届いたリンクカード */
+  cards: LinkCards;
   loaded: boolean;
   draftId: string;
   draftWrittenAt: string;
@@ -104,13 +108,13 @@ export function WriteScreen({
                     <div
                       class="frag-row"
                       onClick={(e) => {
-                        // 行の中のリンク・埋め込みを押したときは編集を開かない
-                        if ((e.target as Element).closest('a, iframe, .embed-youtube, .embed-tweet, .twitter-tweet')) return;
+                        // 行の中のリンク・リンクカード・埋め込みを押したときは編集を開かない
+                        if ((e.target as Element).closest('a, iframe, .link-card, .embed-youtube, .embed-tweet, .twitter-tweet')) return;
                         setOpenId(k.id);
                       }}
                     >
                       <div class="frag-text frag-rich">
-                        <RichText text={k.body} imgClass="assembled-photo" />
+                        <RichText text={k.body} imgClass="assembled-photo" cards={cards} />
                       </div>
                       <span class="frag-time">{timeOf(k.written_at)}</span>
                     </div>
