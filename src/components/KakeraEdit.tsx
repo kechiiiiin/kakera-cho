@@ -5,7 +5,7 @@ import { Editor } from './Editor';
 
 /**
  * かけらをその場で開いて直す（保存・取消・削除）。
- * 流れからも、かたちの読む画面からも使う——原本を直す場所が無いと、
+ * かけらたち（トップ）からも、かたちの読む画面からも使う——原本を直す場所が無いと、
  * 日記を組み直しても直せないため（設計 §8「かたちに入ったかけらを直す」）。
  */
 export function KakeraEdit({
@@ -13,11 +13,14 @@ export function KakeraEdit({
   onSave,
   onCancel,
   onDelete,
+  onPutIntoKatachi,
 }: {
   kakera: Kakera;
   onSave: (body: string) => Promise<void>;
   onCancel: () => void;
   onDelete: () => Promise<void>;
+  /** かけらたちから開いたときだけ渡す（行き先のかたちを選ぶ一覧を出す） */
+  onPutIntoKatachi?: () => void;
 }): JSX.Element {
   const [body, setBody] = useState(kakera.body);
   const [busy, setBusy] = useState(false);
@@ -49,6 +52,20 @@ export function KakeraEdit({
             <button type="button" class="btn-ghost" disabled={busy} onClick={onCancel}>
               取消
             </button>
+            {onPutIntoKatachi ? (
+              <button
+                type="button"
+                class="btn-ghost"
+                disabled={busy}
+                onClick={() => {
+                  // 行き先を選んで入れると、この編集欄は閉じる。直した本文が捨てられることを先に断る
+                  if (body.trim() !== kakera.body && !confirm('直した本文はまだ保存していません。保存せずに進みますか？')) return;
+                  onPutIntoKatachi();
+                }}
+              >
+                かたちに入れる
+              </button>
+            ) : null}
             <button
               type="button"
               class="btn-danger"

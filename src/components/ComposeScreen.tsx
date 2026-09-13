@@ -5,12 +5,18 @@ import type { LinkCards } from '../lib/card/types';
 import { textForPick } from '../lib/card/pick';
 import { dateHeading, dateOf, timeOf } from './format';
 import { RowThumb } from './RichText';
-import { OrderList } from './OrderList';
-import { isClickSuppressed } from './drag';
+
+/** 書いた順（古い順・同時刻は id 順）。サーバの並び（db.ts の WRITTEN_ORDER）と揃える。 */
+function byWrittenOrder(a: Kakera, b: Kakera): number {
+  if (a.written_at !== b.written_at) return a.written_at < b.written_at ? -1 : 1;
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
 
 /**
  * かたちにする。
- *  入れるかけらを選ぶ（未かたちのみ）→ 日付 → 題 → ドラッグで並べる。
+ *  入れるかけらを選ぶ（未かたちのみ）→ 日付 → 題。
+ *  ★かたちの中の並びは常に書いた順（2026-09-13 決定）。選んだ順では並べず、並べ替えもしない。
+ *    並びを調整したくなるのは日記のほう（日記にする画面で組む）。
  *  日付の既定値は、選んだかけらのうち最も古いものの日付。
  *  選び直すたびに更新するが、⚠️ 手で変えた後は上書きしない。
  */
@@ -24,15 +30,19 @@ export function ComposeScreen({
   /** URL をタイトルに畳むためだけに使う（ここのために取りに行かない） */
   cards: LinkCards;
   onBack: () => void;
-  onCreate: (input: { date: string; title: string; order: string[] }) => Promise<void>;
+  onCreate: (input: { date: string; title: string; kakera_ids: string[] }) => Promise<void>;
 }): JSX.Element {
-  const [order, setOrder] = useState<string[]>([]);
+  const [picked, setPicked] = useState<string[]>([]);
   const [date, setDate] = useState('');
   const [dateAuto, setDateAuto] = useState(true);
   const [title, setTitle] = useState('');
   const [busy, setBusy] = useState(false);
 
   const byId = new Map(nagare.map((k) => [k.id, k]));
+  const chosen = picked
+    .map((id) => byId.get(id))
+    .filter((k): k is Kakera => !!k)
+    .sort(byWrittenOrder);
 
   function recomputeDate(next: string[]): string {
     if (!next.length) return '';
@@ -45,17 +55,20 @@ export function ComposeScreen({
   }
 
   function toggle(id: string): void {
-    if (isClickSuppressed()) return;
-    const next = order.includes(id) ? order.filter((x) => x !== id) : [...order, id];
-    setOrder(next);
+    const next = picked.includes(id) ? picked.filter((x) => x !== id) : [...picked, id];
+    setPicked(next);
     if (dateAuto) setDate(recomputeDate(next));
   }
 
   async function create(): Promise<void> {
-    if (!order.length || busy) return;
+    if (!chosen.length || busy) return;
     setBusy(true);
     try {
-      await onCreate({ date: date || recomputeDate(order), title: title.trim(), order });
+      await onCreate({
+        date: date || recomputeDate(picked),
+        title: title.trim(),
+        kakera_ids: chosen.map((k) => k.id),
+      });
     } finally {
       setBusy(false);
     }
@@ -69,7 +82,7 @@ export function ComposeScreen({
         </button>
       </div>
       <p class="page-date" style="font-size:17px;">かたちにする</p>
-      <p class="page-sub">流れのかけらから、ひとつのかたちを作ります。</p>
+      <p class="page-sub">かけらたちから、ひとつのかたちを作ります。</p>
 
       <div class="section-head">
         <h2>入れるかけらを選ぶ</h2>
@@ -79,7 +92,7 @@ export function ComposeScreen({
           <p class="empty-note">まだかたちになっていないかけらがありません</p>
         ) : (
           nagare.map((k) => {
-            const checked = order.includes(k.id);
+            const checked = picked.includes(k.id);
             return (
               <div class="pick-row" key={k.id} onClick={() => toggle(k.id)}>
                 <div class={'checkbox' + (checked ? ' checked' : '')}>{checked ? '✓' : ''}</div>
@@ -120,18 +133,21 @@ export function ComposeScreen({
       </div>
 
       <div class="section-head">
-        <h2>この順でかたちになります（{order.length}）</h2>
+        <h2>書いた順にかたちになります（{chosen.length}）</h2>
       </div>
-      {!order.length ? (
+      {!chosen.length ? (
         <p class="empty-note">まだ選ばれていません</p>
       ) : (
-        <OrderList
-          items={order
-            .map((id) => byId.get(id))
-            .filter((k): k is Kakera => !!k)
-            .map((k) => ({ id: k.id, content: <span class="pick-excerpt">{textForPick(k.body, cards)}</span> }))}
-          onReorder={setOrder}
-        />
+        <div class="assembled">
+          {chosen.map((k) => (
+            <div class="assembled-item" key={k.id}>
+              <span class="assembled-num assembled-time">{timeOf(k.written_at)}</span>
+              <div class="assembled-text">
+                <span class="pick-excerpt">{textForPick(k.body, cards)}</span>
+              </div>
+            </div>
+          ))}
+        </div>
       )}
 
       <div style="margin-top:22px;">
@@ -139,7 +155,7 @@ export function ComposeScreen({
           type="button"
           class="btn-cta"
           style="width:100%;"
-          disabled={!order.length || !date || busy}
+          disabled={!chosen.length || !date || busy}
           onClick={create}
         >
           かたちにする

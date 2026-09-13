@@ -12,17 +12,23 @@ import { ApiError } from '../http';
 // kakera の行は「中身」だけ。★置き場所の操作で kakera の行（updated_at）に触らないこと——
 // 公開名変換の選択は kakera.updated_at を basis にしているので、触ると本文を直していないのに白紙に戻る。
 //
-// 画面と控えの形（Kakera.katachi_id / sort_order）は変えず、ここで LEFT JOIN して導出する。
+// 画面と控えの形（Kakera.katachi_id）は変えず、ここで LEFT JOIN して導出する。
+//
+// ★かたちの中の並びは常に書いた順（kakera.written_at の古い順・同時刻は id 順。migrations/0005）。
+//   手で並べ替える列は持たない。並びを調整するのは日記（nikki_kakera.position）のほう。
+
+/** かたちの中の並び（書いた順）。k は kakera の別名。 */
+const WRITTEN_ORDER = 'k.written_at, k.id';
 
 /** かけら＋置き場所。別名は k（kakera）と kk（katachi_kakera）。 */
-const KAKERA_SELECT = `SELECT k.id, k.body, k.written_at, kk.katachi_id, kk.sort_order, k.updated_at
+const KAKERA_SELECT = `SELECT k.id, k.body, k.written_at, kk.katachi_id, k.updated_at
   FROM kakera k LEFT JOIN katachi_kakera kk ON kk.kakera_id = k.id`;
 
 /** かけらの流れ（まだかたちになっていないもの＝置き場所の行が無いものだけ・新しい順）。 */
 export async function listNagare(db: D1Database): Promise<Kakera[]> {
   const { results } = await db
     .prepare(
-      `SELECT k.id, k.body, k.written_at, NULL AS katachi_id, NULL AS sort_order, k.updated_at
+      `SELECT k.id, k.body, k.written_at, NULL AS katachi_id, k.updated_at
          FROM kakera k
         WHERE NOT EXISTS (SELECT 1 FROM katachi_kakera kk WHERE kk.kakera_id = k.id)
         ORDER BY k.written_at DESC`
@@ -46,7 +52,7 @@ export async function insertKakera(
     .prepare('INSERT INTO kakera (id, body, written_at, updated_at) VALUES (?, ?, ?, ?)')
     .bind(k.id, k.body, k.written_at, now)
     .run();
-  return { ...k, katachi_id: null, sort_order: null, updated_at: now };
+  return { ...k, katachi_id: null, updated_at: now };
 }
 
 /** 本文だけを直す。written_at は不変なので絶対に触らない。kakera.updated_at を進めるのはここだけ。 */
@@ -81,7 +87,7 @@ export async function listKatachi(db: D1Database): Promise<KatachiSummary[]> {
       `SELECT k.*,
               (SELECT 1 FROM nikki n WHERE n.katachi_id = k.id) AS has_nikki,
               (SELECT f.body FROM katachi_kakera kk JOIN kakera f ON f.id = kk.kakera_id
-                WHERE kk.katachi_id = k.id ORDER BY kk.sort_order LIMIT 1) AS lead_body
+                WHERE kk.katachi_id = k.id ORDER BY f.written_at, f.id LIMIT 1) AS lead_body
          FROM katachi k
         ORDER BY k.date DESC`
     )
@@ -106,14 +112,14 @@ export async function getNikkiRow(db: D1Database, katachiId: string): Promise<Ni
   return await db.prepare('SELECT * FROM nikki WHERE katachi_id = ?').bind(katachiId).first<Nikki>();
 }
 
-/** かたちの中のかけら（並び順）。 */
+/** かたちの中のかけら（書いた順）。 */
 export async function kakeraOfKatachi(db: D1Database, katachiId: string): Promise<Kakera[]> {
   const { results } = await db
     .prepare(
-      `SELECT k.id, k.body, k.written_at, kk.katachi_id, kk.sort_order, k.updated_at
+      `SELECT k.id, k.body, k.written_at, kk.katachi_id, k.updated_at
          FROM katachi_kakera kk JOIN kakera k ON k.id = kk.kakera_id
         WHERE kk.katachi_id = ?
-        ORDER BY kk.sort_order`
+        ORDER BY ${WRITTEN_ORDER}`
     )
     .bind(katachiId)
     .all<Kakera>();
@@ -154,34 +160,34 @@ export async function createKatachi(
       .prepare('INSERT INTO katachi (id, date, title, updated_at) VALUES (?, ?, ?, ?)')
       .bind(input.id, input.date, input.title, now),
   ];
-  input.kakera_ids.forEach((kid, i) => {
-    // 流れにいるものだけを取り込む（二重取り込みの防止）。無い id・他のかたちにいる id は黙って飛ばす。
+  for (const kid of new Set(input.kakera_ids)) {
+    // かけらたちにいるものだけを取り込む（二重取り込みの防止）。無い id・他のかたちにいる id は黙って飛ばす。
+    // 並びは送られた順ではなく書いた順（読むときに ORDER BY で決まる）。
     // ★kakera の行には触らない（updated_at を進めない）
     stmts.push(
       db
         .prepare(
-          `INSERT INTO katachi_kakera (katachi_id, kakera_id, sort_order)
-           SELECT ?, k.id, ? FROM kakera k
+          `INSERT INTO katachi_kakera (katachi_id, kakera_id)
+           SELECT ?, k.id FROM kakera k
             WHERE k.id = ? AND NOT EXISTS (SELECT 1 FROM katachi_kakera kk WHERE kk.kakera_id = k.id)`
         )
-        .bind(input.id, (i + 1) * 100, kid)
+        .bind(input.id, kid)
     );
-  });
+  }
   await db.batch(stmts);
   return await getKatachiDetail(db, input.id);
 }
 
 /**
- * かたちの日付・題・並びを変える。
- * ★katachi.updated_at は日付か題が実際に変わったときだけ進める（並べ替えだけなら katachi の行に触らない）。
- * ★並べ替えは katachi_kakera だけを書き換える（kakera.updated_at は進めない）。
+ * かたちの日付・題を変える（並びは書いた順で決まるので、ここでは変えない）。
+ * ★katachi.updated_at は日付か題が実際に変わったときだけ進める。
  * ★日記になったかたちは日付を変えられない（変えると次の書き出しで別の日付のファイルができ、
  *   古い日付の記事が astro-blog に取り残されるため）。
  */
 export async function updateKatachi(
   db: D1Database,
   id: string,
-  patch: { date?: string; title?: string; order?: string[] }
+  patch: { date?: string; title?: string }
 ): Promise<{ detail: KatachiDetail; oldDate: string }> {
   const before = await getKatachiRow(db, id);
   if (!before) throw new ApiError(404, 'そのかたちはありません');
@@ -199,24 +205,12 @@ export async function updateKatachi(
     if (dup) throw new ApiError(409, `${nextDate} のかたちはもうあります（1日にひとつです）`);
   }
 
-  const stmts: D1PreparedStatement[] = [];
   if (nextDate !== before.date || nextTitle !== before.title) {
-    stmts.push(
-      db
-        .prepare('UPDATE katachi SET date = ?, title = ?, updated_at = ? WHERE id = ?')
-        .bind(nextDate, nextTitle, nowJst(), id)
-    );
+    await db
+      .prepare('UPDATE katachi SET date = ?, title = ?, updated_at = ? WHERE id = ?')
+      .bind(nextDate, nextTitle, nowJst(), id)
+      .run();
   }
-  if (patch.order) {
-    patch.order.forEach((kid, i) => {
-      stmts.push(
-        db
-          .prepare('UPDATE katachi_kakera SET sort_order = ? WHERE katachi_id = ? AND kakera_id = ?')
-          .bind((i + 1) * 100, id, kid)
-      );
-    });
-  }
-  if (stmts.length) await db.batch(stmts);
   return { detail: await getKatachiDetail(db, id), oldDate: before.date };
 }
 
@@ -240,6 +234,74 @@ export async function dissolveKatachi(db: D1Database, id: string): Promise<Katac
 }
 
 /**
+ * 既にあるかたちへ、まだどのかたちにも入っていないかけらを足す（設計 §3・2026-09-13 決定）。
+ *  - 並びは書いた順（読むときに ORDER BY で決まる）。置き場所の行を入れるだけで、差し込み位置の計算は要らない
+ *  - ★katachi_kakera への INSERT だけ。kakera の行・katachi の行は書き換えない（時刻を進めない）。
+ *    nikki_kakera にも触らない（公開済みの日記は、次に書き足すまで変わらない）
+ *  - 日記済みのかたちにも足してよい
+ *  - 無い id は 404、既にどこかのかたちにいるものは 409。黙って飛ばさない
+ * 足したかけら（置き場所つき）を返す。
+ */
+export async function addKakeraToKatachi(
+  db: D1Database,
+  katachiId: string,
+  kakeraIds: string[]
+): Promise<Kakera[]> {
+  const katachi = await getKatachiRow(db, katachiId);
+  if (!katachi) throw new ApiError(404, 'そのかたちはありません');
+
+  const ids = [...new Set(kakeraIds)];
+  if (!ids.length) throw new ApiError(400, 'kakera_ids が空です');
+  if (ids.length > IN_CHUNK) throw new ApiError(400, `一度に足せるのは ${IN_CHUNK} 枚までです`);
+
+  const { results: found } = await db
+    .prepare(`${KAKERA_SELECT} WHERE k.id IN (${ids.map(() => '?').join(',')})`)
+    .bind(...ids)
+    .all<Kakera>();
+  const byId = new Map((found ?? []).map((k) => [k.id, k]));
+
+  const missing = ids.filter((id) => !byId.has(id));
+  if (missing.length) {
+    throw new ApiError(404, `そのかけらはありません（${missing.join(', ')}）`);
+  }
+
+  const placed = ids.map((id) => byId.get(id)!).filter((k) => k.katachi_id);
+  if (placed.length) {
+    const homeIds = [...new Set(placed.map((k) => k.katachi_id!))];
+    const { results: homes } = await db
+      .prepare(`SELECT id, date FROM katachi WHERE id IN (${homeIds.map(() => '?').join(',')})`)
+      .bind(...homeIds)
+      .all<{ id: string; date: string }>();
+    const dateOf = new Map((homes ?? []).map((h) => [h.id, h.date]));
+    const what = placed
+      .map((k) => {
+        const where = k.katachi_id === katachiId ? 'このかたち' : `${dateOf.get(k.katachi_id!) ?? '別の日'} のかたち`;
+        return `${k.written_at.slice(5, 10)} ${k.written_at.slice(11, 16)} に書いたかけらは、もう${where}に入っています`;
+      })
+      .join('／');
+    throw new ApiError(409, what);
+  }
+
+  // 一つの batch（D1 ではトランザクション）で入れる。読んでから入れるまでの間に
+  // 他の操作で入っていた・かたちが消えていたら、UNIQUE／外部キーで丸ごと止まる（半端に入らない）。
+  try {
+    await db.batch(
+      ids.map((kid) =>
+        db.prepare('INSERT INTO katachi_kakera (katachi_id, kakera_id) VALUES (?, ?)').bind(katachiId, kid)
+      )
+    );
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    if (/UNIQUE|FOREIGN KEY|constraint/i.test(message)) {
+      throw new ApiError(409, 'ほかの操作と重なりました。読み込み直してから、もう一度足してください');
+    }
+    throw e;
+  }
+
+  return ids.map((id) => ({ ...byId.get(id)!, katachi_id: katachiId }));
+}
+
+/**
  * かけら1枚をかたちから外して流れへ戻す（日記の有無にかかわらず可）。
  * ★置き場所の行だけを消す。kakera.updated_at は進めず、nikki_kakera（書き出しの記録）も消さない。
  */
@@ -250,7 +312,7 @@ export async function detachKakera(db: D1Database, katachiId: string, kakeraId: 
     .prepare('DELETE FROM katachi_kakera WHERE katachi_id = ? AND kakera_id = ?')
     .bind(katachiId, kakeraId)
     .run();
-  return { ...k, katachi_id: null, sort_order: null };
+  return { ...k, katachi_id: null };
 }
 
 /**

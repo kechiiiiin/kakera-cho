@@ -21,7 +21,11 @@ export const GET: APIRoute = ({ locals, params }) =>
     return json(await withCards(env.DB, await getKatachiDetail(env.DB, params.id)));
   });
 
-/** PATCH /api/katachi/:id — {date?, title?, order?[]} ※date 変更は控えの改名も行う */
+/**
+ * PATCH /api/katachi/:id — {date?, title?} ※date 変更は控えの改名も行う
+ * ★order は受け付けない（400）。かたちの中の並びは常に書いた順（migrations/0005）。
+ *   黙って無視すると、古い呼び手が「並べ替えた」と思い込むので断る。
+ */
 export const PATCH: APIRoute = ({ locals, params, request }) =>
   handle(async () => {
     const { env, waitUntil } = ctxOf(locals);
@@ -35,14 +39,13 @@ export const PATCH: APIRoute = ({ locals, params, request }) =>
     if (input.title !== undefined && typeof input.title !== 'string') {
       throw new ApiError(400, 'title は文字列で送ってください');
     }
-    if (input.order !== undefined && (!Array.isArray(input.order) || !input.order.every((x) => typeof x === 'string'))) {
-      throw new ApiError(400, 'order は id の配列で送ってください');
+    if (input.order !== undefined) {
+      throw new ApiError(400, 'かたちの並びは書いた順で決まるので、order は受け付けません（並びを組むのは日記にするときです）');
     }
 
     const { detail, oldDate } = await updateKatachi(env.DB, id, {
       date: input.date as string | undefined,
       title: input.title === undefined ? undefined : (input.title as string).trim(),
-      order: input.order as string[] | undefined,
     });
 
     // 日付が変わったら控えのファイルを改名する（旧ファイルを消す）
@@ -51,7 +54,7 @@ export const PATCH: APIRoute = ({ locals, params, request }) =>
   });
 
 /**
- * DELETE /api/katachi/:id — 解く（中のかけらは流れへ戻る）
+ * DELETE /api/katachi/:id — 解く（中のかけらはかけらたちへ戻る）
  * ★nikki に行があれば 409（db 側で弾く）。
  */
 export const DELETE: APIRoute = ({ locals, params }) =>
@@ -66,7 +69,7 @@ export const DELETE: APIRoute = ({ locals, params }) =>
       syncKatachiDissolved(
         env,
         katachi.date,
-        inside.map((k) => ({ ...k, katachi_id: null, sort_order: null }))
+        inside.map((k) => ({ ...k, katachi_id: null }))
       )
     );
     return json({ ok: true });

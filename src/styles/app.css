@@ -337,6 +337,19 @@ ul.frag-list li.frag:last-child { border-bottom: 1px solid var(--line); }
   overflow: hidden; min-width: 0; overflow-wrap: anywhere;
 }
 .pick-time { font-size: 11px; color: var(--muted); font-family: var(--mono); margin-top: 4px; }
+/* 「かたちに入れる」の行き先の日付（行の主役なので本文の色で） */
+.pick-date { font-family: var(--mono); font-size: 13px; color: var(--fg); margin-bottom: 2px; }
+
+/* ---- 既にあるかたちへ足す（選ぶ一覧のシート）----
+   読む画面の上に出ても、中は書く側の道具（ゴシック・罫線だけ）。
+   ⚠️ iPhone の幅（375px）ではみ出さないこと。一覧だけをスクロールさせ、ボタンは常に見える位置に置く。 */
+.pick-sheet { display: flex; flex-direction: column; overflow: hidden; font-family: "Hiragino Kaku Gothic ProN", "Hiragino Sans", system-ui, -apple-system, sans-serif; }
+.pick-sheet .sh-title, .pick-sheet .sh-snip { flex-shrink: 0; }
+.pick-sheet-list {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch;
+  border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); margin: 0 0 12px;
+}
+.pick-sheet .sh-actions { flex-shrink: 0; }
 .tag-published {
   display: inline-block; font-size: 10px; color: var(--accent);
   border: 1px solid var(--accent); border-radius: 1px; padding: 1px 5px; margin-top: 5px;
@@ -350,6 +363,8 @@ ul.frag-list li.frag:last-child { border-bottom: 1px solid var(--line); }
 .assembled-item:first-child { border-top: none; }
 .assembled-num { font-family: var(--mono); font-weight: 600; color: var(--muted); font-size: 12px; width: 18px; flex-shrink: 0; padding-top: 2px; }
 .assembled-text { flex: 1; min-width: 0; font-size: 15px; line-height: 1.55; color: var(--fg); }
+/* かたちにする の「書いた順」の欄は、番号の代わりに時刻を出す */
+.assembled-num.assembled-time { width: auto; font-weight: 400; font-size: 11px; align-self: flex-start; padding-top: 4px; }
 .empty-note { text-align: center; color: var(--muted); font-size: 13px; padding: 24px 10px; }
 
 /* ---- 入力欄 ---- */

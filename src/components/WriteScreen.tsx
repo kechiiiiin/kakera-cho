@@ -1,6 +1,7 @@
 import type { JSX } from 'preact';
 import { useRef, useState } from 'preact/hooks';
-import type { Kakera } from '../lib/kakera/types';
+import type { Kakera, KatachiSummary } from '../lib/kakera/types';
+import { KatachiPickSheet } from './PickSheets';
 import type { LinkCards } from '../lib/card/types';
 import { dateOf, dayGroupHeading, timeOf } from './format';
 import { RichText } from './RichText';
@@ -28,6 +29,10 @@ export function WriteScreen({
   onEdit,
   onDelete,
   onGoCompose,
+  katachiList,
+  katachiLoaded,
+  onOpenKatachiPicker,
+  onPutIntoKatachi,
 }: {
   nagare: Kakera[];
   /** 流れと同じ往復で届いたリンクカード */
@@ -41,8 +46,17 @@ export function WriteScreen({
   onEdit: (id: string, body: string) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
   onGoCompose: () => void;
+  /** 「かたちに入れる」の行き先（新しい順） */
+  katachiList: KatachiSummary[];
+  katachiLoaded: boolean;
+  /** 行き先の一覧を開いたとき（かたちの一覧を取り直す） */
+  onOpenKatachiPicker: () => void;
+  /** 失敗したら投げる（一覧は開いたまま） */
+  onPutIntoKatachi: (katachiId: string, kakeraId: string) => Promise<void>;
 }): JSX.Element {
   const [openId, setOpenId] = useState<string | null>(null);
+  /** 行き先を選んでいるかけら */
+  const [movingId, setMovingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
 
@@ -131,6 +145,10 @@ export function WriteScreen({
                         await onDelete(k.id);
                         setOpenId(null);
                       }}
+                      onPutIntoKatachi={() => {
+                        setMovingId(k.id);
+                        onOpenKatachiPicker();
+                      }}
                     />
                   ) : null}
                 </li>
@@ -139,6 +157,19 @@ export function WriteScreen({
           })}
         </ul>
       )}
+
+      {movingId ? (
+        <KatachiPickSheet
+          list={katachiList}
+          loaded={katachiLoaded}
+          onClose={() => setMovingId(null)}
+          onPut={async (katachiId) => {
+            await onPutIntoKatachi(katachiId, movingId);
+            setMovingId(null);
+            setOpenId(null);
+          }}
+        />
+      ) : null}
     </section>
   );
 }

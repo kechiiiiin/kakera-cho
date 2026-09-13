@@ -59,6 +59,17 @@ export async function syncKatachiCreated(env: Env, katachiId: string): Promise<v
   for (const k of detail.kakera) await removeKakera(ref, k);
 }
 
+/**
+ * 既にあるかたちへかけらを足したとき: かたちのファイルを書き直し、足したかけらの kakera/ 側を消す（移動）。
+ * ⚠️ 先にかたちを書いてから消す（途中で失敗しても本文がどこにも無い瞬間を作らない）。
+ */
+export async function syncKakeraAdded(env: Env, katachiId: string, added: Kakera[]): Promise<void> {
+  const ref = dataRepo(env);
+  if (!ref) return;
+  await syncKatachi(env, katachiId);
+  for (const k of added) await removeKakera(ref, k);
+}
+
 /** かたちを解いたとき: かたちのファイルを消し、戻ったかけらを kakera/ に生やす。 */
 export async function syncKatachiDissolved(env: Env, date: string, kakera: Kakera[]): Promise<void> {
   const ref = dataRepo(env);

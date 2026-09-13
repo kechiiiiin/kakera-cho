@@ -18,7 +18,9 @@
     "db:migrate:name-map:local": "wrangler d1 execute kakera --local --file=./migrations/0003_name_map.sql",
     "db:migrate:name-map:remote": "wrangler d1 execute kakera --remote --file=./migrations/0003_name_map.sql",
     "db:migrate:katachi-kakera:local": "wrangler d1 execute kakera --local --file=./migrations/0004_katachi_kakera.sql",
-    "db:migrate:katachi-kakera:remote": "wrangler d1 execute kakera --remote --file=./migrations/0004_katachi_kakera.sql"
+    "db:migrate:katachi-kakera:remote": "wrangler d1 execute kakera --remote --file=./migrations/0004_katachi_kakera.sql",
+    "db:migrate:written-order:local": "wrangler d1 execute kakera --local --file=./migrations/0005_katachi_written_order.sql",
+    "db:migrate:written-order:remote": "wrangler d1 execute kakera --remote --file=./migrations/0005_katachi_written_order.sql"
   },
   "dependencies": {
     "@astrojs/cloudflare": "^12.6.10",

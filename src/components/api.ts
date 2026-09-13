@@ -83,10 +83,17 @@ export const api = {
   createKatachi: (input: { id: string; date: string; title: string; kakera_ids: string[] }) =>
     req<KatachiDetail>('/api/katachi', { method: 'POST', body: JSON.stringify(input) }),
 
-  updateKatachi: (id: string, patch: { date?: string; title?: string; order?: string[] }) =>
+  updateKatachi: (id: string, patch: { date?: string; title?: string }) =>
     req<KatachiDetail>(`/api/katachi/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
 
   dissolveKatachi: (id: string) => req<{ ok: true }>(`/api/katachi/${id}`, { method: 'DELETE' }),
+
+  /** 既にあるかたちへかけらを足す（並びはサーバが書いた順で決める）。戻りはかたちの詳細 */
+  addKakeraToKatachi: (katachiId: string, kakeraIds: string[]) =>
+    req<KatachiDetail>(`/api/katachi/${katachiId}/kakera`, {
+      method: 'POST',
+      body: JSON.stringify({ kakera_ids: kakeraIds }),
+    }),
 
   detachKakera: (katachiId: string, kakeraId: string) =>
     req<{ kakera: Kakera }>(`/api/katachi/${katachiId}/kakera/${kakeraId}`, { method: 'DELETE' }),

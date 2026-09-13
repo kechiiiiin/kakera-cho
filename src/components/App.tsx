@@ -75,6 +75,19 @@ export default function App(): JSX.Element {
     [say]
   );
 
+  /** かたちに足した後の知らせ。日記済みのかたちのときだけ、公開中の日記は変わらないことを添える。 */
+  const sayAdded = useCallback(
+    (next: KatachiDetail) => {
+      const where = `${next.katachi.date} のかたち`;
+      if (next.nikki) {
+        say(`${where}に入れました。公開中の日記は、「日記に書き足す」で選び直すまで変わりません`);
+      } else {
+        say(`${where}に入れました`);
+      }
+    },
+    [say]
+  );
+
   const loadNagare = useCallback(async () => {
     const { kakera, cards } = await api.nagare();
     setNagare(kakera);
@@ -91,7 +104,7 @@ export default function App(): JSX.Element {
     setDetail(await api.katachi(id));
   }, []);
 
-  // 入力欄を先に描いてから流れを取りに行く（トップは常時即表示）
+  // 入力欄を先に描いてから かけらたち を取りに行く（トップは常時即表示）
   useEffect(() => {
     void guard(loadNagare);
   }, [guard, loadNagare]);
@@ -193,6 +206,20 @@ export default function App(): JSX.Element {
               })
             }
             onGoCompose={() => setView({ t: 'compose' })}
+            katachiList={katachiList}
+            katachiLoaded={katachiLoaded}
+            onOpenKatachiPicker={() => void guard(loadKatachiList)}
+            onPutIntoKatachi={async (katachiId, kakeraId) => {
+              try {
+                const next = await api.addKakeraToKatachi(katachiId, [kakeraId]);
+                if (detail?.katachi.id === katachiId) setDetail(next);
+                await Promise.all([loadNagare(), loadKatachiList()]);
+                sayAdded(next);
+              } catch (e) {
+                say(e instanceof Error ? e.message : String(e));
+                throw e;
+              }
+            }}
           />
         ) : null}
 
@@ -207,7 +234,7 @@ export default function App(): JSX.Element {
                   id: ulid(),
                   date: input.date,
                   title: input.title,
-                  kakera_ids: input.order,
+                  kakera_ids: input.kakera_ids,
                 });
                 await Promise.all([loadNagare(), loadKatachiList()]);
                 setDetail(created);
@@ -263,9 +290,25 @@ export default function App(): JSX.Element {
               guard(async () => {
                 await api.detachKakera(view.id, id);
                 await Promise.all([loadDetail(view.id), loadNagare(), loadKatachiList()]);
-                say('流れへ戻しました');
+                say('かけらたちへ戻しました');
               })
             }
+            nagare={nagare}
+            nagareCards={nagareCards}
+            nagareLoaded={nagareLoaded}
+            onOpenPicker={() => void guard(loadNagare)}
+            onAdd={async (ids) => {
+              // 失敗したら知らせて投げ直す（選ぶ一覧は開いたままにして、選び直せるように）
+              try {
+                const next = await api.addKakeraToKatachi(view.id, ids);
+                setDetail(next);
+                await Promise.all([loadNagare(), loadKatachiList()]);
+                sayAdded(next);
+              } catch (e) {
+                say(e instanceof Error ? e.message : String(e));
+                throw e;
+              }
+            }}
             onDissolve={() =>
               guard(async () => {
                 await api.dissolveKatachi(view.id);

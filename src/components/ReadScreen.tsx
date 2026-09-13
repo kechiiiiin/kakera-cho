@@ -1,6 +1,8 @@
 import type { JSX } from 'preact';
 import { useState } from 'preact/hooks';
-import type { KatachiDetail } from '../lib/kakera/types';
+import type { Kakera, KatachiDetail } from '../lib/kakera/types';
+import type { LinkCards } from '../lib/card/types';
+import { KakeraPickSheet } from './PickSheets';
 import { dateHeading, dateLiterary } from './format';
 import { RichText } from './RichText';
 import { KakeraEdit } from './KakeraEdit';
@@ -23,6 +25,11 @@ export function ReadScreen({
   onDelete,
   onDetach,
   onDissolve,
+  nagare,
+  nagareCards,
+  nagareLoaded,
+  onOpenPicker,
+  onAdd,
 }: {
   detail: KatachiDetail;
   onBack: () => void;
@@ -31,9 +38,18 @@ export function ReadScreen({
   onDelete: (id: string) => Promise<void>;
   onDetach: (id: string) => Promise<void>;
   onDissolve: () => Promise<void>;
+  /** 「かけらを足す」で選ぶ、まだかたちになっていないかけら */
+  nagare: Kakera[];
+  nagareCards: LinkCards;
+  nagareLoaded: boolean;
+  /** 選ぶ一覧を開いたとき（かけらたちを取り直す） */
+  onOpenPicker: () => void;
+  /** 失敗したら投げる（一覧は開いたまま） */
+  onAdd: (ids: string[]) => Promise<void>;
 }): JSX.Element {
   const [openId, setOpenId] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
+  const [picking, setPicking] = useState(false);
   const { katachi, kakera, nikki } = detail;
 
   return (
@@ -91,11 +107,11 @@ export function ReadScreen({
                     type="button"
                     class="btn-ghost"
                     onClick={async () => {
-                      if (!confirm('このかけらをかたちから外して、流れへ戻します。よろしいですか？')) return;
+                      if (!confirm('このかけらをかたちから外して、かけらたちへ戻します。よろしいですか？')) return;
                       await onDetach(k.id);
                     }}
                   >
-                    流れへ戻す
+                    かけらたちへ戻す
                   </button>
                 </div>
                 ) : null}
@@ -105,7 +121,38 @@ export function ReadScreen({
         ))}
       </div>
 
-      <div style="margin-top:26px;">
+      {/* 足す導線は編集モードのときだけ（読む場所は読むことに徹する） */}
+      {editing ? (
+        <div style="margin-top:26px;">
+          <button
+            type="button"
+            class="btn-ghost"
+            style="width:100%;"
+            onClick={() => {
+              setOpenId(null);
+              setPicking(true);
+              onOpenPicker();
+            }}
+          >
+            かけらを足す
+          </button>
+        </div>
+      ) : null}
+
+      {editing && picking ? (
+        <KakeraPickSheet
+          nagare={nagare}
+          cards={nagareCards}
+          loaded={nagareLoaded}
+          onClose={() => setPicking(false)}
+          onAdd={async (ids) => {
+            await onAdd(ids);
+            setPicking(false);
+          }}
+        />
+      ) : null}
+
+      <div style={editing ? 'margin-top:14px;' : 'margin-top:26px;'}>
         <button type="button" class="btn-cta" style="width:100%;" onClick={onGoAssemble}>
           {nikki ? '日記に書き足す' : '日記にする'}
         </button>
@@ -119,7 +166,7 @@ export function ReadScreen({
             class="btn-ghost"
             style="width:100%;"
             onClick={async () => {
-              if (!confirm('このかたちを解きます。中のかけらは流れへ戻ります。よろしいですか？')) return;
+              if (!confirm('このかたちを解きます。中のかけらはかけらたちへ戻ります。よろしいですか？')) return;
               await onDissolve();
             }}
           >
