@@ -181,6 +181,33 @@ export function isSafeHref(url: string): boolean {
   return /^https?:\/\/./i.test(u);
 }
 
+/**
+ * 裸の URL（`https://…` とそのまま書いたもの）の終わりを探す。
+ *
+ * URL は ASCII の印字可能文字だけで出来ているものとして切る。直後に空白を挟まず
+ * 日本語が続くとき（`https://example.com見た`）に、日本語まで URL に飲み込まないため。
+ * 文末の句読点や閉じ括弧は URL から外す（`https://example.com。` の `。` は文の一部）。
+ * 括弧は釣り合っているぶんだけ残す（`https://ja.wikipedia.org/wiki/x_(y)` を壊さない）。
+ */
+function matchBareUrl(text: string, i: number): { url: string; end: number } | null {
+  const m = /^https?:\/\/[\x21-\x7E]+/.exec(text.slice(i));
+  if (!m) return null;
+  let url = m[0];
+
+  // 釣り合わない閉じ括弧を落とす（`(https://example.com)` の `)` は文の側）
+  while (url.endsWith(')')) {
+    const opens = (url.match(/\(/g) ?? []).length;
+    const closes = (url.match(/\)/g) ?? []).length;
+    if (opens >= closes) break;
+    url = url.slice(0, -1);
+  }
+  // 文末に付きがちな記号を落とす
+  url = url.replace(/[.,!?:;'"`\]\}>]+$/, '');
+
+  if (!isSafeHref(url)) return null;
+  return { url, end: i + url.length };
+}
+
 /** 強調の記号は段落（空行）をまたがない。暴走した書式が後ろ全部を飲み込まないため。 */
 function blankLineAt(text: string, i: number): boolean {
   return text.charAt(i) === '\n' && text.charAt(i + 1) === '\n';
@@ -314,6 +341,18 @@ export function parseInline(text: string): InlineNode[] {
           out.push({ type: 'text', value: m.raw }); // 安全でない URL は素の文字として出す
         }
         i = m.end;
+        continue;
+      }
+    }
+
+    // 裸の URL をそのままリンクにする。
+    // ⚠️ `[文字](url)` と `![](url)` は上で処理済みなので、ここへは来ない。
+    if ((c === 'h' || c === 'H') && /^https?:\/\//i.test(text.slice(i, i + 8))) {
+      const u = matchBareUrl(text, i);
+      if (u) {
+        flush();
+        out.push({ type: 'link', href: u.url, children: [{ type: 'text', value: u.url }] });
+        i = u.end;
         continue;
       }
     }
