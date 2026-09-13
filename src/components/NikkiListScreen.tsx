@@ -3,6 +3,14 @@ import type { KatachiSummary } from '../lib/kakera/types';
 import { dateLiterary } from './format';
 
 /**
+ * 公開された日記の URL。astro-blog は pubDate から /diary/YYYY/MM/DD/ を組む。
+ * 日記になったかたちは日付を変えられない（409）ので、かたちの日付からそのまま決まる。
+ */
+function publishedUrl(date: string): string {
+  return `https://www.kechiiiiin.com/diary/${date.replace(/-/g, '/')}/`;
+}
+
+/**
  * 日記（三つ目のタブ）。
  * かけら帳が日記にしたもの（nikki に行があるかたち）の一覧。新しい順に日付と題。
  * 題が無ければ文語の日付。
@@ -38,6 +46,15 @@ export function NikkiListScreen({
           <div class="article-row" key={k.id} onClick={() => onOpen(k.id)}>
             <div class="article-date">{k.date}</div>
             <div class="article-title">{k.title || dateLiterary(k.date)}</div>
+            <a
+              class="article-url"
+              href={publishedUrl(k.date)}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {publishedUrl(k.date)}
+            </a>
           </div>
         ))
       )}

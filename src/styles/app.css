@@ -455,6 +455,12 @@ mark.search-hit { background: none; color: var(--accent); font-weight: 600; }
 .article-row:first-child { border-top: none; }
 .article-date { font-size: 11px; color: var(--muted); font-family: var(--mono); }
 .article-title { font-size: 15px; font-weight: 400; margin-top: 4px; color: var(--fg); overflow-wrap: anywhere; }
+/* 公開先。行を押すとかたちが開くので、リンクは押しても行を開かない */
+.article-url {
+  display: inline-block; margin-top: 4px; font-size: 11px; font-family: var(--mono);
+  color: var(--muted); text-decoration: underline; text-underline-offset: 2px;
+  text-decoration-color: var(--line); overflow-wrap: anywhere;
+}
 /* 日記タブの隅の小さな入口（名前の辞書） */
 .corner-row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
 .corner-link {
