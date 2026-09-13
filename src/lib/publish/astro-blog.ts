@@ -3,13 +3,14 @@
 // 日記は「かたちから毎回まるごと組み直す」。書き足すときも差分追記ではなく、
 // 選び直した内容でファイルを丸ごと上書きする。
 
-import { composeBody, replacePhotoUrls } from '../markdown';
+import { replacePhotoUrls } from '../markdown';
 import { ApiError } from '../http';
 import { fileExists, putText, readFile, type RepoRef } from '../backup/github';
-import { getLinkCardRows } from '../kakera/db';
+import { cardsForBodies, getLinkCardRows } from '../kakera/db';
 import { blogCardKeysOf } from '../card/url';
 import { copyPhotosForPublish } from './photos';
 import { renderDiaryFile } from './diary-file';
+import { composePublishBody } from './blank-lines';
 import { LINK_CARDS_PATH, LinkCardsJsonError, buildCardEntries, mergeCardsJson } from './link-cards';
 
 /** astro-blog への読み書き（github.ts の upsert）。書き出しの順番を差し替えて確かめられるよう一つにまとめてある。 */
@@ -85,7 +86,10 @@ export async function publishNikki(
   const urlMap = await copyPhotosForPublish(env, input.bodies, input.hiddenPhotoKeys);
   const bodies = input.bodies.map((b) => (urlMap.size ? replacePhotoUrls(b, urlMap) : b));
 
-  const body = composeBody(bodies);
+  // 空行を U+00A0 の行に変えて連結する（空行の保持）。名前の置き換え・写真の除去・URL の差し替えの**後**に当てる。
+  // カードになる行の前後の空行は変えない（かけら帳の画面で隙間に見えないため）ので、画面と同じカードの有無を引く。
+  const cards = await cardsForBodies(env.DB, bodies);
+  const body = composePublishBody(bodies, (key) => Object.prototype.hasOwnProperty.call(cards, key));
 
   // ⚠️ リンクカードの JSON を**日記の .md より先に** commit する（リンクカード設計 §6.3）。
   // 逆順だと、日記の commit で走るビルドに JSON がまだ無く、カードの無い日記が公開される時間ができる。

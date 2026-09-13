@@ -4,6 +4,7 @@ import type { Kakera, KatachiDetail } from '../lib/kakera/types';
 import type { SegChoice } from '../lib/names/db';
 import { composeBody } from '../lib/markdown';
 import { renderDiaryFile } from '../lib/publish/diary-file';
+import { composePublishBody } from '../lib/publish/blank-lines';
 import {
   DESCRIPTION_SEG,
   choiceMap,
@@ -407,7 +408,13 @@ export function ConvertScreen({
             astro-blog に書き出す中身です。リンク先・裸の URL・写真の URL は元のまま（写真の URL だけ、書き出すときに公開用へ差し替わります）。日記に出さない写真は入りません。
           </p>
           <pre class="conv-md">
-            {renderDiaryFile(titleOut, detail.katachi.date, composeBody(bodySegs.map(converted)), descOut)}
+            {renderDiaryFile(
+              titleOut,
+              detail.katachi.date,
+              // 書き出し（astro-blog.ts）と同じ組み方（空行を U+00A0 の行に変える）
+              composePublishBody(bodySegs.map(converted), (key) => !!detail.cards?.[key]),
+              descOut
+            )}
           </pre>
         </>
       ) : view === 'plain' ? (

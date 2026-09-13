@@ -4,9 +4,9 @@
  * 行全体が区切り線（thematic break）か。
  * CommonMark 準拠: 先頭空白3つまで・同じ記号3つ以上・間の空白可。
  */
-const HR_LINE = /^ {0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})$/;
+export const HR_LINE = /^ {0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})$/;
 /** コードフェンス（``` / ~~~）の開始・終了行。 */
-const FENCE_LINE = /^ {0,3}(`{3,}|~{3,})/;
+export const FENCE_LINE = /^ {0,3}(`{3,}|~{3,})/;
 
 /**
  * 区切り線の行の前後に本物の空行を確保する。
@@ -63,6 +63,8 @@ export function ensureHrBlankLines(markdown: string): string {
  * 区切り線は `---`（モックの `───` は表示用の飾り）。
  * 前後に本物の空行を確保しないと setext 見出しに化ける。
  * ⚠️ 書き出す画面のプレビューと実際の書き出しで、必ず同じこの関数を通す。
+ * ⚠️ 空行を U+00A0 の行に変える（空行の保持）のは publish/blank-lines.ts の composePublishBody。
+ *    astro-blog へ書き出す本文と変換ページの「Markdown」表示はそちらを通す（これはその中で呼ばれる）。
  */
 export function composeBody(bodies: string[]): string {
   const joined = bodies
