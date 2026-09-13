@@ -93,7 +93,7 @@ export function WriteScreen({
       </div>
 
       <div class="section-head">
-        <h2>かけら</h2>
+        <h2>かけらたち</h2>
         <button type="button" class="link-btn" disabled={!nagare.length} onClick={onGoCompose}>
           かたちにする
           <span class="link-btn-count">{nagare.length}</span>
@@ -103,7 +103,7 @@ export function WriteScreen({
       {!loaded ? (
         <p class="empty-note">読み込んでいます</p>
       ) : !nagare.length ? (
-        <p class="empty-note">かけらはまだありません</p>
+        <p class="empty-note">「かたち」になっていない「かけら」はありません</p>
       ) : (
         <ul class="frag-list">
           {nagare.map((k) => {
