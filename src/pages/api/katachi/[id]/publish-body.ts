@@ -3,6 +3,7 @@ import { ApiError, handle, json } from '../../../../lib/http';
 import { ctxOf } from '../../../../lib/ctx';
 import { cardsForBodies, getKatachiDetail } from '../../../../lib/kakera/db';
 import { loadPublishBodies, viewOf } from '../../../../lib/publish/publish-body-db';
+import { ensureCards } from '../../../../lib/card/ensure';
 
 export const prerender = false;
 
