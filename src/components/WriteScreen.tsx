@@ -1,9 +1,8 @@
 import type { JSX } from 'preact';
 import { useRef, useState } from 'preact/hooks';
 import type { Kakera } from '../lib/kakera/types';
-import { textForExcerpt } from '../lib/markdown';
 import { dateOf, dayGroupHeading, timeOf } from './format';
-import { RowThumb } from './RichText';
+import { RichText } from './RichText';
 import { Editor } from './Editor';
 import { KakeraEdit } from './KakeraEdit';
 
@@ -11,7 +10,9 @@ import { KakeraEdit } from './KakeraEdit';
  * かけら（トップ）。
  *  - 常に空のテキストエリアが一番上。保存すると下に積まれて欄が空に戻る（連投しやすく）
  *  - 下はまだかたちになっていないかけらだけの流れ。日ごとの小見出しで区切り、各行に時刻
+ *  - 流れは**全文のまま**。写真・X / YouTube の埋め込み・リンクもかたちと同じ姿で出す（2026-09-13 決定）
  *  - 行をタップするとその場で開いて編集。他を開くと前は閉じる
+ *    ⚠️ ただし行の中のリンク・埋め込みを押したときは開かない（そちらの操作を優先する）
  *  - ⚠️ トップは「常時即表示」。入力欄を先に描き、流れは遅れて出す
  */
 export function WriteScreen({
@@ -99,14 +100,21 @@ export function WriteScreen({
                   </li>
                 ) : null}
                 <li class="frag" key={k.id}>
-                  <div
-                    class="frag-row"
-                    onClick={() => setOpenId(openId === k.id ? null : k.id)}
-                  >
-                    <span class="frag-text">{textForExcerpt(k.body)}</span>
-                    <RowThumb text={k.body} />
-                    <span class="frag-time">{timeOf(k.written_at)}</span>
-                  </div>
+                  {openId !== k.id ? (
+                    <div
+                      class="frag-row"
+                      onClick={(e) => {
+                        // 行の中のリンク・埋め込みを押したときは編集を開かない
+                        if ((e.target as Element).closest('a, iframe, .embed-youtube, .embed-tweet, .twitter-tweet')) return;
+                        setOpenId(k.id);
+                      }}
+                    >
+                      <div class="frag-text frag-rich">
+                        <RichText text={k.body} imgClass="assembled-photo" />
+                      </div>
+                      <span class="frag-time">{timeOf(k.written_at)}</span>
+                    </div>
+                  ) : null}
                   {openId === k.id ? (
                     <KakeraEdit
                       kakera={k}
