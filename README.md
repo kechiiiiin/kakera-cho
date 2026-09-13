@@ -23,74 +23,17 @@
 
 ---
 
-## まだ終わっていないこと（Keisuke の手作業）
+## 初期構築（2026-09-12 に済み・記録）
 
-第0段と第一段の実装は済んでいる。残っているのは、人でないとできない6つ。
-**PAT の2本（1.）は 2026-09-12 に発行済み。**
+作り直すときのための記録。いまは全部済んでいる。
 
-### 1.【Keisuke・ブラウザ】GitHub の細粒度 PAT を2本発行する
+1. GitHub の細粒度 PAT を2本（`kechiiiiin/astro-blog` 用・`kechiiiiin/kakera-data` 用、どちらも Contents: Read and write）
+2. 一度 `npx wrangler deploy` して Worker を作る（`secret put` の置き場ができる）
+3. `npx wrangler secret put` で `BLOG_GITHUB_TOKEN` / `DATA_GITHUB_TOKEN` / `ALLOWED_EMAILS` / `CF_ACCESS_TEAM_DOMAIN` / `CF_ACCESS_AUD`
+4. Cloudflare Access の Self-hosted アプリを `kakera.kechiiiiin.com` に（Google ログイン・メール allowlist）
+5. Custom Domain `kakera.kechiiiiin.com`（いまは `wrangler.toml` の `[[routes]]` にあり、deploy だけで揃う）
 
-https://github.com/settings/personal-access-tokens/new で **2本**作る（用途を分ける）。
-
-| 作るトークン | Repository access | Permissions |
-|---|---|---|
-| かけら帳 → astro-blog | `kechiiiiin/astro-blog` のみ | Contents: **Read and write** |
-| かけら帳 → kakera-data | `kechiiiiin/kakera-data` のみ | Contents: **Read and write** |
-
-有効期限は好きに。切れたら 3. をやり直すだけ。
-
-### 2.【コマンド】先に一度デプロイして Worker を作る
-
-`wrangler secret put` は登録先の Worker が無いと置き場が無い。先に空の状態で上げておく。
-`workers_dev = false` かつ Custom Domain 未割当なので、この時点では表から開けない。
-
-```sh
-cd ~/work/kakera-cho
-npm run build
-npx wrangler deploy
-```
-
-### 3.【コマンド】秘密を登録する
-
-発行した値を貼る。**リポジトリには絶対に置かない**（`.dev.vars` は `.gitignore` 済み）。
-
-```sh
-cd ~/work/kakera-cho
-npx wrangler secret put BLOG_GITHUB_TOKEN      # 1本目
-npx wrangler secret put DATA_GITHUB_TOKEN      # 2本目
-npx wrangler secret put ALLOWED_EMAILS         # 例: kechiiiiin@gmail.com
-```
-
-Access の2つは 4. のあとで（AUD タグが要る）。
-
-### 4.【Keisuke・ブラウザ】Cloudflare Access のアプリを作る
-
-Zero Trust → Access → Applications → Add an application → **Self-hosted**。
-
-- Application domain: `kakera.kechiiiiin.com`
-- Policy: Allow / Include → **Emails** → `kechiiiiin@gmail.com`（Google ログイン）
-- 作ったら **Application Audience (AUD) Tag** を控える
-- Team domain（`https://<チーム名>.cloudflareaccess.com`）も控える
-
-⚠️ 第一段は **Access のみ**（Bearer 経路は作っていない）。`/api/*` の Bypass は**設定しない**——
-設定するとブラウザからの `/api/*` に `Cf-Access-Jwt-Assertion` が付かなくなり、全部 401 になる。
-Bypass が要るのは iOS を足す第二段。
-
-### 5.【コマンド】Access の秘密を登録する
-
-```sh
-npx wrangler secret put CF_ACCESS_TEAM_DOMAIN  # 例: https://kechiiiiin.cloudflareaccess.com
-npx wrangler secret put CF_ACCESS_AUD          # 3. で控えた AUD タグ
-```
-
-### 6.【Keisuke・ブラウザ】ドメインを繋ぐ
-
-`kakera.kechiiiiin.com` を Worker の **Custom Domain** として割り当てる
-（ダッシュボード: Workers & Pages → kakera-cho → Settings → Domains & Routes → Add → Custom Domain）。
-※`workers_dev = false` なので、これを繋ぐまで表からは開けない。
-
-これ以降は「ヘスティアに依頼するだけ」で済む。設定はすべてこのリポジトリの
-`wrangler.toml` にあり、変えたら `npx wrangler deploy` するだけ。
+⚠️ `/api/*` を Access の Bypass にしない（ブラウザからの API に JWT が付かなくなり全部 401）。Bypass が要るのは iOS を足すとき。
 
 ---
 
@@ -98,7 +41,8 @@ npx wrangler secret put CF_ACCESS_AUD          # 3. で控えた AUD タグ
 
 ```sh
 npm install
-npm run db:local      # ローカル D1 にスキーマを流す（初回だけ）
+npm run db:local      # ローカル D1 に初期スキーマを流す（初回だけ）
+# 続けて migrations/0001〜0008 を番号順に当てる（package.json の db:migrate:*:local）
 cp .dev.vars.example .dev.vars   # 値は空のままでよい（DEV_BYPASS_AUTH=1 だけ効く）
 npm run dev
 ```
@@ -116,8 +60,9 @@ npm run dev
 
 ```sh
 npm run check         # 型チェック（astro check）
+npx tsc --noEmit -p . # ⚠️ astro check は API の import 忘れを見逃す。こちらも必ず通す
 npm run build         # 本番ビルド
-npm run db:remote     # 本番 D1 にスキーマを流す（適用済み）
+# 本番 D1: 初期スキーマと 0001〜0008 は適用済み。新しいマイグレーションはデプロイより先に当てる
 ```
 
 ---

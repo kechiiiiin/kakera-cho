@@ -1,6 +1,6 @@
 -- かけら帳の初期スキーマ（設計「かけら帳設計・詳細」§3 のまま）
 -- 適用: npm run db:local / npm run db:remote
--- ⚠️ これは「初期」の形。新しく立てる環境では、このあと migrations/0001〜0005 を順に流して最終形にする。
+-- ⚠️ これは「初期」の形。新しく立てる環境では、このあと migrations/0001〜0008 を番号順に流して最終形にする。
 --    特に 0004 で kakera.katachi_id / sort_order は落ち、置き場所は katachi_kakera に移る。
 --    0005 で katachi_kakera.sort_order も落ち、かたちの中の並びは常に書いた順（written_at）になる。
 
