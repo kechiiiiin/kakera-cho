@@ -201,7 +201,7 @@ ul.frag-list li.frag:last-child { border-bottom: 1px solid var(--line); }
 /* 流れは全文（2026-09-13）。行の中の本文ブロックの余白を詰め、埋め込みも幅で抑える。 */
 .frag-rich .rich-text-block { margin-bottom: 6px; }
 .frag-rich .rich-text-block:last-child { margin-bottom: 0; }
-.frag-rich .embed-youtube, .frag-rich .embed-tweet, .frag-rich .assembled-photo { margin: 8px 0; }
+.frag-rich .embed-youtube, .frag-rich .embed-tweet, .frag-rich .embed-spotify, .frag-rich .assembled-photo { margin: 8px 0; }
 .rich-text-block, .frag-text, .pick-text, .assembled-text, .search-excerpt { overflow-wrap: anywhere; }
 .rich-text-block:last-child { margin-bottom: 0; }
 /* 行内書式。差し色は朱ひとつだけ（§9）なのでリンクも朱、下線は細く。 */
@@ -224,7 +224,7 @@ ul.frag-list li.frag:last-child { border-bottom: 1px solid var(--line); }
 .read-photo:last-child { margin-bottom: .4em; }
 .assembled-photo img, .read-photo img { width: 100%; height: auto; display: block; }
 
-/* ---- 埋め込み（X / YouTube）----
+/* ---- 埋め込み（X / YouTube / Spotify）----
    公開後の見え方のプレビュー。将来のリンクカード（枠と余白と文字のある箱）と見分けが付くよう、
    埋め込みは**中身がそのまま出るだけ**にする。差し色の朱は箱には使わない。
    ⚠️ iPhone の幅（375px）ではみ出さないこと。iframe も blockquote も必ず幅で抑える。 */
@@ -247,7 +247,10 @@ ul.frag-list li.frag:last-child { border-bottom: 1px solid var(--line); }
 /* widgets.js が差し替えた後は向こうの iframe が本体。こちらの枠は消して幅だけ抑える。 */
 .twitter-tweet-rendered { padding: 0; border: none; }
 .embed-tweet iframe, .twitter-tweet-rendered iframe { max-width: 100% !important; }
-#app.mode-read .embed-youtube, #app.mode-read .embed-tweet { margin: 1.6em 0; }
+/* Spotify は高さ 152px の固定（astro-blog と同じ）。幅は必ず枠に収める。 */
+.embed-spotify { width: 100%; max-width: 100%; margin: 10px 0; overflow: hidden; border-radius: 12px; }
+.embed-spotify iframe { width: 100%; max-width: 100%; height: 152px; border: 0; border-radius: 12px; display: block; }
+#app.mode-read .embed-youtube, #app.mode-read .embed-tweet, #app.mode-read .embed-spotify { margin: 1.6em 0; }
 
 /* ---- リンクカード（リンクカード設計・2026-09-13 に決まった形）----
    左に正方形 80px の画像、右に ドメイン（灰）→ タイトル（黒）→ 説明（灰）。細い枠の角丸の箱。

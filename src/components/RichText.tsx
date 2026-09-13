@@ -2,7 +2,15 @@ import { Fragment } from 'preact';
 import type { JSX } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { Embed, InlineNode } from '../lib/markdown';
-import { YOUTUBE_ID_RE, isSafeHref, parseEmbedTokens, parseInline, parsePhotoTokens } from '../lib/markdown';
+import {
+  SPOTIFY_ID_RE,
+  SPOTIFY_TYPE_RE,
+  YOUTUBE_ID_RE,
+  isSafeHref,
+  parseEmbedTokens,
+  parseInline,
+  parsePhotoTokens,
+} from '../lib/markdown';
 import type { LinkCard, LinkCards } from '../lib/card/types';
 import { parseCardUrls } from '../lib/card/url';
 
@@ -43,10 +51,10 @@ function Block({ text, keyPrefix }: { text: string; keyPrefix: string }): JSX.El
 }
 
 // ───────────────────────────────────────────────────────────────
-// 埋め込み（X / YouTube）
+// 埋め込み（X / YouTube / Spotify）
 //
 // ⚠️ ここも**要素を組むだけ**で HTML 文字列は作らない（`dangerouslySetInnerHTML` は使わない）。
-// iframe の src は、パーサ側で検証済みの**動画 ID だけ**から組み立てる。
+// iframe の src は、パーサ側で検証済みの**動画 ID・種別と ID だけ**から組み立てる。
 // 利用者が書いた URL やクエリは src に一切入らない。
 // ───────────────────────────────────────────────────────────────
 
@@ -106,8 +114,35 @@ function YouTube({ id }: { id: string }): JSX.Element | null {
   );
 }
 
+/**
+ * Spotify。高さ 152px・幅いっぱい・角丸 12px・遅延読み込みは astro-blog（remark-spotify-embed.ts）と同じ。
+ * ⚠️ src は検証済みの種別と ID だけから組む（書かれた URL のクエリ等は入れない）。
+ */
+function Spotify({ type, id }: { type: string; id: string }): JSX.Element | null {
+  if (!SPOTIFY_TYPE_RE.test(type) || !SPOTIFY_ID_RE.test(id)) return null;
+  return (
+    <div class="embed-spotify">
+      <iframe
+        src={`https://open.spotify.com/embed/${type}/${id}`}
+        title="Spotify"
+        width="100%"
+        height="152"
+        loading="lazy"
+        allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+      />
+    </div>
+  );
+}
+
 function EmbedBlock({ embed }: { embed: Embed }): JSX.Element | null {
-  return embed.kind === 'youtube' ? <YouTube id={embed.id} /> : <Tweet url={embed.url} />;
+  switch (embed.kind) {
+    case 'youtube':
+      return <YouTube id={embed.id} />;
+    case 'spotify':
+      return <Spotify type={embed.type} id={embed.id} />;
+    default:
+      return <Tweet url={embed.url} />;
+  }
 }
 
 // ───────────────────────────────────────────────────────────────
@@ -171,7 +206,7 @@ type Slot =
 
 /**
  * 行として独立した URL の振り分け（リンクカード設計 §8.4）:
- *   X / YouTube → 埋め込み ／ キャッシュにカードがある → カード ／ それ以外 → 素のリンク（Block の中で開く）
+ *   X / YouTube / Spotify → 埋め込み ／ キャッシュにカードがある → カード ／ それ以外 → 素のリンク（Block の中で開く）
  * キャッシュに無い URL は取得を待たない・後から差し替えもしない。
  */
 function slotsOf(text: string, cards: LinkCards | undefined): Slot[] {
@@ -190,7 +225,7 @@ function slotsOf(text: string, cards: LinkCards | undefined): Slot[] {
 
 /**
  * かけらの本文を読めるように描く。
- * 画像記法を実際の写真に開き、**行として独立した X / YouTube の URL**を埋め込みに、
+ * 画像記法を実際の写真に開き、**行として独立した X / YouTube の URL**と**段落がそれだけの Spotify の URL**を埋め込みに、
  * **キャッシュのある行として独立した URL**をリンクカードに開き、
  * **行内書式**（太字・斜体・リンク・コード・打ち消し）も開く。
  * 見出し・区切り線・引用・リスト・表は開かない（改行はそのまま見せる: white-space: pre-wrap）。

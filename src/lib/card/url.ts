@@ -1,7 +1,7 @@
 // リンクカードの URL まわり（正規化・どの URL をカードにするか）。
 // 画面とサーバの両方から使うので、DOM にも Workers の API にも依存しない。
 
-import { isSafeHref, matchEmbed, parseStandaloneUrls } from '../markdown';
+import { isSafeHref, matchBareUrl, matchEmbed, parseStandaloneUrls } from '../markdown';
 
 /** 落とすトラッキングのクエリ（設計 §3.2）。それ以外のクエリは残す（YouTube 等で意味を持つ）。 */
 const TRACKING_PARAMS = [
@@ -55,7 +55,8 @@ const NOT_CARD_EXT = /\.(?:jpe?g|png|gif|webp|avif|svg|pdf|mp4|mov)$/i;
 
 /**
  * カードにしてよい URL か。
- * ⚠️ X / YouTube の埋め込み対象はカードにしない（二重変換しない）。
+ * ⚠️ X / YouTube / Spotify の埋め込み対象はカードにしない（二重変換しない）。
+ *    Spotify は置き方で埋め込みにならない行もあるが、それでもカードにはしない（astro-blog の remark-link-card と同じ）。
  */
 export function isCardCandidate(url: string): boolean {
   if (!isSafeHref(url)) return false;
@@ -92,4 +93,33 @@ export function parseCardUrls(text: string): CardUrlToken[] {
     if (key) out.push({ start: t.start, end: t.end, url: t.url, key });
   }
   return out;
+}
+
+/** 行頭の Markdown の入れ物の記号（字下げ・引用 `>`・箇条書き `-` `*` `+` `1.` `1)`）。 */
+const CONTAINER_PREFIX = /^(?:[ \t]*>)*[ \t]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)?/;
+/** astro-blog の remark-link-card と同じ「ASCII の印字可能文字だけの URL」。 */
+const ASCII_URL = /^https?:\/\/[\x21-\x7E]+$/i;
+
+/**
+ * 日記に書き出す本文（公開版・composeBody 後）から、astro-blog の link-cards.json に載せるキーを拾う。
+ *
+ * astro-blog（remark-link-card）でカードになる URL は「GFM の裸の URL が段落の中で行として独立」している
+ * もので、Markdown として読むので**行頭の字下げ・引用 `>`・箇条書きの記号の後ろ**の URL もカードになりうる。
+ * かけら帳の parseCardUrls（行が URL と一字一句同じ）より広いので、ここでは入れ物の記号と前後の空白を
+ * 剥がしてから判定する＝**ブログでカードになる URL を取りこぼさない側に倒す**（ブログでカードにならない URL が
+ * 混じっても、誰も引かない行が残るだけで害は無い）。行の途中の URL は拾わない。
+ * 埋め込み対象（X / YouTube / Spotify）・自分の画像・画像や PDF への直リンクは除く（isCardCandidate）。
+ */
+export function blogCardKeysOf(markdown: string): string[] {
+  const keys = new Set<string>();
+  for (const raw of markdown.split('\n')) {
+    const line = raw.replace(CONTAINER_PREFIX, '').trim();
+    if (!line || !ASCII_URL.test(line)) continue;
+    // 裸の URL として読んだときに行と一字一句同じか（文末の句読点付き等は、ブログでも行として独立しない）
+    if (matchBareUrl(line, 0)?.url !== line) continue;
+    if (!isCardCandidate(line)) continue;
+    const key = normalizeUrl(line);
+    if (key) keys.add(key);
+  }
+  return [...keys];
 }

@@ -92,10 +92,11 @@ export function parsePhotoTokens(text: string): PhotoToken[] {
 }
 
 // ───────────────────────────────────────────────────────────────
-// 埋め込み（X / YouTube）
+// 埋め込み（X / YouTube / Spotify）
 //
-// ⚠️⚠️ 以下の判別（正規表現と「行として独立した URL だけ」という条件）は、
-//   `~/work/astro-blog/src/plugins/remark-media-embed.ts`
+// ⚠️⚠️ 以下の判別（正規表現と「どういう置き方の URL だけを埋め込みにするか」という条件）は、
+//   X / YouTube: `~/work/astro-blog/src/plugins/remark-media-embed.ts`
+//   Spotify:     `~/work/astro-blog/src/plugins/remark-spotify-embed.ts`
 // の **写し** です。**どちらかを直したら、必ずもう一方も同じように直してください。**
 //
 // 理由: かけら帳のこの画面は「astro-blog で公開したらこう見える」の**プレビュー**です。
@@ -105,8 +106,10 @@ export function parsePhotoTokens(text: string): PhotoToken[] {
 // npm パッケージにして共有はしません。50行ほどのために publish →2リポジトリ更新 →それぞれデプロイ、
 // では規模に釣り合わないためです（Keisuke と相談のうえ決定）。**3つ目のアプリが出てきたら見直す。**
 //
-// 対象は X と YouTube だけ。astro-blog は Spotify にも対応していますが、こちらは未対応で、
-// その一点だけは意図的に食い違っています。
+// ⚠️ 置き方の条件は X / YouTube と Spotify で違います（ブログ側の二つのプラグインがそうなっているため）:
+//   X / YouTube … **行として独立**していればよい（段落の途中の行でも埋め込みになる）
+//   Spotify     … **段落がその URL だけ**のとき（前後が空行か本文の端）。空行を挟まず前後に文が続く行は素のリンク
+// 日記は かけらを `---` と空行で区切って連結する（composeBody）ので、かけらの本文の端は段落の端になる。
 //
 // ここも**データを返すだけ**で HTML 文字列は作らない。描くのは RichText 側で Preact の要素を組む。
 // ───────────────────────────────────────────────────────────────
@@ -120,9 +123,19 @@ const TWEET_PATTERN =
 /** YouTube の動画 ID として src に入れてよい形か（11文字の英数字・`_`・`-` だけ）。 */
 export const YOUTUBE_ID_RE = /^[A-Za-z0-9_-]{11}$/;
 
+/** Spotify（remark-spotify-embed.ts の SPOTIFY_PATTERN の写し。先頭一致・後ろのクエリ等は見ない）。 */
+const SPOTIFY_PATTERN =
+  /^https:\/\/open\.spotify\.com\/(track|album|artist|playlist|episode|show)\/([a-zA-Z0-9]+)/;
+
+export type SpotifyType = 'track' | 'album' | 'artist' | 'playlist' | 'episode' | 'show';
+/** Spotify の種別・ID として src に入れてよい形か。 */
+export const SPOTIFY_TYPE_RE = /^(?:track|album|artist|playlist|episode|show)$/;
+export const SPOTIFY_ID_RE = /^[A-Za-z0-9]+$/;
+
 export type Embed =
   | { kind: 'youtube'; id: string }
-  | { kind: 'tweet'; url: string };
+  | { kind: 'tweet'; url: string }
+  | { kind: 'spotify'; type: SpotifyType; id: string };
 
 export interface EmbedToken {
   start: number;
@@ -140,22 +153,40 @@ export function matchEmbed(url: string): Embed | null {
     return YOUTUBE_ID_RE.test(id) ? { kind: 'youtube', id } : null;
   }
   if (TWEET_PATTERN.test(url)) return { kind: 'tweet', url };
+  const sp = SPOTIFY_PATTERN.exec(url);
+  if (sp) {
+    const type = sp[1]!;
+    const id = sp[2]!;
+    return SPOTIFY_TYPE_RE.test(type) && SPOTIFY_ID_RE.test(id)
+      ? { kind: 'spotify', type: type as SpotifyType, id }
+      : null;
+  }
   return null;
 }
+
+const BLANK_LINE = /^[ \t]*$/;
 
 /**
  * 「行として独立した URL」だけを埋め込みとして拾う（astro-blog の `isLineStandalone` と同じ考え方）。
  * ⚠️ 行の途中に書かれた URL は拾わない＝今までどおり素のリンクになる。
  * 行そのものが URL と一字一句同じときだけ対象（前後に文字や空白が付いていたら対象外）。
+ * ⚠️ Spotify だけは、さらに**前後の行が空行か本文の端**のときだけ（remark-spotify-embed の
+ *    「段落に link が1つだけ」の写し）。満たさない Spotify の行は、埋め込みにもカードにもならず素のリンク。
  */
 export function parseEmbedTokens(text: string): EmbedToken[] {
   const tokens: EmbedToken[] = [];
+  const lines = text.split('\n');
   let pos = 0;
-  for (const line of text.split('\n')) {
+  lines.forEach((line, i) => {
     const embed = line ? matchEmbed(line) : null;
-    if (embed) tokens.push({ start: pos, end: pos + line.length, embed });
+    if (embed) {
+      const alone =
+        embed.kind !== 'spotify' ||
+        ((i === 0 || BLANK_LINE.test(lines[i - 1]!)) && (i === lines.length - 1 || BLANK_LINE.test(lines[i + 1]!)));
+      if (alone) tokens.push({ start: pos, end: pos + line.length, embed });
+    }
     pos += line.length + 1; // +1 は '\n'
-  }
+  });
   return tokens;
 }
 
@@ -169,7 +200,7 @@ export interface StandaloneUrl {
  * 本文から「その行がまるごと URL だけ」の行を拾う（リンクカード設計 §8.3）。行の途中の URL は拾わない。
  * 行そのものが、裸の URL として読んだときの URL と一字一句同じときだけ対象
  * （前後に文字や空白、文末の句読点が付いていたら対象外）。
- * ⚠️ 埋め込み（X / YouTube）かどうかはここでは見ない。振り分けは呼ぶ側（card/url.ts・RichText）。
+ * ⚠️ 埋め込み（X / YouTube / Spotify）かどうかはここでは見ない。振り分けは呼ぶ側（card/url.ts・RichText）。
  */
 export function parseStandaloneUrls(text: string): StandaloneUrl[] {
   const out: StandaloneUrl[] = [];
