@@ -8,8 +8,9 @@
 //  高さのある空行段落（<p>&nbsp;</p>）に展開するので、書き出す本文の空行をその行に変える。
 //
 // 形: 空行 n 行 → 「本物の空行・U+00A0 の行」を n 回くり返し、最後に本物の空行（U+00A0 の行が独立した段落になる）。
-//   `a\n\nb` → `a\n\n \n\nb`（<p>a</p><p>&nbsp;</p><p>b</p>）
-//  ⚠️ 段落の中に `a\n \nb` と挟む形にしない。remark-blank-lines が段落を割るとき、行として独立した URL の
+//   （以下、U+00A0 を ⍽ と表記）
+//   `a\n\nb` → `a\n\n⍽\n\nb`（<p>a</p><p>&nbsp;</p><p>b</p>）
+//  ⚠️ 段落の中に `a\n⍽\nb` と挟む形にしない。remark-blank-lines が段落を割るとき、行として独立した URL の
 //  前後に空の text が残り、X / YouTube / Spotify の埋め込みとリンクカードの判定（isLineStandalone・
 //  「段落がその URL だけ」）が外れて素のリンクになる（astro-blog の実物のプラグインで確かめた）。
 //
@@ -28,7 +29,7 @@ import { FENCE_LINE, HR_LINE, composeBody, parseEmbedTokens, parsePhotoTokens } 
 import { parseCardUrls } from '../card/url';
 
 /** 空行段落の印（astro-blog の remark-blank-lines の NBSP_LINE_RE に当たる行）。 */
-export const NBSP = ' ';
+export const NBSP = '\u00A0'; // ⚠️ 見た目では普通の空白と区別できないので、生の文字で書かない
 
 const BLANK_LINE = /^[ \t]*$/;
 const INDENTED = /^(?: {4}|\t)/;
