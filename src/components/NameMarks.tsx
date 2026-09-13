@@ -2,6 +2,39 @@ import { Fragment } from 'preact';
 import type { JSX } from 'preact';
 import type { NameHit, NameToken } from '../lib/names/replace';
 import { isSafeHref } from '../lib/markdown';
+import { keyFromPhotoUrl } from '../lib/publish/photos';
+
+/** 写真の「日記に出す／出さない」。無ければ切り替えを出さない。 */
+export interface PhotoToggle {
+  hidden: (key: string) => boolean;
+  onToggle: (key: string) => void;
+}
+
+/**
+ * 写真の下の切り替え。「日記に出す」のチェック（既定は付いている）。
+ * 外すと写真を薄くして「日記に出さない」の札を出す。出さないのは安全側なので朱で騒がない。
+ */
+function PhotoSwitch({ photoKey, p }: { photoKey: string; p: PhotoToggle }): JSX.Element {
+  const off = p.hidden(photoKey);
+  return (
+    <button
+      type="button"
+      class={'ph-switch' + (off ? ' off' : '')}
+      role="switch"
+      aria-checked={!off}
+      onClick={(e) => {
+        e.stopPropagation();
+        p.onToggle(photoKey);
+      }}
+    >
+      <span class={'checkbox' + (off ? '' : ' checked')} aria-hidden="true">
+        {off ? '' : '✓'}
+      </span>
+      <span class="ph-switch-label">日記に出す</span>
+      {off ? <span class="ph-tag">日記に出さない</span> : null}
+    </button>
+  );
+}
 
 /**
  * 公開名変換の印つき本文。
@@ -68,7 +101,7 @@ export function renderSpan(r: MarkRender, start: number, end: number): JSX.Eleme
 }
 
 /** 行内の切れ（text / url / link / 表示文字の中の画像）を描く。[a, b) の外の素の文字は落とす。 */
-function renderInline(r: MarkRender, tokens: NameToken[], a: number, b: number): JSX.Element[] {
+function renderInline(r: MarkRender, tokens: NameToken[], a: number, b: number, photo?: PhotoToggle): JSX.Element[] {
   const out: JSX.Element[] = [];
   for (const t of tokens) {
     const s = Math.max(t.start, a);
@@ -92,20 +125,36 @@ function renderInline(r: MarkRender, tokens: NameToken[], a: number, b: number):
       case 'link':
         out.push(
           <Fragment key={key}>
-            <span class="conv-link">{renderInline(r, t.label, t.start, t.end)}</span>
+            <span class="conv-link">{renderInline(r, t.label, t.start, t.end, photo)}</span>
             {t.title ? <span class="conv-aside">（{renderSpan(r, t.title.start, t.title.end)}）</span> : null}
           </Fragment>
         );
         break;
-      case 'image':
-        // リンクの表示文字の中の画像。代替文字だけを小さく出す
+      case 'image': {
+        // リンクの表示文字の中の画像。代替文字だけを小さく出す（かけら帳の写真なら、出す／出さないも選べる）
+        const pk = photo ? keyFromPhotoUrl(t.url.trim()) : null;
+        const off = !!(pk && photo?.hidden(pk));
         out.push(
-          <span class="conv-aside" key={key}>
+          <span class={'conv-aside' + (off ? ' ph-off-inline' : '')} key={key}>
             ［画像{t.alt.length ? '　' : ''}
-            {renderInline(r, t.alt, t.start, t.end)}］
+            {renderInline(r, t.alt, t.start, t.end, photo)}］
+            {pk && photo ? (
+              <button
+                type="button"
+                class="ph-inline-btn"
+                aria-pressed={off}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  photo.onToggle(pk);
+                }}
+              >
+                {off ? '日記に出さない' : '日記に出す'}
+              </button>
+            ) : null}
           </span>
         );
         break;
+      }
     }
   }
   return out;
@@ -124,10 +173,13 @@ export function MarkedBody({
   r,
   tokens,
   imgClass,
+  photo,
 }: {
   r: MarkRender;
   tokens: NameToken[];
   imgClass: string;
+  /** かけら帳の写真に「日記に出す／出さない」の切り替えを付ける */
+  photo?: PhotoToggle;
 }): JSX.Element {
   const parts: JSX.Element[] = [];
   let para: NameToken[] = [];
@@ -142,7 +194,7 @@ export function MarkedBody({
     if (a < b) {
       parts.push(
         <p class="rich-text-block conv-text" key={key}>
-          {renderInline(r, para, a, b)}
+          {renderInline(r, para, a, b, photo)}
         </p>
       );
     }
@@ -157,21 +209,33 @@ export function MarkedBody({
     flush(`p${i}`);
     const src = t.url.startsWith('/api/photo/') || isSafeHref(t.url) ? t.url : null;
     const altHasText = t.alt.some((x) => text.slice(x.start, x.end).trim().length > 0);
-    parts.push(
-      <Fragment key={`i${i}`}>
+    const pk = photo ? keyFromPhotoUrl(t.url.trim()) : null;
+    const off = !!(pk && photo?.hidden(pk));
+    const inner = (
+      <>
         {src ? (
           <div class={imgClass}>
             <img src={src} alt="" loading="lazy" />
           </div>
         ) : null}
+        {pk && photo ? <PhotoSwitch photoKey={pk} p={photo} /> : null}
         {altHasText || t.title ? (
           <p class="conv-alt">
             <span class="conv-alt-label">代替文字</span>
-            {renderInline(r, t.alt, t.start, t.end)}
+            {renderInline(r, t.alt, t.start, t.end, photo)}
             {t.title ? <span class="conv-aside">（{renderSpan(r, t.title.start, t.title.end)}）</span> : null}
           </p>
         ) : null}
-      </Fragment>
+      </>
+    );
+    parts.push(
+      pk && photo ? (
+        <div class={'conv-photo' + (off ? ' off' : '')} key={`i${i}`}>
+          {inner}
+        </div>
+      ) : (
+        <Fragment key={`i${i}`}>{inner}</Fragment>
+      )
     );
   });
   flush('tail');

@@ -521,20 +521,38 @@ export interface ConvertResult {
 /**
  * 原本を置き換える。choices は pos をキーにした選択（無ければ全部辞書どおり）。
  * ⚠️ 書き出しでは、画面から届いた本文ではなく**原本**をこれに通す。
+ *
+ * @param drop 公開版から切り落とす範囲（原本の位置。出さない写真＝publish/photo-choice の hiddenPhotoSpans）。
+ *   当たり箇所の計算と選択の照合は原本のまま行い、切り落とす範囲に掛かった当たり箇所は出さない
+ *   （applied にも入れない＝出さない写真の代替文字に残った「拒否」で念押しを求めない）。
+ *   位置で持つ名前の選択を崩さないよう、写真を除くのは**この一回の走査の中だけ**で行う。
  */
-export function convertText(text: string, dict: NameEntry[], choices?: Map<number, NameChoice>): ConvertResult {
+export function convertText(
+  text: string,
+  dict: NameEntry[],
+  choices?: Map<number, NameChoice>,
+  drop: Span[] = []
+): ConvertResult {
   const hits = findHits(text, dict);
-  let out = '';
-  let cur = 0;
   const applied: NameChoice[] = [];
+  const ops: { start: number; end: number; put: string }[] = drop.map((d) => ({ start: d.start, end: d.end, put: '' }));
   for (const h of hits) {
+    const end = h.pos + h.source.length;
+    if (drop.some((d) => h.pos < d.end && d.start < end)) continue;
     const choice = choices?.get(h.pos);
     const eff = effectiveChoice(h, choice);
     if (!h.exception && eff.action !== 'approve') {
       applied.push({ pos: h.pos, source: h.source, action: eff.action, ...(eff.text ? { text: eff.text } : {}) });
     }
-    out += text.slice(cur, h.pos) + shownWord(h, choice);
-    cur = h.pos + h.source.length;
+    ops.push({ start: h.pos, end, put: shownWord(h, choice) });
+  }
+  ops.sort((a, b) => a.start - b.start);
+  let out = '';
+  let cur = 0;
+  for (const op of ops) {
+    if (op.start < cur) continue; // drop はまとめ済み・当たり箇所は drop と重ならないので来ない（念のため）
+    out += text.slice(cur, op.start) + op.put;
+    cur = op.end;
   }
   return { text: out + text.slice(cur), hits, applied };
 }

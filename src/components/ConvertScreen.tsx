@@ -16,16 +16,26 @@ import {
   type NameHit,
   type NameToken,
 } from '../lib/names/replace';
+import {
+  convertForPublish,
+  hiddenKeysOf,
+  hiddenPhotoSpans,
+  overlapsAny,
+  photoKeysIn,
+  type PhotoChoice,
+} from '../lib/publish/photo-choice';
 import { api, type PublishNikkiInput } from './api';
 import { timeOf } from './format';
 import { RichText } from './RichText';
-import { MarkedBody, renderSpan, type MarkRender, type MarkStatus } from './NameMarks';
+import { MarkedBody, renderSpan, type MarkRender, type MarkStatus, type PhotoToggle } from './NameMarks';
 
 /**
  * 変換（公開名変換設計・モックが正）。
  *  組み上がった日記のタイトルと本文を出し、辞書に当たった箇所に印。開いた時点で全箇所が辞書どおり。
  *  印を押すと下からシート: 承認（辞書どおり）／手で直す（その箇所だけ）／拒否（実名のまま）。
  *  選択はかけらごとに D1 へ覚える（押すたびに保存）。拒否が残ったまま書き出すときは念押しを出す。
+ *  写真: 写真ごとに「日記に出す／出さない」。開いた時点では全部出す。出さない写真は「公開される姿」
+ *  「Markdown」から画像記法ごと消える。選択は写真の key に紐づけて D1 へ覚える（本文を直しても残る）。
  *
  * ⚠️ ここで作る本文は見せるためだけ。書き出すときはサーバが原本から置き換え直す。
  */
@@ -86,6 +96,9 @@ export function ConvertScreen({
   const [title, setTitle] = useState('');
   const [choices, setChoices] = useState<SegChoice[]>([]);
   const [carried, setCarried] = useState(false);
+  /** 日記に出さない写真（出す写真は持たない） */
+  const [photos, setPhotos] = useState<PhotoChoice[]>([]);
+  const [carriedPhotos, setCarriedPhotos] = useState(0);
   const [resetKakera, setResetKakera] = useState<string[]>([]);
   const [resetTitle, setResetTitle] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
@@ -98,10 +111,14 @@ export function ConvertScreen({
 
   useEffect(() => {
     let alive = true;
-    api
-      .loadNameChoices(katachiId, { kakera_ids: order, title: titleInput })
-      .then((r) => {
+    Promise.all([
+      api.loadNameChoices(katachiId, { kakera_ids: order, title: titleInput }),
+      api.loadPhotoChoices(katachiId, { kakera_ids: order }),
+    ])
+      .then(([r, hiddenPhotos]) => {
         if (!alive) return;
+        setPhotos(hiddenPhotos);
+        setCarriedPhotos(hiddenPhotos.length);
         setEntries(r.entries);
         setTitle(r.title);
         setChoices(r.choices);
@@ -199,12 +216,28 @@ export function ConvertScreen({
     const a = effectiveChoice(hit, choiceOf(seg, hit)).action;
     return a === 'approve' ? 'dict' : a;
   };
-  const converted = (s: Seg) => convertText(s.text, dict, choiceMap(choices.filter((c) => c.seg === s.seg))).text;
+  // 公開版の本文。書き出し（nikki.ts）と同じ convertForPublish を通す（名前の置き換え＋出さない写真を除く）
+  const converted = (s: Seg) => {
+    const ch = choiceMap(choices.filter((c) => c.seg === s.seg));
+    return s.seg === 'title'
+      ? convertText(s.text, dict, ch).text
+      : convertForPublish(s.text, dict, ch, hiddenKeysOf(photos, s.seg)).text;
+  };
+  // 出さない写真ぶん切り落とす範囲。そこに掛かる当たり箇所（代替文字の名前）は公開されないので数えない
+  const dropsOf = (s: Seg) => (s.seg === 'title' ? [] : hiddenPhotoSpans(s.text, hiddenKeysOf(photos, s.seg), s.tokens));
+
+  const photoCount = { shown: 0, hidden: 0 };
+  for (const s of bodySegs) {
+    const hidden = hiddenKeysOf(photos, s.seg);
+    for (const key of photoKeysIn(s.text, s.tokens)) photoCount[hidden.has(key) ? 'hidden' : 'shown']++;
+  }
 
   const counts = { dict: 0, edit: 0, reject: 0, exc: 0 };
   const rejects: { s: Seg; hit: NameHit }[] = [];
   for (const s of segs) {
+    const drops = dropsOf(s);
     for (const h of s.hits) {
+      if (overlapsAny(h.pos, h.pos + h.source.length, drops)) continue;
       if (h.exception) {
         counts.exc++;
         continue;
@@ -221,6 +254,25 @@ export function ConvertScreen({
       .then(() => undefined)
       .catch((e: unknown) => say('選択を保存できませんでした: ' + (e instanceof Error ? e.message : String(e))));
   }
+
+  function persistPhotos(next: PhotoChoice[]): void {
+    saveChain.current = saveChain.current
+      .then(() => api.savePhotoChoices(katachiId, { kakera_ids: order, photos: next }))
+      .then(() => undefined)
+      .catch((e: unknown) => say('写真の選択を保存できませんでした: ' + (e instanceof Error ? e.message : String(e))));
+  }
+
+  const photoToggleOf = (s: Seg): PhotoToggle => ({
+    hidden: (key) => photos.some((p) => p.kakera_id === s.seg && p.key === key),
+    onToggle: (key) => {
+      const on = photos.some((p) => p.kakera_id === s.seg && p.key === key);
+      const next = on
+        ? photos.filter((p) => !(p.kakera_id === s.seg && p.key === key))
+        : [...photos, { kakera_id: s.seg, key }];
+      setPhotos(next);
+      persistPhotos(next);
+    },
+  });
 
   function choose(seg: string, hit: NameHit, action: 'approve' | 'edit' | 'reject', text?: string): void {
     const rest = choices.filter((c) => !(c.seg === seg && c.pos === hit.pos));
@@ -250,7 +302,7 @@ export function ConvertScreen({
     setBusy(true);
     try {
       await saveChain.current;
-      await onPublish({ kakera_ids: order, title: titleInput, choices, confirm_real_names: confirmRealNames });
+      await onPublish({ kakera_ids: order, title: titleInput, choices, photos, confirm_real_names: confirmRealNames });
     } finally {
       setBusy(false);
     }
@@ -263,7 +315,16 @@ export function ConvertScreen({
     <section>
       {head}
 
-      {carried ? <p class="carry">前回の選択を引き継いでいます。</p> : null}
+      {carried || carriedPhotos ? (
+        <p class="carry">
+          前回の選択を引き継いでいます。
+          {carriedPhotos ? (
+            <>
+              写真 <b>{carriedPhotos}</b> 枚は日記に出さないままです。
+            </>
+          ) : null}
+        </p>
+      ) : null}
       {resetNums.length ? (
         <p class="carry">
           <b>かけら {resetNums.join('・')}</b> は本文が直されたので、そのかけらだけ辞書どおりに戻しました。
@@ -313,13 +374,21 @@ export function ConvertScreen({
             <span class="m-exc">例外</span>
             <b>{counts.exc}</b>
           </span>
+          {photoCount.shown + photoCount.hidden ? (
+            <span class="t-photo">
+              写真 出す<b>{photoCount.shown}</b>
+              <span class="t-slash">／</span>
+              <span class="ph-tag">出さない</span>
+              <b>{photoCount.hidden}</b>
+            </span>
+          ) : null}
         </div>
       ) : null}
 
       {view === 'md' ? (
         <>
           <p class="plain-note">
-            astro-blog に書き出す中身です。リンク先・裸の URL・写真の URL は元のまま（写真の URL だけ、書き出すときに公開用へ差し替わります）。
+            astro-blog に書き出す中身です。リンク先・裸の URL・写真の URL は元のまま（写真の URL だけ、書き出すときに公開用へ差し替わります）。日記に出さない写真は入りません。
           </p>
           <pre class="conv-md">
             {renderDiaryFile(titleOut, detail.katachi.date, composeBody(bodySegs.map(converted)))}
@@ -329,12 +398,16 @@ export function ConvertScreen({
         <>
           <p class="plain-note">公開されたら、こう読めます（印なし）。</p>
           <p class="title-out">{titleOut || detail.katachi.date}</p>
-          {bodySegs.map((s) => (
-            <div class="conv-block" key={s.seg}>
-              <hr class="conv-sep" />
-              <RichText text={converted(s)} imgClass="assembled-photo" cards={detail.cards} />
-            </div>
-          ))}
+          {bodySegs
+            .map((s) => ({ s, out: converted(s) }))
+            // 写真だけのかけらで写真を出さないと中身が空になる。書き出し（composeBody）と同じく飛ばす
+            .filter((x) => x.out.trim().length > 0)
+            .map(({ s, out }) => (
+              <div class="conv-block" key={s.seg}>
+                <hr class="conv-sep" />
+                <RichText text={out} imgClass="assembled-photo" cards={detail.cards} />
+              </div>
+            ))}
         </>
       ) : (
         <>
@@ -350,7 +423,7 @@ export function ConvertScreen({
                 {segLabel(s)}
                 {resetKakera.includes(s.seg) ? <span class="tag-reset">本文を直したので白紙</span> : null}
               </div>
-              <MarkedBody r={renderOf(s)} tokens={s.tokens} imgClass="assembled-photo" />
+              <MarkedBody r={renderOf(s)} tokens={s.tokens} imgClass="assembled-photo" photo={photoToggleOf(s)} />
             </div>
           ))}
         </>

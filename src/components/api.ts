@@ -4,11 +4,14 @@ import type { Kakera, KatachiDetail, KatachiSummary, SearchResult } from '../lib
 import type { LinkCards } from '../lib/card/types';
 import type { LoadedChoices, SegChoice } from '../lib/names/db';
 import type { NameEntry } from '../lib/names/replace';
+import type { PhotoChoice } from '../lib/publish/photo-choice';
 
 export interface PublishNikkiInput {
   kakera_ids: string[];
   title: string;
   choices: SegChoice[];
+  /** 日記に出さない写真（サーバが原本に実在する key だけ当てる） */
+  photos: PhotoChoice[];
   /** 実名のまま出る箇所があると念押しで確かめたか（無いのに拒否が残っていればサーバが 409） */
   confirm_real_names: boolean;
 }
@@ -125,6 +128,20 @@ export const api = {
 
   saveNameChoices: (katachiId: string, input: { kakera_ids: string[]; title: string; choices: SegChoice[] }) =>
     req<{ ok: true; choices: SegChoice[] }>(`/api/katachi/${katachiId}/name-choice`, {
+      method: 'PUT',
+      body: JSON.stringify(input),
+    }),
+
+  /* ---- 写真の出す／出さない ---- */
+
+  loadPhotoChoices: (katachiId: string, input: { kakera_ids: string[] }) =>
+    req<{ photos: PhotoChoice[] }>(`/api/katachi/${katachiId}/photo-choice`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }).then((r) => r.photos),
+
+  savePhotoChoices: (katachiId: string, input: { kakera_ids: string[]; photos: PhotoChoice[] }) =>
+    req<{ ok: true; photos: PhotoChoice[] }>(`/api/katachi/${katachiId}/photo-choice`, {
       method: 'PUT',
       body: JSON.stringify(input),
     }),

@@ -506,6 +506,37 @@ mark.search-hit { background: none; color: var(--accent); font-weight: 600; }
 .conv-alt { font-size: 13px; line-height: 1.7; color: var(--fg); margin: -2px 0 10px; overflow-wrap: anywhere; }
 .conv-alt-label { font-family: var(--mono); font-size: 10px; color: var(--muted); border: 1px solid var(--line); border-radius: 1px; padding: 0 4px; margin-right: 6px; }
 
+/* ---- 写真の「日記に出す／出さない」 ----
+   既定は出す（チェック付き）。外すと写真と代替文字を薄くして「日記に出さない」の札。
+   出さないのは安全側の操作なので朱で騒がない（札は罫と補助色だけ）。
+   ⚠️ 指で押す場所なので行ごとボタンにして高さ 44px を取る。375px ではみ出さないよう min-width:0。 */
+.conv-photo { margin: 8px 0 12px; min-width: 0; }
+.conv-photo .assembled-photo { margin: 0; transition: opacity .15s; }
+.conv-photo.off .assembled-photo, .conv-photo.off .conv-alt { opacity: .32; }
+.conv-photo .conv-alt { margin-top: 6px; }
+.ph-switch {
+  display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0; min-height: 44px;
+  padding: 8px 2px; border: none; border-bottom: 1px solid var(--line); background: transparent;
+  color: var(--fg); font-size: 13px; text-align: left; cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+.ph-switch .checkbox { margin-top: 0; }
+.ph-switch.off .ph-switch-label { color: var(--muted); }
+.ph-switch:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+.ph-tag {
+  margin-left: auto; flex-shrink: 0; white-space: nowrap;
+  font-size: 11px; color: var(--fg); border: 1px solid var(--muted); border-radius: 1px; padding: 1px 6px;
+}
+.tally .ph-tag { margin-left: 0; font-size: 10.5px; }
+.tally .t-photo { white-space: nowrap; }
+.tally .t-photo b { margin-right: 0; }
+.tally .t-slash { margin: 0 6px; }
+.tally .t-photo .ph-tag { margin-right: 0; }
+.ph-off-inline { opacity: .5; }
+.ph-inline-btn {
+  border: 1px solid var(--line); background: transparent; color: var(--fg); border-radius: 1px;
+  font-size: 11px; padding: 2px 8px; margin-left: 6px; min-height: 32px; cursor: pointer;
+}
+
 /* ---- 印（状態で描き分ける） ----
    辞書どおり … 灰の細い実線の下線だけ。静か。
    手で直した … 黒の点線の下線 ＋ 薄い地。

@@ -20,7 +20,9 @@
     "db:migrate:katachi-kakera:local": "wrangler d1 execute kakera --local --file=./migrations/0004_katachi_kakera.sql",
     "db:migrate:katachi-kakera:remote": "wrangler d1 execute kakera --remote --file=./migrations/0004_katachi_kakera.sql",
     "db:migrate:written-order:local": "wrangler d1 execute kakera --local --file=./migrations/0005_katachi_written_order.sql",
-    "db:migrate:written-order:remote": "wrangler d1 execute kakera --remote --file=./migrations/0005_katachi_written_order.sql"
+    "db:migrate:written-order:remote": "wrangler d1 execute kakera --remote --file=./migrations/0005_katachi_written_order.sql",
+    "db:migrate:photo-choice:local": "wrangler d1 execute kakera --local --file=./migrations/0006_photo_choice.sql",
+    "db:migrate:photo-choice:remote": "wrangler d1 execute kakera --remote --file=./migrations/0006_photo_choice.sql"
   },
   "dependencies": {
     "@astrojs/cloudflare": "^12.6.10",

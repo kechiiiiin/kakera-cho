@@ -41,14 +41,11 @@ export function publicUrlFor(publicKey: string): string {
 }
 
 /**
- * 本文に出てくる写真を公開バケットへコピーし、「非公開 URL → 公開 URL」の対応表を返す。
- * 公開バケットが無い環境（ローカル）では、コピーできなかったものを対応表に入れない。
+ * 公開バケットへコピーする写真の URL（本文に出てくる順・重複なし）。
+ * @param skipKeys 日記に出さない写真の key。本文から除き漏れがあっても、これに入っていればコピーしない
+ *   （残っても非公開の /api/photo/… のままなので、公開側では開けない＝外に出ない）
  */
-export async function copyPhotosForPublish(
-  env: Env,
-  bodies: string[]
-): Promise<Map<string, string>> {
-  const map = new Map<string, string>();
+export function photoUrlsToCopy(bodies: string[], skipKeys: ReadonlySet<string> = new Set()): string[] {
   const urls = new Set<string>();
   const re = /!\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
   for (const body of bodies) {
@@ -56,8 +53,25 @@ export async function copyPhotosForPublish(
     const r = new RegExp(re.source, 'g');
     while ((m = r.exec(body))) urls.add(m[1]!);
   }
+  return [...urls].filter((url) => {
+    const key = keyFromPhotoUrl(url);
+    return !key || !skipKeys.has(key);
+  });
+}
 
-  for (const url of urls) {
+/**
+ * 本文に出てくる写真を公開バケットへコピーし、「非公開 URL → 公開 URL」の対応表を返す。
+ * 公開バケットが無い環境（ローカル）では、コピーできなかったものを対応表に入れない。
+ * ⚠️ 渡す本文は、日記に出さない写真を除いた後のもの（出さない写真はコピーしない）。
+ */
+export async function copyPhotosForPublish(
+  env: Env,
+  bodies: string[],
+  skipKeys: ReadonlySet<string> = new Set()
+): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+
+  for (const url of photoUrlsToCopy(bodies, skipKeys)) {
     const key = keyFromPhotoUrl(url);
     if (!key) continue; // 外部の画像はそのまま
     const obj = await env.PHOTOS.get(key);

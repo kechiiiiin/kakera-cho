@@ -13,6 +13,13 @@ import {
   validateChoices,
 } from '../../../../lib/names/db';
 import { choiceMap, convertText } from '../../../../lib/names/replace';
+import {
+  convertForPublish,
+  hiddenKeysOf,
+  parsePhotoChoices,
+  validatePhotoChoices,
+} from '../../../../lib/publish/photo-choice';
+import { loadPhotoChoices, savePhotoChoices } from '../../../../lib/publish/photo-choice-db';
 
 export const prerender = false;
 
@@ -26,6 +33,12 @@ export const prerender = false;
  *   届いた選択は、原本から計算し直した当たり箇所と「位置と置き換え元」が一致するものだけ当て、
  *   一致しないものは辞書どおりに倒す。
  * ★実名のまま出る箇所（拒否）が残るときは、confirm_real_names: true が無ければ 409（念押しを経ていない）。
+ * ★写真の出す／出さない（photos?[] = 出さない写真 {kakera_id, key}）: これも**原本から拾い直して**当てる。
+ *   届いた選択は「そのかけらの原本に実在する写真の key」に一致するものだけ効く。
+ *   photos を送らない呼び出し（配列でない）は、D1 に覚えてある選択を使う（出さないはずの写真を黙って出さないため）。
+ *   出さない写真は公開版の本文から画像記法ごと除き、公開バケットへもコピーしない。
+ *   順番: 名前の当たり箇所・選択の照合は原本の位置で行い、写真を除くのは同じ一回の走査の中
+ *   （convertForPublish）。先に写真を除くと位置がずれて名前の選択が落ちるため。
  */
 export const POST: APIRoute = ({ locals, params, request }) =>
   handle(async () => {
@@ -45,8 +58,11 @@ export const POST: APIRoute = ({ locals, params, request }) =>
     const valid = validateChoices(entries, title, chosen, parseSegChoices(input.choices));
     const bySeg = (seg: string) => choiceMap(valid.filter((c) => c.seg === seg));
 
+    const sentPhotos = parsePhotoChoices(input.photos);
+    const photos = sentPhotos ? validatePhotoChoices(chosen, sentPhotos) : await loadPhotoChoices(env.DB, chosen);
+
     const titleOut = convertText(title, entries, bySeg('title'));
-    const bodiesOut = chosen.map((k) => convertText(k.body, entries, bySeg(k.id)));
+    const bodiesOut = chosen.map((k) => convertForPublish(k.body, entries, bySeg(k.id), hiddenKeysOf(photos, k.id)));
 
     const rejects = [titleOut, ...bodiesOut].reduce(
       (n, r) => n + r.applied.filter((c) => c.action === 'reject').length,
@@ -58,11 +74,13 @@ export const POST: APIRoute = ({ locals, params, request }) =>
 
     // 選択を覚える（書き出しに失敗しても、選んだことは残す）
     await saveChoices(env.DB, id, title, chosen, valid);
+    if (sentPhotos) await savePhotoChoices(env.DB, chosen, photos);
 
     const { path } = await publishNikki(env, {
       date: detail.katachi.date,
       title: titleOut.text,
       bodies: bodiesOut.map((r) => r.text),
+      hiddenPhotoKeys: new Set(photos.map((p) => p.key)),
       alreadyPublished: !!detail.nikki,
     });
 

@@ -29,6 +29,11 @@ export interface PublishInput {
    * ⚠️ 呼ぶ側が原本（D1 のかけら）から置き換え直したもの。画面から届いた本文を渡さない。
    */
   bodies: string[];
+  /**
+   * 日記に出さない写真の key（全かけらぶん）。bodies からは既に除いてあるが、
+   * 除き漏れがあっても公開バケットへはコピーしない（二重の備え）。
+   */
+  hiddenPhotoKeys?: ReadonlySet<string>;
   /** その日付のかたちが既に日記になっているか（nikki に行があるか） */
   alreadyPublished: boolean;
 }
@@ -55,7 +60,8 @@ export async function publishNikki(env: Env, input: PublishInput): Promise<{ pat
   // 日記に出すときだけ、写真を公開バケットへコピーして公開版の URL を差し替える。
   // 原本（D1・控え）の本文は触らない。
   // 公開名変換は画像の URL を触らないので、置き換えた後の本文から写真を拾ってよい。
-  const urlMap = await copyPhotosForPublish(env, input.bodies);
+  // 日記に出さない写真は、呼ぶ側が本文から除いてある＝ここでは拾われず、公開バケットへコピーされない。
+  const urlMap = await copyPhotosForPublish(env, input.bodies, input.hiddenPhotoKeys);
   const bodies = input.bodies.map((b) => (urlMap.size ? replacePhotoUrls(b, urlMap) : b));
 
   const content = renderDiaryFile(input.title, input.date, composeBody(bodies));
