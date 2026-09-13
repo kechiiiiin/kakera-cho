@@ -19,6 +19,8 @@ import { pickPhotos, uploadPhotos } from './photo';
  *    ⚠️ リンクの URL は prompt() で尋ねない（iOS で辛い）。記法を入れてカーソルを置くだけ
  *  - Cmd/Ctrl+B で太字をトグルできる（増やすのはこれ一つだけ）
  *  - 本文へ画像ファイルを**ドラッグ＆ドロップ**しても同じ経路で貼れる（ボタンと処理を共有する）
+ *  - **クリップボードから貼り付け**（スクリーンショットのコピー等）ても同じ経路で貼れる。
+ *    ⚠️ 文字も一緒に入っているとき（ウェブページや文書からのコピー）は、写真にせず文字として貼る
  *  - テキストエリアの下に貼った写真のサムネを並べ、× でその1枚だけ本文から外す
  *  - 失敗は alert ではなくその場のテキストで知らせる（iOS の alert はスクロール位置が飛ぶ）
  *
@@ -123,6 +125,30 @@ export function Editor({
   }
 
   /**
+   * クリップボードから貼り付けた画像を拾う。
+   * スクリーンショットは dt.files に無く dt.items だけに入るブラウザがあるので、items からも拾う。
+   */
+  function pastedImages(dt: DataTransfer | null): File[] {
+    if (!dt) return [];
+    const fromFiles = imagesFrom(dt);
+    if (fromFiles.length) return fromFiles;
+    return Array.from(dt.items)
+      .filter((it) => it.kind === 'file' && it.type.startsWith('image/'))
+      .map((it) => it.getAsFile())
+      .filter((f): f is File => !!f);
+  }
+
+  function onPaste(e: ClipboardEvent): void {
+    const dt = e.clipboardData;
+    const files = pastedImages(dt);
+    if (!files.length) return; // 画像が無ければブラウザに任せる（ふつうの文字の貼り付け）
+    // 文字も一緒に入っているコピーは、文字として貼る（写真だけ差し込むと文章が消える）
+    if (dt && dt.getData('text/plain').trim()) return;
+    e.preventDefault();
+    void insertFiles(files);
+  }
+
+  /**
    * 書式ボタンの共通処理。
    * 本文を差し替えたあと、必ず textarea にフォーカスを戻して選択範囲を置き直す
    * （insertFiles と同じく requestAnimationFrame で、Preact が値を描き直した後に当てる）。
@@ -167,6 +193,7 @@ export function Editor({
         onDragOver={onDragOver}
         onDragLeave={() => setDropping(false)}
         onDrop={onDrop}
+        onPaste={onPaste}
         onKeyDown={onKeyDown}
         onInput={(e) => {
           const el = e.currentTarget;
