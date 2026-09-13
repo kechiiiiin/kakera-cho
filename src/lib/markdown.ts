@@ -91,6 +91,74 @@ export function parsePhotoTokens(text: string): PhotoToken[] {
   return tokens;
 }
 
+// ───────────────────────────────────────────────────────────────
+// 埋め込み（X / YouTube）
+//
+// ⚠️⚠️ 以下の判別（正規表現と「行として独立した URL だけ」という条件）は、
+//   `~/work/astro-blog/src/plugins/remark-media-embed.ts`
+// の **写し** です。**どちらかを直したら、必ずもう一方も同じように直してください。**
+//
+// 理由: かけら帳のこの画面は「astro-blog で公開したらこう見える」の**プレビュー**です。
+// 判別が食い違うと、かけら帳で埋め込みに見えたものが公開後は素のリンク（またはその逆）になり、
+// **プレビューである意味が無くなります**。
+//
+// npm パッケージにして共有はしません。50行ほどのために publish →2リポジトリ更新 →それぞれデプロイ、
+// では規模に釣り合わないためです（Keisuke と相談のうえ決定）。**3つ目のアプリが出てきたら見直す。**
+//
+// 対象は X と YouTube だけ。astro-blog は Spotify にも対応していますが、こちらは未対応で、
+// その一点だけは意図的に食い違っています。
+//
+// ここも**データを返すだけ**で HTML 文字列は作らない。描くのは RichText 側で Preact の要素を組む。
+// ───────────────────────────────────────────────────────────────
+
+/** youtu.be/ID, watch?v=ID, shorts/ID, live/ID, embed/ID（si= 等のクエリは無視） */
+const YOUTUBE_PATTERN =
+  /^https:\/\/(?:youtu\.be\/|(?:www\.|m\.)?youtube\.com\/(?:watch\?(?:.*&)?v=|shorts\/|live\/|embed\/))([A-Za-z0-9_-]{11})/;
+const TWEET_PATTERN =
+  /^https:\/\/(?:x\.com|(?:mobile\.)?twitter\.com)\/[A-Za-z0-9_]+\/status\/\d+/;
+
+/** YouTube の動画 ID として src に入れてよい形か（11文字の英数字・`_`・`-` だけ）。 */
+export const YOUTUBE_ID_RE = /^[A-Za-z0-9_-]{11}$/;
+
+export type Embed =
+  | { kind: 'youtube'; id: string }
+  | { kind: 'tweet'; url: string };
+
+export interface EmbedToken {
+  start: number;
+  end: number;
+  embed: Embed;
+}
+
+/** URL ひとつを埋め込みの種別に振り分ける。対象外なら null。 */
+export function matchEmbed(url: string): Embed | null {
+  if (!isSafeHref(url)) return null;
+  const yt = YOUTUBE_PATTERN.exec(url);
+  if (yt) {
+    const id = yt[1]!;
+    // 正規表現で既に 11 文字に絞っているが、src に入れる値なので念のためもう一度通す
+    return YOUTUBE_ID_RE.test(id) ? { kind: 'youtube', id } : null;
+  }
+  if (TWEET_PATTERN.test(url)) return { kind: 'tweet', url };
+  return null;
+}
+
+/**
+ * 「行として独立した URL」だけを埋め込みとして拾う（astro-blog の `isLineStandalone` と同じ考え方）。
+ * ⚠️ 行の途中に書かれた URL は拾わない＝今までどおり素のリンクになる。
+ * 行そのものが URL と一字一句同じときだけ対象（前後に文字や空白が付いていたら対象外）。
+ */
+export function parseEmbedTokens(text: string): EmbedToken[] {
+  const tokens: EmbedToken[] = [];
+  let pos = 0;
+  for (const line of text.split('\n')) {
+    const embed = line ? matchEmbed(line) : null;
+    if (embed) tokens.push({ start: pos, end: pos + line.length, embed });
+    pos += line.length + 1; // +1 は '\n'
+  }
+  return tokens;
+}
+
 /** 画像記法を取り除いた素の本文（一覧の抜粋・タイトル代わりに使う）。 */
 export function textForExcerpt(text: string): string {
   return text.replace(IMAGE_TOKEN_RE, '').replace(/\s+/g, ' ').trim();
