@@ -259,7 +259,7 @@ function clean(s: string | undefined, max: number): string {
   if (!s) return '';
   // 制御文字を落とし、連続する空白を半角1つに潰す
   // eslint-disable-next-line no-control-regex
-  const v = decodeEntities(s).replace(/[ -]/g, ' ').replace(/\s+/g, ' ').trim();
+  const v = decodeEntities(s).replace(/[\x00-\x1f\x7f]/g, ' ').replace(/\s+/g, ' ').trim();
   const chars = Array.from(v);
   return chars.length > max ? chars.slice(0, max).join('') : v;
 }
