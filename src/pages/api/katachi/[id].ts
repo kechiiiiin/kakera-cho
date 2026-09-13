@@ -12,15 +12,20 @@ import {
 import { DESCRIPTION_MAX, descriptionLength, flattenDescription } from '../../../lib/publish/diary-file';
 import { isDateKey } from '../../../lib/time';
 import { syncKatachiDissolved, syncKatachiRenamed } from '../../../lib/backup/sync';
+import { ensureCards } from '../../../lib/card/ensure';
 
 export const prerender = false;
 
 /** GET /api/katachi/:id — かたち1つ＋中のかけら */
 export const GET: APIRoute = ({ locals, params }) =>
   handle(async () => {
-    const { env } = ctxOf(locals);
+    const { env, waitUntil } = ctxOf(locals);
     if (!params.id) throw new ApiError(400, 'id がありません');
-    return json(await withCards(env.DB, await getKatachiDetail(env.DB, params.id)));
+    const detail = await getKatachiDetail(env.DB, params.id);
+    // かたちを開いたときも、まだ無いカードを裏で取りに行く（応答は待たせない）。
+    // 保存時の取得に漏れた URL が、次に開き直したとき自然にカードになるように。
+    waitUntil(ensureCards(env, detail.kakera.map((k) => k.body)));
+    return json(await withCards(env.DB, detail));
   });
 
 /**
