@@ -308,6 +308,11 @@ export function ConvertScreen({
       say('本文が空です。日記に出さないなら「組み直す」で外してください');
       return;
     }
+    // 開いたときの初期値（変換後の文）から何も変えていないなら、書き換えを作らない・既にある書き換えも変えない
+    if (pbEdit.draft === pbEdit.initial) {
+      setPbEdit(null);
+      return;
+    }
     const before = pbOf(k.id)?.body ?? k.body;
     setPbBusy(true);
     try {
@@ -611,8 +616,13 @@ export function ConvertScreen({
                         class="pb-open"
                         disabled={pbBusy || !!pbEdit}
                         onClick={() => {
+                          // 開くときは変換後の状態で見せる: 名前はいまの選択どおりに置き換え、写真の記法は残す
+                          // （出す／出さないの選択は写真の key で効き続けるので、欄の中からは消さない）。
+                          // composePublishBody の空行の U+00A0 化・写真 URL の差し替え等、書き出し専用の変換は入れない。
                           const text = pb?.body ?? k.body;
-                          setPbEdit({ seg: s.seg, draft: text, initial: text });
+                          const ch = choiceMap(choices.filter((c) => c.seg === s.seg));
+                          const draft = convertText(text, dict, ch).text;
+                          setPbEdit({ seg: s.seg, draft, initial: draft });
                         }}
                       >
                         {pb ? '日記用の文を直す' : '日記用に直す'}
