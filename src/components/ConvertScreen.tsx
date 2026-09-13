@@ -1,6 +1,8 @@
 import type { JSX } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { Kakera, KatachiDetail } from '../lib/kakera/types';
+import type { LinkCards } from '../lib/card/types';
+import type { PublishBodyView } from '../lib/publish/publish-body';
 import type { SegChoice } from '../lib/names/db';
 import { composeBody } from '../lib/markdown';
 import { renderDiaryFile } from '../lib/publish/diary-file';
@@ -39,6 +41,9 @@ import { MarkedBody, renderSpan, type MarkRender, type MarkStatus, type PhotoTog
  *  選択はかけらごとに D1 へ覚える（押すたびに保存）。拒否が残ったまま書き出すときは念押しを出す。
  *  写真: 写真ごとに「日記に出す／出さない」。開いた時点では全部出す。出さない写真は「公開される姿」
  *  「Markdown」から画像記法ごと消える。選択は写真の key に紐づけて D1 へ覚える（本文を直しても残る）。
+ *  日記用に直す: かけらのまとまりごとに、日記に出す文だけを書き換えられる（原本は触らない・D1 に保存）。
+ *  書き換えた本文にも名前の印と写真の選択が当たる。書き換えた後に原本が直されたら「原本が変わっています」を出し、
+ *  書き換えを使う／原本に戻すを選べる（選ぶまでは書き換えを使う）。
  *
  * ⚠️ ここで作る本文は見せるためだけ。書き出すときはサーバが原本から置き換え直す。
  */
@@ -113,15 +118,25 @@ export function ConvertScreen({
   const [flash, setFlash] = useState<{ key: string; n: number } | null>(null);
   const saveChain = useRef<Promise<void>>(Promise.resolve());
   const editRef = useRef<HTMLInputElement>(null);
+  /** 日記用に直した本文（かけらごと・D1 に保存したもの） */
+  const [pbs, setPbs] = useState<PublishBodyView[]>([]);
+  /** 書き換えた本文に出てくる URL のカード（かたちの詳細に同梱されたカードに足して使う） */
+  const [pbCards, setPbCards] = useState<LinkCards>({});
+  /** 「日記用に直す」を開いているかけら */
+  const [pbEdit, setPbEdit] = useState<{ seg: string; draft: string; initial: string } | null>(null);
+  const [pbBusy, setPbBusy] = useState(false);
 
   useEffect(() => {
     let alive = true;
     Promise.all([
       api.loadNameChoices(katachiId, { kakera_ids: order, title: titleInput }),
       api.loadPhotoChoices(katachiId, { kakera_ids: order }),
+      api.loadPublishBodies(katachiId),
     ])
-      .then(([r, hiddenPhotos]) => {
+      .then(([r, hiddenPhotos, pb]) => {
         if (!alive) return;
+        setPbs(pb.bodies);
+        setPbCards(pb.cards);
         setPhotos(hiddenPhotos);
         setCarriedPhotos(hiddenPhotos.length);
         setEntries(r.entries);
@@ -216,7 +231,11 @@ export function ConvertScreen({
   const titleSeg = makeSeg('title', title, null, 0);
   // 説明が空なら段を作らない（frontmatter にも書かない）
   const descSeg = description ? makeSeg(DESCRIPTION_SEG, description, null, 0) : null;
-  const bodySegs = chosen.map((k, i) => makeSeg(k.id, k.body, k, i + 1));
+  // 日記用に直した本文があるかけらは、その本文で当たり箇所・写真・公開版を計算する（書き出しのサーバと同じ）。
+  // s.kakera は原本のまま（時刻の表示と「今の原本」に使う）
+  const pbOf = (id: string) => pbs.find((p) => p.kakera_id === id) ?? null;
+  const cards: LinkCards = { ...(detail.cards ?? {}), ...pbCards };
+  const bodySegs = chosen.map((k, i) => makeSeg(k.id, pbOf(k.id)?.body ?? k.body, k, i + 1));
   const segs = [titleSeg, ...(descSeg ? [descSeg] : []), ...bodySegs];
   const isHead = (seg: string) => seg === 'title' || seg === DESCRIPTION_SEG;
   const segOf = (seg: string) => segs.find((s) => s.seg === seg) ?? null;
@@ -272,6 +291,69 @@ export function ConvertScreen({
       .catch((e: unknown) => say('写真の選択を保存できませんでした: ' + (e instanceof Error ? e.message : String(e))));
   }
 
+  /**
+   * そのかけらの本文が変わった（書き換えを保存・原本に戻した）ので、名前の選択を白紙に戻して覚え直す。
+   * サーバも basis の食い違いで白紙にするが、次に開いたとき「白紙に戻しました」と出さないよう、ここで消しておく。
+   */
+  function dropSegChoices(seg: string): void {
+    const next = choices.filter((c) => c.seg !== seg);
+    setChoices(next);
+    persist(next);
+    setResetKakera((list) => list.filter((x) => x !== seg));
+  }
+
+  async function savePb(k: Kakera): Promise<void> {
+    if (!pbEdit || pbEdit.seg !== k.id) return;
+    if (!pbEdit.draft.trim()) {
+      say('本文が空です。日記に出さないなら「組み直す」で外してください');
+      return;
+    }
+    const before = pbOf(k.id)?.body ?? k.body;
+    setPbBusy(true);
+    try {
+      await saveChain.current;
+      const r = await api.savePublishBody(katachiId, k.id, pbEdit.draft);
+      setPbs((list) => [...list.filter((p) => p.kakera_id !== k.id), ...(r.publish_body ? [r.publish_body] : [])]);
+      setPbCards((c) => ({ ...c, ...r.cards }));
+      if ((r.publish_body?.body ?? k.body) !== before) dropSegChoices(k.id);
+      setPbEdit(null);
+      if (!r.publish_body) say('原本と同じ文なので、原本のまま出します');
+    } catch (e) {
+      say('日記用の文を保存できませんでした: ' + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setPbBusy(false);
+    }
+  }
+
+  async function acceptPb(k: Kakera): Promise<void> {
+    setPbBusy(true);
+    try {
+      const row = await api.acceptPublishBody(katachiId, k.id);
+      setPbs((list) => list.map((p) => (p.kakera_id === k.id ? row : p)));
+    } catch (e) {
+      say('選べませんでした: ' + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setPbBusy(false);
+    }
+  }
+
+  async function discardPb(k: Kakera): Promise<void> {
+    if (!confirm('日記用に直した文を捨てて、原本に戻します。よろしいですか？')) return;
+    const before = pbOf(k.id)?.body ?? k.body;
+    setPbBusy(true);
+    try {
+      await saveChain.current;
+      await api.deletePublishBody(katachiId, k.id);
+      setPbs((list) => list.filter((p) => p.kakera_id !== k.id));
+      if (before !== k.body) dropSegChoices(k.id);
+      setPbEdit(null);
+    } catch (e) {
+      say('原本に戻せませんでした: ' + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setPbBusy(false);
+    }
+  }
+
   const photoToggleOf = (s: Seg): PhotoToggle => ({
     hidden: (key) => photos.some((p) => p.kakera_id === s.seg && p.key === key),
     onToggle: (key) => {
@@ -321,6 +403,7 @@ export function ConvertScreen({
   const titleOut = converted(titleSeg);
   const descOut = descSeg ? converted(descSeg) : '';
   const resetNums = bodySegs.filter((s) => resetKakera.includes(s.seg)).map((s) => s.num);
+  const staleNums = bodySegs.filter((s) => pbOf(s.seg)?.stale).map((s) => s.num);
   // 空になるかけら（写真をすべて出さないにした等）と、全体が空かどうか。
   // composeBody は空のかけらを飛ばして連結するので、trim が空＝1枚も中身が残らなかったとき
   const bodyOuts = bodySegs.map((s) => ({ s, out: converted(s) }));
@@ -344,6 +427,11 @@ export function ConvertScreen({
       {resetNums.length ? (
         <p class="carry">
           <b>かけら {resetNums.join('・')}</b> は本文が直されたので、そのかけらだけ辞書どおりに戻しました。
+        </p>
+      ) : null}
+      {staleNums.length ? (
+        <p class="carry">
+          <b>かけら {staleNums.join('・')}</b> は日記用に直したあとで原本が変わっています。選ぶまでは直した文で出ます。
         </p>
       ) : null}
       {resetTitle ? <p class="carry">タイトルの文字が変わったので、タイトルの選択は辞書どおりに戻しました。</p> : null}
@@ -412,7 +500,7 @@ export function ConvertScreen({
               titleOut,
               detail.katachi.date,
               // 書き出し（astro-blog.ts）と同じ組み方（空行を U+00A0 の行に変える）
-              composePublishBody(bodySegs.map(converted), (key) => !!detail.cards?.[key]),
+              composePublishBody(bodySegs.map(converted), (key) => !!cards[key]),
               descOut
             )}
           </pre>
@@ -429,7 +517,7 @@ export function ConvertScreen({
             .map(({ s, out }) => (
               <div class="conv-block" key={s.seg}>
                 <hr class="conv-sep" />
-                <RichText text={out} imgClass="assembled-photo" cards={detail.cards} />
+                <RichText text={out} imgClass="assembled-photo" cards={cards} />
               </div>
             ))}
         </>
@@ -439,32 +527,102 @@ export function ConvertScreen({
           <p class="title-out">
             {title ? renderSpan(renderOf(titleSeg), 0, title.length) : <span class="title-empty">{detail.katachi.date}</span>}
           </p>
-          <p class="title-note">タイトルは X にも投稿されます</p>
           <div class="blk-label" style="margin-top:14px;">
             説明
             {resetDescription ? <span class="tag-reset">文字が変わったので白紙</span> : null}
           </div>
           {descSeg ? (
-            <>
-              <p class="desc-out" style="margin-top:0;">{renderSpan(renderOf(descSeg), 0, descSeg.text.length)}</p>
-              <p class="title-note">説明は X のカードにも出ます</p>
-            </>
+            <p class="desc-out" style="margin-top:0;">{renderSpan(renderOf(descSeg), 0, descSeg.text.length)}</p>
           ) : (
             <p class="desc-out desc-empty" style="margin-top:0;">なし（ブログの紹介文が出ます）</p>
           )}
-          {bodySegs.map((s) => (
-            <div class="conv-block" key={s.seg}>
-              <hr class="conv-sep" />
-              <div class="blk-label">
-                {segLabel(s)}
-                {resetKakera.includes(s.seg) ? <span class="tag-reset">本文を直したので白紙</span> : null}
+          {bodySegs.map((s) => {
+            const k = s.kakera!;
+            const pb = pbOf(s.seg);
+            const editing = pbEdit?.seg === s.seg ? pbEdit : null;
+            return (
+              <div class="conv-block" key={s.seg}>
+                <hr class="conv-sep" />
+                <div class="blk-label">
+                  {segLabel(s)}
+                  {pb ? <span class="tag-pb">日記用に直しています</span> : null}
+                  {resetKakera.includes(s.seg) ? <span class="tag-reset">本文を直したので白紙</span> : null}
+                </div>
+                {pb?.stale && !editing ? (
+                  <div class="pb-stale">
+                    <p class="pb-stale-head">原本が変わっています</p>
+                    <p class="pb-stale-sub">日記用に直したあとで、かけらの原本が直されました。選ぶまでは直した文で出ます。</p>
+                    <details class="pb-orig">
+                      <summary>今の原本を見る</summary>
+                      <p class="pb-orig-text">{k.body}</p>
+                    </details>
+                    <div class="pb-actions">
+                      <button type="button" class="btn-ghost" disabled={pbBusy} onClick={() => void acceptPb(k)}>
+                        書き換えを使う
+                      </button>
+                      <button type="button" class="btn-danger" disabled={pbBusy} onClick={() => void discardPb(k)}>
+                        原本に戻す
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+                {editing ? (
+                  <div class="pb-edit">
+                    <textarea
+                      aria-label={`${segLabel(s)} の日記用の文`}
+                      value={editing.draft}
+                      rows={Math.min(16, Math.max(5, editing.draft.split('\n').length + 1))}
+                      onInput={(e) => setPbEdit({ ...editing, draft: e.currentTarget.value })}
+                    />
+                    <p class="pb-note">
+                      日記にだけ効きます。かけらの原本は変わりません。名前は実名のままでかまいません（保存すると印で置き換わります）。
+                    </p>
+                    <div class="pb-actions">
+                      <button type="button" class="btn-primary" disabled={pbBusy} onClick={() => void savePb(k)}>
+                        {pbBusy ? '保存しています' : '保存'}
+                      </button>
+                      <button
+                        type="button"
+                        class="btn-ghost"
+                        disabled={pbBusy}
+                        onClick={() => {
+                          if (editing.draft !== editing.initial && !confirm('直した文はまだ保存していません。取り消しますか？')) return;
+                          setPbEdit(null);
+                        }}
+                      >
+                        取消
+                      </button>
+                      {pb ? (
+                        <button type="button" class="btn-danger" disabled={pbBusy} onClick={() => void discardPb(k)}>
+                          原本に戻す
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    {emptySegs.has(s.seg) ? (
+                      <p class="seg-empty-note">このかけらは日記に出る内容がないので外れます</p>
+                    ) : null}
+                    <MarkedBody r={renderOf(s)} tokens={s.tokens} imgClass="assembled-photo" photo={photoToggleOf(s)} />
+                    <div class="pb-open-row">
+                      <button
+                        type="button"
+                        class="pb-open"
+                        disabled={pbBusy || !!pbEdit}
+                        onClick={() => {
+                          const text = pb?.body ?? k.body;
+                          setPbEdit({ seg: s.seg, draft: text, initial: text });
+                        }}
+                      >
+                        {pb ? '日記用の文を直す' : '日記用に直す'}
+                      </button>
+                    </div>
+                  </>
+                )}
               </div>
-              {emptySegs.has(s.seg) ? (
-                <p class="seg-empty-note">このかけらは日記に出る内容がないので外れます</p>
-              ) : null}
-              <MarkedBody r={renderOf(s)} tokens={s.tokens} imgClass="assembled-photo" photo={photoToggleOf(s)} />
-            </div>
-          ))}
+            );
+          })}
         </>
       )}
 
@@ -477,7 +635,7 @@ export function ConvertScreen({
           type="button"
           class="btn-cta"
           style="width:100%;"
-          disabled={busy || !chosen.length || composedEmpty}
+          disabled={busy || !chosen.length || composedEmpty || !!pbEdit || pbBusy}
           onClick={() => (rejects.length ? setSheet({ type: 'confirm' }) : void publish(false))}
         >
           {busy ? '書き出しています' : '書き出す'}

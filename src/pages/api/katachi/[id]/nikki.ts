@@ -22,6 +22,7 @@ import {
   validatePhotoChoices,
 } from '../../../../lib/publish/photo-choice';
 import { loadPhotoChoices, savePhotoChoices } from '../../../../lib/publish/photo-choice-db';
+import { loadPublishSet } from '../../../../lib/publish/publish-body-db';
 
 export const prerender = false;
 
@@ -42,6 +43,10 @@ export const prerender = false;
  *   出さない写真は公開版の本文から画像記法ごと除き、公開バケットへもコピーしない。
  *   順番: 名前の当たり箇所・選択の照合は原本の位置で行い、写真を除くのは同じ一回の走査の中
  *   （convertForPublish）。先に写真を除くと位置がずれて名前の選択が落ちるため。
+ * ★日記用に直した本文（publish_body）: かけらごとに「書き換えがあればそれ、無ければ原本」を D1 から取る。
+ *   組み立て順は 書き換えを当てる → 名前の置き換え＋出さない写真を除く（convertForPublish・その本文の位置で）
+ *   → 写真の URL の差し替え → 空行の保持（composePublishBody）→ カードの JSON（blogCardKeysOf）→ 日記の .md。
+ *   書き換えは画面から受け取らない（保存は /publish-body/:kid）。原本（kakera の行・控え）は触らない。
  */
 export const POST: APIRoute = ({ locals, params, request }) =>
   handle(async () => {
@@ -51,7 +56,10 @@ export const POST: APIRoute = ({ locals, params, request }) =>
     const input = await readJson(request);
 
     const detail = await getKatachiDetail(env.DB, id);
-    const chosen = pickKakera(detail, input.kakera_ids);
+    // 日記用に直した本文（publish_body）があるかけらは、それを本文として扱う。D1 から読む（画面からは受け取らない）。
+    // 以後の名前の当たり箇所・選択の照合・写真の除去・空行の保持・カードの URL は、すべてこの本文に当たる。
+    const set = await loadPublishSet(env.DB, id, pickKakera(detail, input.kakera_ids));
+    const chosen = set.kakera;
 
     // タイトルは「日記にする」画面で変えられる。初期値は katachi.title。
     // 組み直し方式なので、変えた題も次の書き出しで初期値に戻る（かたちの題は変えない）。
@@ -63,7 +71,10 @@ export const POST: APIRoute = ({ locals, params, request }) =>
     const bySeg = (seg: string) => choiceMap(valid.filter((c) => c.seg === seg));
 
     const sentPhotos = parsePhotoChoices(input.photos);
-    const photos = sentPhotos ? validatePhotoChoices(chosen, sentPhotos) : await loadPhotoChoices(env.DB, chosen);
+    // 写真の選択は原本か書き換えのどちらかに実在する key まで残す（publish-body.ts の photoBasisOf）
+    const photos = sentPhotos
+      ? validatePhotoChoices(set.photoBasis, sentPhotos)
+      : await loadPhotoChoices(env.DB, set.photoBasis);
 
     const titleOut = convertText(title, entries, bySeg('title'));
     const descriptionOut = convertText(description, entries, bySeg(DESCRIPTION_SEG));

@@ -24,7 +24,9 @@
     "db:migrate:photo-choice:local": "wrangler d1 execute kakera --local --file=./migrations/0006_photo_choice.sql",
     "db:migrate:photo-choice:remote": "wrangler d1 execute kakera --remote --file=./migrations/0006_photo_choice.sql",
     "db:migrate:description:local": "wrangler d1 execute kakera --local --file=./migrations/0007_nikki_description.sql",
-    "db:migrate:description:remote": "wrangler d1 execute kakera --remote --file=./migrations/0007_nikki_description.sql"
+    "db:migrate:description:remote": "wrangler d1 execute kakera --remote --file=./migrations/0007_nikki_description.sql",
+    "db:migrate:publish-body:local": "wrangler d1 execute kakera --local --file=./migrations/0008_publish_body.sql",
+    "db:migrate:publish-body:remote": "wrangler d1 execute kakera --remote --file=./migrations/0008_publish_body.sql"
   },
   "dependencies": {
     "@astrojs/cloudflare": "^12.6.10",

@@ -170,7 +170,7 @@ export function AssembleScreen({
           type="text"
           id="pub-desc"
           value={description}
-          placeholder="X のカードに出る短い一文"
+          placeholder="短い一文"
           enterKeyHint="done"
           onInput={(e) => setDescription(e.currentTarget.value)}
         />
@@ -179,7 +179,6 @@ export function AssembleScreen({
         <span class={descOver ? 'count-over' : undefined}>
           {descLen} / {DESCRIPTION_MAX}
         </span>
-        　X のカードに出ます。空ならブログの紹介文になります。
       </p>
       <div class="field">
         <label for="pub-date">公開日（かたちの日付）</label>

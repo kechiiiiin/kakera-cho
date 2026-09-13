@@ -11,6 +11,7 @@ import {
   saveChoices,
   validateChoices,
 } from '../../../../lib/names/db';
+import { loadPublishSet } from '../../../../lib/publish/publish-body-db';
 
 export const prerender = false;
 
@@ -28,7 +29,8 @@ export const POST: APIRoute = ({ locals, params, request }) =>
     if (!params.id) throw new ApiError(400, 'id がありません');
     const input = await readJson(request);
     const detail = await getKatachiDetail(env.DB, params.id);
-    const kakera = pickKakera(detail, input.kakera_ids);
+    // 日記用に直した本文があるかけらは、その本文で当たり箇所を計算し、選択の basis もその本文に紐づける
+    const { kakera } = await loadPublishSet(env.DB, params.id, pickKakera(detail, input.kakera_ids));
     const title = resolveNikkiTitle(input.title, detail.katachi.title);
     const entries = await listNameMap(env.DB);
     const description = detail.katachi.description ?? '';
@@ -48,7 +50,8 @@ export const PUT: APIRoute = ({ locals, params, request }) =>
     if (!params.id) throw new ApiError(400, 'id がありません');
     const input = await readJson(request);
     const detail = await getKatachiDetail(env.DB, params.id);
-    const kakera = pickKakera(detail, input.kakera_ids);
+    // 日記用に直した本文があるかけらは、その本文で当たり箇所を計算し、選択の basis もその本文に紐づける
+    const { kakera } = await loadPublishSet(env.DB, params.id, pickKakera(detail, input.kakera_ids));
     const title = resolveNikkiTitle(input.title, detail.katachi.title);
     const entries = await listNameMap(env.DB);
     const description = detail.katachi.description ?? '';

@@ -569,6 +569,37 @@ mark.search-hit { background: none; color: var(--accent); font-weight: 600; }
 .mk.flash { animation: mk-flash 1.4s ease; }
 @keyframes mk-flash { 0%, 40% { outline: 2px solid var(--accent); outline-offset: 3px; } 100% { outline: 2px solid transparent; outline-offset: 3px; } }
 
+/* ---- 日記にだけ効く文章の微修正（変換ページ） ----
+   札は控えめに（罫と補助色だけ）。「原本が変わっています」だけは朱の縦罫で知らせる（黙って消さないための印）。
+   ⚠️ 375px ではみ出さないこと。ボタンは折り返し、文字は anywhere で折る。 */
+.tag-pb { font-family: inherit; font-size: 10px; color: var(--muted); border: 1px solid var(--line); border-radius: 1px; padding: 0 5px; }
+.pb-open-row { display: flex; justify-content: flex-end; margin-top: 2px; }
+.pb-open {
+  background: none; border: none; color: var(--muted); font-size: 12px; font-weight: 500;
+  cursor: pointer; padding: 8px 0; min-height: 38px;
+  text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--line);
+}
+.pb-open:disabled { opacity: .4; cursor: default; }
+.pb-edit { min-width: 0; }
+.pb-edit textarea {
+  display: block; max-width: 100%; min-height: 8em; resize: vertical;
+  border: 1px solid var(--line); border-radius: 2px; padding: 10px; color: var(--fg); background: transparent;
+}
+.pb-edit textarea:focus { outline: 1px solid var(--accent); outline-offset: 0; border-color: var(--accent); }
+.pb-note { font-size: 11.5px; color: var(--muted); line-height: 1.6; margin: 8px 0 0; overflow-wrap: anywhere; }
+.pb-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+.pb-actions button { min-width: 0; }
+.pb-stale { border-left: 2px solid var(--accent); padding: 2px 0 2px 10px; margin: 0 0 14px; min-width: 0; }
+.pb-stale-head { font-size: 13px; font-weight: 600; color: var(--accent); margin: 0 0 4px; }
+.pb-stale-sub { font-size: 12px; color: var(--muted); line-height: 1.6; margin: 0; overflow-wrap: anywhere; }
+.pb-stale .pb-actions { margin-top: 10px; }
+.pb-orig { margin-top: 6px; font-size: 12px; color: var(--muted); }
+.pb-orig summary { cursor: pointer; padding: 6px 0; }
+.pb-orig-text {
+  white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.7; color: var(--fg);
+  margin: 4px 0 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 2px;
+}
+
 .warn-line { font-size: 12.5px; color: var(--accent); margin: 26px 0 8px; font-weight: 600; }
 .export-wrap { margin-top: 26px; }
 .export-wrap.tight { margin-top: 0; }

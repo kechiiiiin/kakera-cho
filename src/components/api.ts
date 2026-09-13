@@ -5,6 +5,7 @@ import type { LinkCards } from '../lib/card/types';
 import type { LoadedChoices, SegChoice } from '../lib/names/db';
 import type { NameEntry } from '../lib/names/replace';
 import type { PhotoChoice } from '../lib/publish/photo-choice';
+import type { PublishBodyView } from '../lib/publish/publish-body';
 
 export interface PublishNikkiInput {
   kakera_ids: string[];
@@ -133,6 +134,31 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(input),
     }),
+
+  /* ---- 日記にだけ効く文章の微修正（原本は触らない。書き出しはサーバが D1 から当て直す） ---- */
+
+  loadPublishBodies: (katachiId: string) =>
+    req<{ bodies: PublishBodyView[]; cards?: LinkCards }>(`/api/katachi/${katachiId}/publish-body`).then((r) => ({
+      bodies: r.bodies,
+      cards: r.cards ?? {},
+    })),
+
+  /** 原本と同じ文なら publish_body は null（書き換えを持たない） */
+  savePublishBody: (katachiId: string, kakeraId: string, body: string) =>
+    req<{ publish_body: PublishBodyView | null; cards?: LinkCards }>(
+      `/api/katachi/${katachiId}/publish-body/${kakeraId}`,
+      { method: 'PUT', body: JSON.stringify({ body }) }
+    ).then((r) => ({ publish_body: r.publish_body, cards: r.cards ?? {} })),
+
+  /** 「書き換えを使う」（原本が変わった後も書き換えで出す） */
+  acceptPublishBody: (katachiId: string, kakeraId: string) =>
+    req<{ publish_body: PublishBodyView }>(`/api/katachi/${katachiId}/publish-body/${kakeraId}`, {
+      method: 'PATCH',
+    }).then((r) => r.publish_body),
+
+  /** 書き換えを捨てて原本に戻す */
+  deletePublishBody: (katachiId: string, kakeraId: string) =>
+    req<{ ok: true; removed: boolean }>(`/api/katachi/${katachiId}/publish-body/${kakeraId}`, { method: 'DELETE' }),
 
   /* ---- 写真の出す／出さない ---- */
 
