@@ -436,4 +436,170 @@ mark.search-hit { background: none; color: var(--accent); font-weight: 600; }
 .article-row { padding: 14px 2px; border-top: 1px solid var(--line); }
 .article-row:first-child { border-top: none; }
 .article-date { font-size: 11px; color: var(--muted); font-family: var(--mono); }
-.article-title { font-size: 15px; font-weight: 400; margin-top: 4px; color: var(--fg); }
+.article-title { font-size: 15px; font-weight: 400; margin-top: 4px; color: var(--fg); overflow-wrap: anywhere; }
+/* 日記タブの隅の小さな入口（名前の辞書） */
+.corner-row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.corner-link {
+  background: none; border: none; color: var(--muted); font-size: 11.5px; font-weight: 500;
+  cursor: pointer; padding: 8px 0; min-height: 38px; white-space: nowrap;
+  text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--line);
+}
+
+/* ================= 公開名変換（公開名変換設計・モックが正） =================
+   ⚠️ iPhone の幅（375px）ではみ出さないこと。文字の出るところは min-width:0 と overflow-wrap:anywhere。 */
+.export-note { margin-top: 10px; }
+.carry {
+  font-size: 11.5px; line-height: 1.6; color: var(--muted);
+  border-left: 2px solid var(--line); padding: 2px 0 2px 9px; margin: 0 0 14px; overflow-wrap: anywhere;
+}
+.carry b { color: var(--fg); font-weight: 600; }
+
+/* 見え方の切り替え（印つき／公開される姿／Markdown） */
+.seg { display: flex; border: 1px solid var(--line); border-radius: 2px; margin: 0 0 14px; }
+.seg button {
+  flex: 1; min-width: 0; border: none; border-left: 1px solid var(--line); background: transparent; color: var(--muted);
+  font-size: 12px; font-weight: 500; padding: 8px 4px; min-height: 38px; cursor: pointer; white-space: nowrap;
+}
+.seg button:first-child { border-left: none; }
+.seg button.on { color: var(--fg); font-weight: 700; box-shadow: inset 0 -2px 0 var(--fg); }
+
+/* 件数と凡例を兼ねる一行 */
+.tally {
+  display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: baseline;
+  font-size: 12px; color: var(--muted); padding: 0 0 12px; margin: 0 0 16px; border-bottom: 1px solid var(--line);
+}
+.tally b { font-family: var(--mono); font-weight: 600; color: var(--fg); margin-left: 5px; }
+.tally .t-rej b { color: var(--accent); }
+.tally .t-zero { opacity: .5; }
+
+.blk-label { font-size: 11px; color: var(--muted); font-family: var(--mono); letter-spacing: .04em; margin: 0 0 6px; display: flex; gap: 8px; flex-wrap: wrap; align-items: baseline; }
+.tag-reset { font-family: inherit; font-size: 10px; color: var(--fg); border: 1px solid var(--muted); border-radius: 1px; padding: 0 5px; }
+.title-out { font-size: 20px; font-weight: 600; line-height: 1.5; margin: 0 0 4px; overflow-wrap: anywhere; min-width: 0; }
+.title-empty { color: var(--muted); font-weight: 400; font-family: var(--mono); font-size: 17px; }
+.title-note { font-size: 11px; color: var(--muted); margin: 0 0 4px; }
+.conv-sep { border: none; border-top: 1px solid var(--line); margin: 18px 0; }
+.conv-block { min-width: 0; }
+.conv-text { line-height: 1.75; }
+.plain-note { font-size: 11px; color: var(--muted); margin: 0 0 14px; line-height: 1.6; }
+
+/* 変換ページのリンク: 朱の下線で描かない。普通の文字色＋淡い点線だけにして、印を浮かせる（Keisuke 確認） */
+.conv-link {
+  color: var(--fg); overflow-wrap: anywhere;
+  text-decoration: underline dotted #cdc8bd; text-decoration-thickness: 1px; text-underline-offset: 6px;
+}
+.conv-aside { color: var(--muted); font-size: .88em; }
+.conv-alt { font-size: 13px; line-height: 1.7; color: var(--fg); margin: -2px 0 10px; overflow-wrap: anywhere; }
+.conv-alt-label { font-family: var(--mono); font-size: 10px; color: var(--muted); border: 1px solid var(--line); border-radius: 1px; padding: 0 4px; margin-right: 6px; }
+
+/* ---- 印（状態で描き分ける） ----
+   辞書どおり … 灰の細い実線の下線だけ。静か。
+   手で直した … 黒の点線の下線 ＋ 薄い地。
+   実名のまま … 朱の文字 ＋ 朱の太い下線 ＋ 朱の薄い地。いちばん目立つ（差し色は朱ひとつ）。
+   例外      … 押せない。ごく薄い点線だけ。
+   ⚠️ 1文字の名前は指で押しにくいので、見えない当たり判定を上下左右に広げる。 */
+.mk { position: relative; cursor: pointer; padding: 0 1px; border-radius: 1px; -webkit-tap-highlight-color: transparent; }
+.mk::after { content: ""; position: absolute; left: -7px; right: -7px; top: -9px; bottom: -9px; }
+.mk:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+.mk-dict { border-bottom: 1.5px solid #a7a296; }
+.mk-edit { border-bottom: 1.5px dashed var(--fg); background: #ece9e1; }
+.mk-reject { color: var(--accent); font-weight: 700; background: rgba(176,58,46,.11); border-bottom: 2px solid var(--accent); }
+.m-exc { border-bottom: 1px dotted #c7c2b6; }
+.mk.nopress { cursor: default; }
+.mk.nopress::after { display: none; }
+.mk.flash { animation: mk-flash 1.4s ease; }
+@keyframes mk-flash { 0%, 40% { outline: 2px solid var(--accent); outline-offset: 3px; } 100% { outline: 2px solid transparent; outline-offset: 3px; } }
+
+.warn-line { font-size: 12.5px; color: var(--accent); margin: 26px 0 8px; font-weight: 600; }
+.export-wrap { margin-top: 26px; }
+.export-wrap.tight { margin-top: 0; }
+
+/* Markdown（書き出す中身そのもの） */
+pre.conv-md {
+  margin: 0; padding: 12px; border: 1px solid var(--line); border-radius: 2px;
+  font-family: var(--mono); font-size: 12.5px; line-height: 1.7; color: var(--fg);
+  white-space: pre-wrap; overflow-wrap: anywhere; word-break: normal; min-width: 0; max-width: 100%;
+}
+
+/* ---- シート（下から出る選択肢） ---- */
+.sheet-layer { position: fixed; inset: 0; z-index: 60; }
+.sheet-scrim { position: absolute; inset: 0; background: rgba(23,23,26,.38); }
+.sheet {
+  position: absolute; left: 0; right: 0; bottom: 0; margin: 0 auto; max-width: 620px;
+  background: var(--bg); color: var(--fg);
+  border-top: 1px solid var(--line); border-radius: 2px 2px 0 0;
+  padding: 8px 18px calc(16px + env(safe-area-inset-bottom));
+  max-height: 88%; overflow-y: auto; animation: sheet-up .2s ease;
+}
+@keyframes sheet-up { from { transform: translateY(24px); opacity: .4; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .sheet { animation: none; } .mk.flash { animation: none; } }
+.grip { width: 36px; height: 3px; background: var(--line); margin: 2px auto 12px; border-radius: 2px; }
+.sh-ctx { font-size: 11px; color: var(--muted); font-family: var(--mono); letter-spacing: .04em; margin: 0 0 6px; }
+.sh-head { font-size: 18px; font-weight: 600; margin: 0 0 6px; overflow-wrap: anywhere; }
+.sh-head .arr { color: var(--muted); font-weight: 400; margin: 0 6px; }
+.sh-snip { font-size: 13px; line-height: 1.65; color: var(--muted); margin: 0 0 12px; overflow-wrap: anywhere; }
+.sh-snip b { color: var(--fg); font-weight: 700; border-bottom: 1.5px solid var(--fg); }
+.opt {
+  display: flex; align-items: center; gap: 12px; width: 100%; min-height: 54px; padding: 10px 2px;
+  border: none; border-top: 1px solid var(--line); background: transparent; text-align: left; cursor: pointer; color: var(--fg);
+  -webkit-tap-highlight-color: transparent;
+}
+.opt-box { width: 18px; height: 18px; border: 1px solid var(--muted); border-radius: 1px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; color: var(--bg); font-size: 12px; }
+.opt.on .opt-box { background: var(--accent); border-color: var(--accent); }
+.opt-main { font-size: 15px; font-weight: 600; flex-shrink: 0; width: 5.2em; }
+.opt-sub { font-size: 13px; color: var(--muted); min-width: 0; overflow-wrap: anywhere; line-height: 1.5; }
+.opt-sub q { quotes: "「" "」"; color: var(--fg); }
+.opt-rej .opt-main { color: var(--accent); }
+.opt-rej .opt-sub q { color: var(--accent); font-weight: 600; }
+.opt-edit { display: flex; gap: 8px; padding: 0 0 12px 30px; min-width: 0; }
+.opt-edit input {
+  flex: 1; min-width: 0; max-width: 100%; border: 1px solid var(--line); border-radius: 2px;
+  background: transparent; color: var(--fg); font-family: inherit; font-size: 16px; padding: 10px 11px;
+}
+.opt-edit input:focus, .d-in:focus { outline: 1px solid var(--accent); outline-offset: 0; border-color: var(--accent); }
+.opt-edit .btn-primary { flex-shrink: 0; }
+.sh-foot { font-size: 11.5px; color: var(--muted); margin: 4px 0 12px; padding-top: 10px; border-top: 1px solid var(--line); line-height: 1.6; overflow-wrap: anywhere; }
+.sh-foot-plain { border-top: none; padding-top: 0; }
+.sh-warn { color: var(--accent); font-weight: 600; }
+.sh-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.sh-actions button { flex: 1; min-width: 0; min-height: 44px; }
+.sh-title { font-size: 16px; font-weight: 600; margin: 0 0 8px; line-height: 1.5; }
+.sh-title em { font-style: normal; color: var(--accent); font-family: var(--mono); }
+.rej-list { list-style: none; margin: 0 0 10px; padding: 0; }
+.rej-list li { border-top: 1px solid var(--line); }
+.rej-list li:last-child { border-bottom: 1px solid var(--line); }
+.rej-list button {
+  display: flex; gap: 10px; align-items: baseline; width: 100%; text-align: left; border: none; background: transparent;
+  padding: 12px 2px; min-height: 48px; cursor: pointer; color: var(--fg);
+}
+.rej-name { color: var(--accent); font-weight: 700; font-size: 15px; flex-shrink: 0; }
+.rej-where { font-size: 12.5px; color: var(--muted); min-width: 0; overflow-wrap: anywhere; line-height: 1.5; }
+.rej-go { margin-left: auto; color: var(--muted); flex-shrink: 0; font-size: 13px; }
+
+/* ---- 名前の辞書 ---- */
+.page-sub-strong { color: var(--fg); font-weight: 600; }
+.dict-list { border-bottom: 1px solid var(--line); }
+.dict-row {
+  display: flex; align-items: center; gap: 10px; padding: 13px 2px; border-top: 1px solid var(--line);
+  min-height: 48px; cursor: pointer; min-width: 0;
+}
+.dict-row:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+.d-src { font-size: 16px; font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.d-arrow { color: var(--muted); flex-shrink: 0; font-size: 13px; }
+.d-tgt { font-size: 16px; min-width: 0; overflow-wrap: anywhere; flex: 1; }
+.d-same { color: var(--muted); font-size: 13px; }
+.d-chev { color: var(--muted); flex-shrink: 0; }
+.dict-row.editing { display: block; cursor: default; padding: 14px 2px; }
+.d-grid { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 8px; align-items: center; }
+.d-in {
+  width: 100%; min-width: 0; max-width: 100%; border: 1px solid var(--line); border-radius: 2px;
+  background: transparent; color: var(--fg); font-family: inherit; font-size: 16px; padding: 10px 11px;
+}
+.d-in:disabled { color: var(--muted); background: #f3f1ec; }
+.d-check { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--fg); margin: 12px 0 0; min-height: 32px; cursor: pointer; }
+.d-check input { width: 18px; height: 18px; accent-color: var(--accent); margin: 0; }
+.d-actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+.d-del { margin-left: auto; }
+.d-cap { font-size: 10px; color: var(--muted); font-family: var(--mono); margin: 0 0 4px; display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 8px; }
+.d-cap span:nth-child(2) { visibility: hidden; }
+.try-out { font-size: 16px; line-height: 1.8; margin: 10px 0 0; padding: 10px 0 0; border-top: 1px dashed var(--line); overflow-wrap: anywhere; min-height: 2em; }
+.try-empty { color: var(--muted); }

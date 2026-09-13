@@ -2,6 +2,28 @@
 
 import type { Kakera, KatachiDetail, KatachiSummary, SearchResult } from '../lib/kakera/types';
 import type { LinkCards } from '../lib/card/types';
+import type { LoadedChoices, SegChoice } from '../lib/names/db';
+import type { NameEntry } from '../lib/names/replace';
+
+export interface PublishNikkiInput {
+  kakera_ids: string[];
+  title: string;
+  choices: SegChoice[];
+  /** 実名のまま出る箇所があると念押しで確かめたか（無いのに拒否が残っていればサーバが 409） */
+  confirm_real_names: boolean;
+}
+
+export interface NameEntryInput {
+  source: string;
+  target: string;
+  exception: boolean;
+}
+
+export interface NameChoiceLoad extends LoadedChoices {
+  entries: NameEntry[];
+  /** 日記に使うタイトル（入力が空ならかたちの題） */
+  title: string;
+}
 
 export class ApiFailure extends Error {
   status: number;
@@ -69,9 +91,34 @@ export const api = {
   detachKakera: (katachiId: string, kakeraId: string) =>
     req<{ kakera: Kakera }>(`/api/katachi/${katachiId}/kakera/${kakeraId}`, { method: 'DELETE' }),
 
-  publishNikki: (katachiId: string, input: { kakera_ids: string[]; title?: string }) =>
+  /** 本文とタイトルはサーバが原本から置き換え直す。送るのは並び・タイトルの入力・選択だけ */
+  publishNikki: (katachiId: string, input: PublishNikkiInput) =>
     req<{ ok: true; path: string; slug: string }>(`/api/katachi/${katachiId}/nikki`, {
       method: 'POST',
+      body: JSON.stringify(input),
+    }),
+
+  /* ---- 公開名変換 ---- */
+
+  nameMap: () => req<{ entries: NameEntry[] }>('/api/name-map').then((r) => r.entries),
+
+  addNameEntry: (input: NameEntryInput) =>
+    req<{ entry: NameEntry }>('/api/name-map', { method: 'POST', body: JSON.stringify(input) }).then((r) => r.entry),
+
+  updateNameEntry: (id: string, input: NameEntryInput) =>
+    req<{ entry: NameEntry }>(`/api/name-map/${id}`, { method: 'PATCH', body: JSON.stringify(input) }).then(
+      (r) => r.entry
+    ),
+
+  deleteNameEntry: (id: string) => req<{ ok: true }>(`/api/name-map/${id}`, { method: 'DELETE' }),
+
+  /** 変換ページを開くとき（タイトルを URL に載せないので POST） */
+  loadNameChoices: (katachiId: string, input: { kakera_ids: string[]; title: string }) =>
+    req<NameChoiceLoad>(`/api/katachi/${katachiId}/name-choice`, { method: 'POST', body: JSON.stringify(input) }),
+
+  saveNameChoices: (katachiId: string, input: { kakera_ids: string[]; title: string; choices: SegChoice[] }) =>
+    req<{ ok: true; choices: SegChoice[] }>(`/api/katachi/${katachiId}/name-choice`, {
+      method: 'PUT',
       body: JSON.stringify(input),
     }),
 

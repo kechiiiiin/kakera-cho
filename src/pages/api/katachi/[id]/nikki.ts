@@ -4,15 +4,28 @@ import { ctxOf } from '../../../../lib/ctx';
 import { getKatachiDetail, recordNikki } from '../../../../lib/kakera/db';
 import { publishNikki } from '../../../../lib/publish/astro-blog';
 import { syncKatachi } from '../../../../lib/backup/sync';
+import {
+  listNameMap,
+  parseSegChoices,
+  pickKakera,
+  resolveNikkiTitle,
+  saveChoices,
+  validateChoices,
+} from '../../../../lib/names/db';
+import { choiceMap, convertText } from '../../../../lib/names/replace';
 
 export const prerender = false;
 
 /**
  * POST /api/katachi/:id/nikki — 日記にする／組み直す
- * {kakera_ids[]（この順）, title?}
+ * {kakera_ids[]（この順）, title?, choices?[], confirm_real_names?}
  *
  * ★毎回ファイルを丸ごと上書きする（差分追記ではない）。
  * ★nikki に行が無いのに astro-blog に同じ日付のファイルがあれば 409（publishNikki 側の安全弁）。
+ * ★公開名変換: 本文とタイトルは**サーバ側で原本から置き換え直す**。画面から届いた本文は受け取らない。
+ *   届いた選択は、原本から計算し直した当たり箇所と「位置と置き換え元」が一致するものだけ当て、
+ *   一致しないものは辞書どおりに倒す。
+ * ★実名のまま出る箇所（拒否）が残るときは、confirm_real_names: true が無ければ 409（念押しを経ていない）。
  */
 export const POST: APIRoute = ({ locals, params, request }) =>
   handle(async () => {
@@ -21,35 +34,40 @@ export const POST: APIRoute = ({ locals, params, request }) =>
     if (!id) throw new ApiError(400, 'id がありません');
     const input = await readJson(request);
 
-    const ids = input.kakera_ids;
-    if (!Array.isArray(ids) || !ids.length || !ids.every((x) => typeof x === 'string')) {
-      throw new ApiError(400, '日記に出すかけらが選ばれていません');
+    const detail = await getKatachiDetail(env.DB, id);
+    const chosen = pickKakera(detail, input.kakera_ids);
+
+    // タイトルは「日記にする」画面で変えられる。初期値は katachi.title。
+    // 組み直し方式なので、変えた題も次の書き出しで初期値に戻る（かたちの題は変えない）。
+    const title = resolveNikkiTitle(input.title, detail.katachi.title);
+
+    const entries = await listNameMap(env.DB);
+    const valid = validateChoices(entries, title, chosen, parseSegChoices(input.choices));
+    const bySeg = (seg: string) => choiceMap(valid.filter((c) => c.seg === seg));
+
+    const titleOut = convertText(title, entries, bySeg('title'));
+    const bodiesOut = chosen.map((k) => convertText(k.body, entries, bySeg(k.id)));
+
+    const rejects = [titleOut, ...bodiesOut].reduce(
+      (n, r) => n + r.applied.filter((c) => c.action === 'reject').length,
+      0
+    );
+    if (rejects > 0 && input.confirm_real_names !== true) {
+      throw new ApiError(409, `実名のまま出る箇所が ${rejects} つあります。変換の画面で確かめてから書き出してください。`);
     }
 
-    const detail = await getKatachiDetail(env.DB, id);
-    const byId = new Map(detail.kakera.map((k) => [k.id, k]));
-    const chosen = (ids as string[]).map((kid) => {
-      const k = byId.get(kid);
-      if (!k) throw new ApiError(400, `このかたちに無いかけらが選ばれています: ${kid}`);
-      return k;
-    });
-
-    // 書き出す画面でタイトルを変えられる。初期値は katachi.title。
-    // 組み直し方式なので、変えた題も次の書き出しで初期値に戻る（D1 には保存しない）。
-    const title =
-      typeof input.title === 'string' && input.title.trim()
-        ? input.title.trim()
-        : detail.katachi.title;
+    // 選択を覚える（書き出しに失敗しても、選んだことは残す）
+    await saveChoices(env.DB, id, title, chosen, valid);
 
     const { path } = await publishNikki(env, {
       date: detail.katachi.date,
-      title,
-      kakera: chosen,
+      title: titleOut.text,
+      bodies: bodiesOut.map((r) => r.text),
       alreadyPublished: !!detail.nikki,
     });
 
     await recordNikki(env.DB, id, detail.katachi.date, chosen.map((k) => k.id));
-    // 控えのかたちにも「日記 #n」の印を反映する
+    // 控えのかたちにも「日記 #n」の印を反映する（控えは原本なので実名のまま）
     waitUntil(syncKatachi(env, id));
 
     return json({ ok: true, path, slug: detail.katachi.date });

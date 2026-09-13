@@ -14,7 +14,9 @@
     "db:migrate:local": "wrangler d1 execute kakera --local --file=./migrations/0001_fts_trigram_search.sql",
     "db:migrate:remote": "wrangler d1 execute kakera --remote --file=./migrations/0001_fts_trigram_search.sql",
     "db:migrate:link-card:local": "wrangler d1 execute kakera --local --file=./migrations/0002_link_card.sql",
-    "db:migrate:link-card:remote": "wrangler d1 execute kakera --remote --file=./migrations/0002_link_card.sql"
+    "db:migrate:link-card:remote": "wrangler d1 execute kakera --remote --file=./migrations/0002_link_card.sql",
+    "db:migrate:name-map:local": "wrangler d1 execute kakera --local --file=./migrations/0003_name_map.sql",
+    "db:migrate:name-map:remote": "wrangler d1 execute kakera --remote --file=./migrations/0003_name_map.sql"
   },
   "dependencies": {
     "@astrojs/cloudflare": "^12.6.10",

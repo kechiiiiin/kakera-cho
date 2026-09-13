@@ -11,12 +11,14 @@ import { KatachiListScreen } from './KatachiListScreen';
 import { NikkiListScreen } from './NikkiListScreen';
 import { ReadScreen } from './ReadScreen';
 import { AssembleScreen } from './AssembleScreen';
+import { NameMapScreen } from './NameMapScreen';
 
 type View =
   | { t: 'write' }
   | { t: 'compose' }
   | { t: 'katachi' }
   | { t: 'nikki' }
+  | { t: 'namemap' }
   | { t: 'read'; id: string }
   | { t: 'assemble'; id: string };
 
@@ -24,7 +26,7 @@ type Tab = 'write' | 'katachi' | 'nikki';
 
 function tabOf(view: View): Tab {
   if (view.t === 'katachi' || view.t === 'read') return 'katachi';
-  if (view.t === 'nikki') return 'nikki';
+  if (view.t === 'nikki' || view.t === 'namemap') return 'nikki';
   return 'write';
 }
 
@@ -232,8 +234,11 @@ export default function App(): JSX.Element {
             list={katachiList.filter((k) => k.has_nikki)}
             loaded={katachiLoaded}
             onOpen={openKatachi}
+            onOpenNameMap={() => setView({ t: 'namemap' })}
           />
         ) : null}
+
+        {view.t === 'namemap' ? <NameMapScreen onBack={() => setView({ t: 'nikki' })} say={say} /> : null}
 
         {view.t === 'read' && detail && detail.katachi.id === view.id ? (
           <ReadScreen
@@ -285,6 +290,7 @@ export default function App(): JSX.Element {
                 say('日記にしました');
               })
             }
+            say={say}
           />
         ) : null}
 

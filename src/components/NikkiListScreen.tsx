@@ -12,14 +12,22 @@ export function NikkiListScreen({
   list,
   loaded,
   onOpen,
+  onOpenNameMap,
 }: {
   list: KatachiSummary[];
   loaded: boolean;
   onOpen: (id: string) => void;
+  /** 名前の辞書（公開名変換）。滅多に触らないので隅に小さく置く */
+  onOpenNameMap: () => void;
 }): JSX.Element {
   return (
     <section>
-      <p class="page-date">日記</p>
+      <div class="corner-row">
+        <p class="page-date">日記</p>
+        <button type="button" class="corner-link" onClick={onOpenNameMap}>
+          名前の辞書
+        </button>
+      </div>
       <p class="page-sub">これまでに日記にしたものの一覧です。</p>
       {!loaded ? (
         <p class="empty-note">読み込んでいます</p>
