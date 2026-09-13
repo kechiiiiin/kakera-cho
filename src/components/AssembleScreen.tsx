@@ -36,9 +36,30 @@ export function AssembleScreen({
   const byId = new Map(kakera.map((k) => [k.id, k]));
   const chosen = order.map((id) => byId.get(id)).filter((k): k is Kakera => !!k);
 
+  /**
+   * 新しくチェックしたかけらの差し込み位置（Keisuke 決定・設計 §3「日記の並び」）。
+   * 現在の日記の並び（手で並べ替えた後かもしれない）の中で、written_at がそれ以下の
+   * 最後のかけらの直後に入れる。そういうかけらが無ければ先頭。同じなら既存の後ろ（<= で判定）。
+   */
+  function insertPosition(current: string[], id: string): number {
+    const target = byId.get(id);
+    if (!target) return current.length;
+    let lastIdx = -1;
+    for (let i = 0; i < current.length; i++) {
+      const k = byId.get(current[i]!);
+      if (k && k.written_at <= target.written_at) lastIdx = i;
+    }
+    return lastIdx + 1;
+  }
+
   function toggle(id: string): void {
     if (isClickSuppressed()) return;
-    setOrder(order.includes(id) ? order.filter((x) => x !== id) : [...order, id]);
+    if (order.includes(id)) {
+      setOrder(order.filter((x) => x !== id));
+      return;
+    }
+    const pos = insertPosition(order, id);
+    setOrder([...order.slice(0, pos), id, ...order.slice(pos)]);
   }
 
   if (step === 'convert') {

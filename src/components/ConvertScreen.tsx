@@ -310,6 +310,11 @@ export function ConvertScreen({
 
   const titleOut = converted(titleSeg);
   const resetNums = bodySegs.filter((s) => resetKakera.includes(s.seg)).map((s) => s.num);
+  // 空になるかけら（写真をすべて出さないにした等）と、全体が空かどうか。
+  // composeBody は空のかけらを飛ばして連結するので、trim が空＝1枚も中身が残らなかったとき
+  const bodyOuts = bodySegs.map((s) => ({ s, out: converted(s) }));
+  const emptySegs = new Set(bodyOuts.filter((x) => !x.out.trim().length).map((x) => x.s.seg));
+  const composedEmpty = !composeBody(bodyOuts.map((x) => x.out)).trim().length;
 
   return (
     <section>
@@ -423,6 +428,9 @@ export function ConvertScreen({
                 {segLabel(s)}
                 {resetKakera.includes(s.seg) ? <span class="tag-reset">本文を直したので白紙</span> : null}
               </div>
+              {emptySegs.has(s.seg) ? (
+                <p class="seg-empty-note">このかけらは日記に出る内容がないので外れます</p>
+              ) : null}
               <MarkedBody r={renderOf(s)} tokens={s.tokens} imgClass="assembled-photo" photo={photoToggleOf(s)} />
             </div>
           ))}
@@ -430,12 +438,15 @@ export function ConvertScreen({
       )}
 
       {counts.reject ? <p class="warn-line">実名のまま出る箇所 {counts.reject}</p> : null}
-      <div class={counts.reject ? 'export-wrap tight' : 'export-wrap'}>
+      {composedEmpty ? (
+        <p class="warn-line">日記に出す内容がありません。写真をすべて出さないにしたかけらは日記から外れます。</p>
+      ) : null}
+      <div class={counts.reject || composedEmpty ? 'export-wrap tight' : 'export-wrap'}>
         <button
           type="button"
           class="btn-cta"
           style="width:100%;"
-          disabled={busy || !chosen.length}
+          disabled={busy || !chosen.length || composedEmpty}
           onClick={() => (rejects.length ? setSheet({ type: 'confirm' }) : void publish(false))}
         >
           {busy ? '書き出しています' : '書き出す'}

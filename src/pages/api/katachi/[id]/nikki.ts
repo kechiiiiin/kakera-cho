@@ -3,6 +3,7 @@ import { ApiError, handle, json, readJson } from '../../../../lib/http';
 import { ctxOf } from '../../../../lib/ctx';
 import { getKatachiDetail, recordNikki } from '../../../../lib/kakera/db';
 import { publishNikki } from '../../../../lib/publish/astro-blog';
+import { composeBody } from '../../../../lib/markdown';
 import { syncKatachi } from '../../../../lib/backup/sync';
 import {
   listNameMap,
@@ -63,6 +64,15 @@ export const POST: APIRoute = ({ locals, params, request }) =>
 
     const titleOut = convertText(title, entries, bySeg('title'));
     const bodiesOut = chosen.map((k) => convertForPublish(k.body, entries, bySeg(k.id), hiddenKeysOf(photos, k.id)));
+
+    // 写真をすべて出さないにしたかけらが重なる等で、書き出す本文がまるごと空になるときは止める（composeBody は
+    // 空のかけらを飛ばして連結するので、これは「1枚も中身が残らなかった」ときだけ真になる）。
+    if (!composeBody(bodiesOut.map((r) => r.text)).trim()) {
+      throw new ApiError(
+        400,
+        '日記に出す内容がありません。写真をすべて出さないにしたかけらは日記から外れます。'
+      );
+    }
 
     const rejects = [titleOut, ...bodiesOut].reduce(
       (n, r) => n + r.applied.filter((c) => c.action === 'reject').length,
