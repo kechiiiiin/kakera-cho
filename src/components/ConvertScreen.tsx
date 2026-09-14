@@ -807,7 +807,8 @@ export function ConvertScreen({
                             enterKeyHint="done"
                             onInput={(e) => setSheet({ ...sheet, editing: true, draft: e.currentTarget.value })}
                             onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
+                              // 漢字変換を確定する Enter では決めない（Safari は確定の Enter を keyCode 229 で送る）
+                              if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) {
                                 e.preventDefault();
                                 decide();
                               }
