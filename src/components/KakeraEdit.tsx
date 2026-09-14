@@ -32,23 +32,26 @@ export function KakeraEdit({
         onInput={setBody}
         kakeraId={kakera.id}
         writtenAt={kakera.written_at}
+        // 「保存」は書く欄（WriteScreen）と同じく道具の並びの右端に置く。場所を揃えて迷わせない（2026-09-14）
+        inlineAction={
+          <button
+            type="button"
+            class="btn-primary"
+            disabled={busy || !body.trim()}
+            onClick={async () => {
+              setBusy(true);
+              try {
+                await onSave(body.trim());
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            保存
+          </button>
+        }
         belowAction={
           <div class="frag-edit-actions">
-            <button
-              type="button"
-              class="btn-primary"
-              disabled={busy || !body.trim()}
-              onClick={async () => {
-                setBusy(true);
-                try {
-                  await onSave(body.trim());
-                } finally {
-                  setBusy(false);
-                }
-              }}
-            >
-              保存
-            </button>
             <button type="button" class="btn-ghost" disabled={busy} onClick={onCancel}>
               取消
             </button>
