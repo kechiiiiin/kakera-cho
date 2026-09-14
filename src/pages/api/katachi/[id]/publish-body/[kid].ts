@@ -1,27 +1,37 @@
 import type { APIRoute } from 'astro';
 import { ApiError, handle, json, readJson } from '../../../../../lib/http';
 import { ctxOf } from '../../../../../lib/ctx';
-import { cardsForBodies } from '../../../../../lib/kakera/db';
+import { cardsForBodies, getKakera, getKatachiRow } from '../../../../../lib/kakera/db';
 import { ensureCards } from '../../../../../lib/card/ensure';
-import { cleanPublishBody } from '../../../../../lib/publish/publish-body';
+import type { Kakera } from '../../../../../lib/kakera/types';
+import { listNameMap } from '../../../../../lib/names/db';
+import { resolveShape } from '../../../../../lib/names/doc';
 import {
-  acceptPublishBody,
-  deletePublishBody,
-  kakeraOfKatachiFor,
-  savePublishBody,
-  viewOf,
-} from '../../../../../lib/publish/publish-body-db';
+  acceptPublishDoc,
+  deletePublishDoc,
+  docViewOf,
+  savePublishText,
+} from '../../../../../lib/names/doc-db';
 
 export const prerender = false;
 
-// 日記にだけ効く文章の微修正（公開名変換設計）。どれも原本（kakera の行・控え）は触らない。
+// 日記用に直した文（公開名変換設計・記号方式）。どれも原本（kakera の行・控え）は触らない。
 // かたちが無い・かけらが無い → 404／そのかたちに入っていないかけら → 409。
 
+async function kakeraOfKatachiFor(db: D1Database, katachiId: string, kakeraId: string): Promise<Kakera> {
+  const katachi = await getKatachiRow(db, katachiId);
+  if (!katachi) throw new ApiError(404, 'そのかたちはありません');
+  const k = await getKakera(db, kakeraId);
+  if (!k) throw new ApiError(404, 'そのかけらはありません');
+  if (k.katachi_id !== katachiId) throw new ApiError(409, 'そのかけらはこのかたちに入っていません');
+  return k;
+}
+
 /**
- * PUT /api/katachi/:id/publish-body/:kid — {body} 日記用に直した本文を保存する
- * → {publish_body: {…, stale} | null, cards}
- * 原本と一字一句同じなら書き換えを持たない（null＝原本のまま出す）。空は 400。
- * basis は今の kakera.updated_at。文章が変わると、そのかけらの名前の選択は白紙に戻る（publish-body.ts の注記）。
+ * PUT /api/katachi/:id/publish-body/:kid — {base, text} 日記用に直した文を保存する
+ * base = 欄を開いたときの文（置き換え済み）。サーバが D1 から作り直して一致しなければ 409（開いた後に選択・辞書・原本が変わった）。
+ * 保存時の差分で名前の範囲を追って記号に戻す（触らなかった名前の選択は残る・名前の言葉を書き換えた場所は普通の文字・新しく打った実名は記号）。
+ * → {publish: DocView | null（原本と同じになったら書き換えを持たない）, kakera: DocView, cards}
  */
 export const PUT: APIRoute = ({ locals, params, request }) =>
   handle(async () => {
@@ -29,23 +39,25 @@ export const PUT: APIRoute = ({ locals, params, request }) =>
     const { id, kid } = params;
     if (!id || !kid) throw new ApiError(400, 'id がありません');
     const input = await readJson(request);
-    const body = cleanPublishBody(input.body);
-    if (body === null) throw new ApiError(400, '本文が空です（日記に出さないなら「日記にする」画面で外してください）');
     const k = await kakeraOfKatachiFor(env.DB, id, kid);
-    const saved = await savePublishBody(env.DB, id, k, body);
-    if (saved) {
-      // 書き換えで足した URL のカードを裏で取る（かけらの保存と同じ）。日記に載せるカードは書き換えた本文から拾うため
-      waitUntil(ensureCards(env, [saved.body]));
+    const dict = await listNameMap(env.DB);
+    const saved = await savePublishText(env.DB, id, k, dict, input.base, input.text);
+    let text: string | null = null;
+    if (saved.publish?.shape) {
+      text = resolveShape(saved.publish.shape, dict).text;
+      // 書き換えで足した URL のカードを裏で取る（かけらの保存と同じ）
+      waitUntil(ensureCards(env, [text]));
     }
     return json({
-      publish_body: saved ? viewOf(k, saved) : null,
-      cards: saved ? await cardsForBodies(env.DB, [saved.body]) : {},
+      publish: saved.publish ? docViewOf(k.id, saved.publish, k.updated_at) : null,
+      kakera: docViewOf(k.id, saved.kakera),
+      cards: text ? await cardsForBodies(env.DB, [text]) : {},
     });
   });
 
 /**
  * PATCH /api/katachi/:id/publish-body/:kid — 「書き換えを使う」（原本が変わった後も書き換えで出す）
- * basis を今の kakera.updated_at に進める。文章は変えない（名前の選択も残る）。書き換えが無ければ 404。
+ * basis を今の kakera.updated_at に進める。文と選択は変えない。書き換えが無ければ 404。
  */
 export const PATCH: APIRoute = ({ locals, params }) =>
   handle(async () => {
@@ -53,12 +65,11 @@ export const PATCH: APIRoute = ({ locals, params }) =>
     const { id, kid } = params;
     if (!id || !kid) throw new ApiError(400, 'id がありません');
     const k = await kakeraOfKatachiFor(env.DB, id, kid);
-    const row = await acceptPublishBody(env.DB, id, k);
-    return json({ publish_body: viewOf(k, row) });
+    return json({ publish_body: await acceptPublishDoc(env.DB, id, k) });
   });
 
 /**
- * DELETE /api/katachi/:id/publish-body/:kid — 書き換えを捨てて原本に戻す
+ * DELETE /api/katachi/:id/publish-body/:kid — 書き換えを捨てて原本に戻す（原本側の選択がそのまま戻る）
  * → {ok, removed}（書き換えが無くてもエラーにしない）
  */
 export const DELETE: APIRoute = ({ locals, params }) =>
@@ -67,6 +78,6 @@ export const DELETE: APIRoute = ({ locals, params }) =>
     const { id, kid } = params;
     if (!id || !kid) throw new ApiError(400, 'id がありません');
     await kakeraOfKatachiFor(env.DB, id, kid);
-    const removed = await deletePublishBody(env.DB, id, kid);
+    const removed = await deletePublishDoc(env.DB, id, kid);
     return json({ ok: true, removed });
   });

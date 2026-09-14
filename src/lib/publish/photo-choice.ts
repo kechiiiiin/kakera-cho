@@ -7,24 +7,12 @@
 //    かけらの文章を直しても白紙に戻らない。写真を本文から消せば、その選択は自然に効かなくなる
 //  - 出さない写真は公開版の本文から画像記法ごと除く（代替文字も一緒に消える）
 //
-// ⚠️⚠️ 名前の置き換えとの順番:
-//  名前の選択は「原本の中の位置」で持っている。写真を先に除いて本文を縮めると、後ろの当たり箇所の
-//  位置が全部ずれて、名前の選択が位置照合で落ちる（＝辞書どおりに倒れて、拒否や手直しが消える）。
-//  だから写真を除く範囲も**原本の位置のまま**計算し、名前の置き換えと**同じ一回の走査**で切り落とす
-//  （convertText の drop）。当たり箇所の計算・選択の照合は原本に対して行うので、写真を出す／出さないで
-//  名前の選択が崩れることはない。
-//  「置き換えた後の本文から画像記法を正規表現で探して消す」形にしないのは、手で直した言葉が代替文字に
-//  入ると（`]` を含む等）画像記法として読めなくなり、出さないはずの写真が残り得るため。
+// ⚠️ 名前の置き換えとの順番（記号方式）:
+//  名前の場所は記号で持つので、写真は**記号を解いた後の文**から除いてよい（names/assemble.ts）。
+//  置き換えた言葉は Markdown として打ち消してから解くので、代替文字に `]` を入れても画像記法は崩れない。
+//  それでも出さない写真の key が残ったら、書き出しの検査で止める（names/assemble.ts）。
 
-import {
-  convertText,
-  tokenizeForNames,
-  type ConvertResult,
-  type NameChoice,
-  type NameEntry,
-  type NameToken,
-  type Span,
-} from '../names/replace';
+import { tokenizeForNames, type NameToken, type Span } from '../names/replace';
 import { keyFromPhotoUrl } from './photos';
 
 /** 本文に出てくる写真 1 枚ぶん（原本の位置）。 */
@@ -170,20 +158,6 @@ export function hiddenPhotoSpans(
 /** その範囲が、切り落とす範囲のどれかと重なるか。 */
 export function overlapsAny(start: number, end: number, drops: Span[]): boolean {
   return drops.some((d) => start < d.end && d.start < end);
-}
-
-/**
- * 公開版の本文を作る（名前の置き換え＋出さない写真を除く）。
- * ⚠️ 画面の「公開される姿」「Markdown」と書き出し（nikki.ts）で、必ず同じこれを通す。
- * ⚠️ 原本（D1 のかけら）を渡す。位置は全部原本の位置のまま扱う（冒頭の注記）。
- */
-export function convertForPublish(
-  text: string,
-  dict: NameEntry[],
-  choices: Map<number, NameChoice> | undefined,
-  hidden: ReadonlySet<string>
-): ConvertResult {
-  return convertText(text, dict, choices, hiddenPhotoSpans(text, hidden));
 }
 
 /* ---------------- 選択の形 ---------------- */

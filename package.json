@@ -7,6 +7,7 @@
     "dev": "astro dev",
     "build": "astro build && node scripts/postbuild.mjs",
     "check": "astro check",
+    "test": "vitest run",
     "preview": "astro build && wrangler dev",
     "deploy": "astro build && wrangler deploy",
     "db:local": "wrangler d1 execute kakera --local --file=./schema.sql",
@@ -26,7 +27,11 @@
     "db:migrate:description:local": "wrangler d1 execute kakera --local --file=./migrations/0007_nikki_description.sql",
     "db:migrate:description:remote": "wrangler d1 execute kakera --remote --file=./migrations/0007_nikki_description.sql",
     "db:migrate:publish-body:local": "wrangler d1 execute kakera --local --file=./migrations/0008_publish_body.sql",
-    "db:migrate:publish-body:remote": "wrangler d1 execute kakera --remote --file=./migrations/0008_publish_body.sql"
+    "db:migrate:publish-body:remote": "wrangler d1 execute kakera --remote --file=./migrations/0008_publish_body.sql",
+    "db:migrate:name-doc:local": "wrangler d1 execute kakera --local --file=./migrations/0009_name_doc.sql",
+    "db:migrate:name-doc:remote": "wrangler d1 execute kakera --remote --file=./migrations/0009_name_doc.sql",
+    "db:migrate:drop-position-choice:local": "wrangler d1 execute kakera --local --file=./migrations/0010_drop_position_choice.sql",
+    "db:migrate:drop-position-choice:remote": "wrangler d1 execute kakera --remote --file=./migrations/0010_drop_position_choice.sql"
   },
   "dependencies": {
     "@astrojs/cloudflare": "^12.6.10",
@@ -39,7 +44,9 @@
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.4",
+    "@cloudflare/workers-types": "^5.20260911.1",
     "typescript": "^5.9.2",
+    "vitest": "^4.1.11",
     "wrangler": "^4.38.0"
   }
 }

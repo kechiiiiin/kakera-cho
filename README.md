@@ -42,7 +42,7 @@
 ```sh
 npm install
 npm run db:local      # ローカル D1 に初期スキーマを流す（初回だけ）
-# 続けて migrations/0001〜0008 を番号順に当てる（package.json の db:migrate:*:local）
+# 続けて migrations/0001〜0009 を番号順に当てる（package.json の db:migrate:*:local。0010 は本番で数日動かしてから）
 cp .dev.vars.example .dev.vars   # 値は空のままでよい（DEV_BYPASS_AUTH=1 だけ効く）
 npm run dev
 ```
@@ -61,8 +61,9 @@ npm run dev
 ```sh
 npm run check         # 型チェック（astro check）
 npx tsc --noEmit -p . # ⚠️ astro check は API の import 忘れを見逃す。こちらも必ず通す
+npm test              # 公開名変換の記号方式のテスト（vitest・仮名の辞書）
 npm run build         # 本番ビルド
-# 本番 D1: 初期スキーマと 0001〜0008 は適用済み。新しいマイグレーションはデプロイより先に当てる
+# 本番 D1: 初期スキーマと 0001〜0008 は適用済み。0009（name_doc・name_ref）はデプロイより先に当てる。0010 は数日動かしてから
 ```
 
 ---

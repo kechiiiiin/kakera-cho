@@ -2,86 +2,93 @@ import type { JSX } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { Kakera, KatachiDetail } from '../lib/kakera/types';
 import type { LinkCards } from '../lib/card/types';
-import type { PublishBodyView } from '../lib/publish/publish-body';
-import type { SegChoice } from '../lib/names/db';
+import type { DocView } from '../lib/names/doc-db';
 import { composeBody } from '../lib/markdown';
 import { renderDiaryFile } from '../lib/publish/diary-file';
 import { composePublishBody } from '../lib/publish/blank-lines';
+import { tokenizeForNames, type NameEntry, type NameToken } from '../lib/names/replace';
 import {
   DESCRIPTION_SEG,
-  choiceMap,
-  cleanEditText,
-  convertText,
-  effectiveChoice,
-  findHits,
-  shownWord,
-  tokenizeForNames,
-  type NameEntry,
-  type NameHit,
-  type NameToken,
-} from '../lib/names/replace';
-import {
-  convertForPublish,
-  hiddenKeysOf,
-  hiddenPhotoSpans,
-  overlapsAny,
-  photoKeysIn,
-  type PhotoChoice,
-} from '../lib/publish/photo-choice';
-import { api, type PublishNikkiInput } from './api';
+  TITLE_SEG,
+  dictMap,
+  normalizeChoice,
+  resolveShape,
+  type ChoiceAction,
+  type LostChoice,
+  type NameDocShape,
+  type ResolvedSpan,
+} from '../lib/names/doc';
+import { assembleNikki, type Assembled } from '../lib/names/assemble';
+import { hiddenKeysOf, hiddenPhotoSpans, overlapsAny, photoKeysIn, type PhotoChoice } from '../lib/publish/photo-choice';
+import { api, type PublishNikkiInput, type RefChoiceInput } from './api';
 import { timeOf } from './format';
 import { RichText } from './RichText';
-import { MarkedBody, renderSpan, type MarkRender, type MarkStatus, type PhotoToggle } from './NameMarks';
+import { MarkedBody, renderSpan, type MarkRender, type PhotoToggle } from './NameMarks';
 
 /**
- * 変換（公開名変換設計・モックが正）。
- *  組み上がった日記のタイトル・説明・本文を出し、辞書に当たった箇所に印。
- *  説明は D1 に保存したもの（「日記にする」画面が先に保存する）を、読み込みの応答から受け取って出す。開いた時点で全箇所が辞書どおり。
+ * 変換（公開名変換設計・記号方式）。
+ *  組み上がった日記のタイトル・説明・本文を出し、名前の記号の箇所に印。開いた時点で全箇所が辞書どおり。
  *  印を押すと下からシート: 承認（辞書どおり）／手で直す（その箇所だけ）／拒否（実名のまま）。
- *  選択はかけらごとに D1 へ覚える（押すたびに保存）。拒否が残ったまま書き出すときは念押しを出す。
- *  写真: 写真ごとに「日記に出す／出さない」。開いた時点では全部出す。出さない写真は「公開される姿」
- *  「Markdown」から画像記法ごと消える。選択は写真の key に紐づけて D1 へ覚える（本文を直しても残る）。
- *  日記用に直す: かけらのまとまりごとに、日記に出す文だけを書き換えられる（原本は触らない・D1 に保存）。
- *  書き換えた本文にも名前の印と写真の選択が当たる。書き換えた後に原本が直されたら「原本が変わっています」を出し、
- *  書き換えを使う／原本に戻すを選べる（選ぶまでは書き換えを使う）。
+ *  選択は記号ごとに D1 へ覚える（押すたびにその記号だけ保存）。拒否が残ったまま書き出すときは念押しを出す。
+ *  原本・タイトル・説明を直しても白紙に戻らない。直した場所の名前だけ辞書どおりに戻り、どの名前かを知らせる。
+ *  写真: 写真ごとに「日記に出す／出さない」。選択は写真の key に紐づけて D1 へ覚える。
+ *  日記用に直す: かけらごとに、日記に出す文だけを書き換えられる（原本は触らない）。欄は置き換え済みの文で開き、
+ *  保存すると差分で名前を記号に戻す（触らなかった名前の選択は残る）。原本が変わったら「原本が変わっています」。
  *
- * ⚠️ ここで作る本文は見せるためだけ。書き出すときはサーバが原本から置き換え直す。
+ * ⚠️ ここで作る本文は見せるためだけ。書き出すときはサーバが D1 の文書から解き直す（同じ assembleNikki を通す）。
+ * ⚠️ 開いた後に中身が変わると、書き出し・日記用の保存はサーバが 409「内容が変わりました。開き直してください」で止める。
  */
 
 interface Seg {
   /** 'title'・'description' か、かけらの id */
   seg: string;
-  text: string;
-  tokens: NameToken[];
-  hits: NameHit[];
-  kakera: Kakera | null;
+  label: string;
   num: number;
+  kakera: Kakera | null;
+  /** 書き出しに使う文書（かけらは日記用の文書があればそれ） */
+  doc: DocView | null;
+  /** 日記用の文書（かけらだけ） */
+  pub: DocView | null;
+  shape: NameDocShape | null;
+  /** 解いた文（打ち消しなし） */
+  text: string;
+  spans: ResolvedSpan[];
+  tokens: NameToken[];
+  /** 読めない・解けない */
+  error: string | null;
 }
 
-type Sheet =
-  | { type: 'hit'; seg: string; pos: number; editing: boolean; draft: string }
-  | { type: 'confirm' };
+type Sheet = { type: 'mark'; seg: string; id: string; editing: boolean; draft: string } | { type: 'confirm' };
 
 type ViewMode = 'marks' | 'plain' | 'md';
 
-function keyOf(seg: string, pos: number): string {
-  return `${seg}:${pos}`;
+function markKey(seg: string, id: string): string {
+  return `${seg}:${id}`;
 }
 
-function Snippet({ text, pos, len, bold }: { text: string; pos: number; len: number; bold: boolean }): JSX.Element {
-  const a = Math.max(0, pos - 14);
-  const b = Math.min(text.length, pos + len + 14);
+function Snippet({ text, start, end, bold }: { text: string; start: number; end: number; bold: boolean }): JSX.Element {
+  const a = Math.max(0, start - 14);
+  const b = Math.min(text.length, end + 14);
   const flat = (s: string) => s.replace(/\s+/g, ' ');
-  const word = text.slice(pos, pos + len);
+  const word = text.slice(start, end);
   return (
     <>
       {a > 0 ? '…' : ''}
-      {flat(text.slice(a, pos))}
+      {flat(text.slice(a, start))}
       {bold ? <b>{word}</b> : word}
-      {flat(text.slice(pos + len, b))}
+      {flat(text.slice(end, b))}
       {b < text.length ? '…' : ''}
     </>
   );
+}
+
+function shapeOfView(d: DocView | null): NameDocShape | null {
+  return d && d.segments ? { segments: d.segments, refs: d.refs } : null;
+}
+
+function lostLine(l: LostChoice): string {
+  const detail = l.action === 'edit' ? (l.text ?? '') : '実名のまま';
+  return `${l.source}（${detail}）の選択が外れ、${l.now ? `辞書どおり${l.now}に戻りました` : '名前ではなくなりました'}`;
 }
 
 export function ConvertScreen({
@@ -102,15 +109,13 @@ export function ConvertScreen({
   const katachiId = detail.katachi.id;
   const [entries, setEntries] = useState<NameEntry[] | null>(null);
   const [title, setTitle] = useState('');
-  const [choices, setChoices] = useState<SegChoice[]>([]);
+  const [description, setDescription] = useState('');
+  const [dictRevAtOpen, setDictRevAtOpen] = useState('');
+  const [docs, setDocs] = useState<DocView[]>([]);
   const [carried, setCarried] = useState(false);
   /** 日記に出さない写真（出す写真は持たない） */
   const [photos, setPhotos] = useState<PhotoChoice[]>([]);
   const [carriedPhotos, setCarriedPhotos] = useState(0);
-  const [resetKakera, setResetKakera] = useState<string[]>([]);
-  const [resetTitle, setResetTitle] = useState(false);
-  const [description, setDescription] = useState('');
-  const [resetDescription, setResetDescription] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
   const [view, setView] = useState<ViewMode>('marks');
   const [sheet, setSheet] = useState<Sheet | null>(null);
@@ -118,42 +123,37 @@ export function ConvertScreen({
   const [flash, setFlash] = useState<{ key: string; n: number } | null>(null);
   const saveChain = useRef<Promise<void>>(Promise.resolve());
   const editRef = useRef<HTMLInputElement>(null);
-  /** 日記用に直した本文（かけらごと・D1 に保存したもの） */
-  const [pbs, setPbs] = useState<PublishBodyView[]>([]);
-  /** 書き換えた本文に出てくる URL のカード（かたちの詳細に同梱されたカードに足して使う） */
+  /** 日記用に直した文に出てくる URL のカード（かたちの詳細に同梱されたカードに足して使う） */
   const [pbCards, setPbCards] = useState<LinkCards>({});
-  /** 「日記用に直す」を開いているかけら */
+  /** 「日記用に直す」を開いているかけら（initial = 開いたときの文。保存でサーバに base として送る） */
   const [pbEdit, setPbEdit] = useState<{ seg: string; draft: string; initial: string } | null>(null);
   const [pbBusy, setPbBusy] = useState(false);
 
   useEffect(() => {
     let alive = true;
-    Promise.all([
-      api.loadNameChoices(katachiId, { kakera_ids: order, title: titleInput }),
-      api.loadPhotoChoices(katachiId, { kakera_ids: order }),
-      api.loadPublishBodies(katachiId),
-    ])
-      .then(([r, hiddenPhotos, pb]) => {
-        if (!alive) return;
-        setPbs(pb.bodies);
-        setPbCards(pb.cards);
-        setPhotos(hiddenPhotos);
-        setCarriedPhotos(hiddenPhotos.length);
-        setEntries(r.entries);
-        setTitle(r.title);
-        setChoices(r.choices);
-        setCarried(r.choices.length > 0);
-        setResetKakera(r.reset_kakera_ids);
-        setResetTitle(r.reset_title);
-        setDescription(r.description ?? '');
-        setResetDescription(!!r.reset_description);
-      })
-      .catch((e: unknown) => {
-        if (!alive) return;
-        const msg = e instanceof Error ? e.message : String(e);
-        setFailed(msg);
-        say(msg);
-      });
+    (async () => {
+      // 文書の同期は name-choice で走る。日記用の文の読み込みはその後に（同期を二重に走らせない）
+      const r = await api.loadNameChoices(katachiId, { kakera_ids: order, title: titleInput });
+      const [hiddenPhotos, pb] = await Promise.all([
+        api.loadPhotoChoices(katachiId, { kakera_ids: order }),
+        api.loadPublishBodies(katachiId),
+      ]);
+      if (!alive) return;
+      setPbCards(pb.cards);
+      setPhotos(hiddenPhotos);
+      setCarriedPhotos(hiddenPhotos.length);
+      setEntries(r.entries);
+      setTitle(r.title);
+      setDescription(r.description ?? '');
+      setDictRevAtOpen(r.dict_rev);
+      setDocs(r.docs);
+      setCarried(r.docs.some((d) => d.refs.some((x) => x.action !== 'approve')));
+    })().catch((e: unknown) => {
+      if (!alive) return;
+      const msg = e instanceof Error ? e.message : String(e);
+      setFailed(msg);
+      say(msg);
+    });
     return () => {
       alive = false;
     };
@@ -182,10 +182,10 @@ export function ConvertScreen({
   }, [sheet]);
 
   useEffect(() => {
-    if (sheet?.type === 'hit' && sheet.editing) editRef.current?.focus();
+    if (sheet?.type === 'mark' && sheet.editing) editRef.current?.focus();
     // 「手で直す」を開いた瞬間だけ入力欄に寄せる
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sheet?.type === 'hit' && sheet.editing]);
+  }, [sheet?.type === 'mark' && sheet.editing]);
 
   const back = (
     <div class="back-row">
@@ -221,38 +221,70 @@ export function ConvertScreen({
     );
   }
   const dict = entries;
+  const idx = dictMap(dict);
 
   const byId = new Map(detail.kakera.map((k) => [k.id, k]));
   const chosen = order.map((id) => byId.get(id)).filter((k): k is Kakera => !!k);
-  const makeSeg = (seg: string, text: string, kakera: Kakera | null, num: number): Seg => {
-    const tokens = tokenizeForNames(text);
-    return { seg, text, tokens, hits: findHits(text, dict, tokens), kakera, num };
-  };
-  const titleSeg = makeSeg('title', title, null, 0);
-  // 説明が空なら段を作らない（frontmatter にも書かない）
-  const descSeg = description ? makeSeg(DESCRIPTION_SEG, description, null, 0) : null;
-  // 日記用に直した本文があるかけらは、その本文で当たり箇所・写真・公開版を計算する（書き出しのサーバと同じ）。
-  // s.kakera は原本のまま（時刻の表示と「今の原本」に使う）
-  const pbOf = (id: string) => pbs.find((p) => p.kakera_id === id) ?? null;
-  const cards: LinkCards = { ...(detail.cards ?? {}), ...pbCards };
-  const bodySegs = chosen.map((k, i) => makeSeg(k.id, pbOf(k.id)?.body ?? k.body, k, i + 1));
-  const segs = [titleSeg, ...(descSeg ? [descSeg] : []), ...bodySegs];
-  const isHead = (seg: string) => seg === 'title' || seg === DESCRIPTION_SEG;
-  const segOf = (seg: string) => segs.find((s) => s.seg === seg) ?? null;
+  const docOf = (seg: string, kind: DocView['kind']) => docs.find((d) => d.seg === seg && d.kind === kind) ?? null;
 
-  const choiceOf = (seg: string, hit: NameHit) => choices.find((c) => c.seg === seg && c.pos === hit.pos);
-  const statusOf = (seg: string, hit: NameHit): MarkStatus => {
-    const a = effectiveChoice(hit, choiceOf(seg, hit)).action;
-    return a === 'approve' ? 'dict' : a;
+  const makeSeg = (seg: string, label: string, num: number, kakera: Kakera | null, doc: DocView | null, pub: DocView | null): Seg => {
+    const shape = shapeOfView(doc);
+    let error: string | null = null;
+    let text = '';
+    let spans: ResolvedSpan[] = [];
+    if (!doc) error = '名前の記号がまだありません。開き直してください。';
+    else if (!shape) error = doc.kind === 'publish' ? '日記用の文が読めません。原本に戻してください。' : '名前の記号が読めません。開き直してください。';
+    else {
+      try {
+        const r = resolveShape(shape, idx);
+        text = r.text;
+        spans = r.spans;
+      } catch (e) {
+        error = `名前の記号が解けません（${e instanceof Error ? e.message : String(e)}）。開き直してください。`;
+      }
+    }
+    return { seg, label, num, kakera, doc, pub, shape, text, spans, tokens: tokenizeForNames(text), error };
   };
-  // 公開版の本文。書き出し（nikki.ts）と同じ convertForPublish を通す（名前の置き換え＋出さない写真を除く）
-  const converted = (s: Seg) => {
-    const ch = choiceMap(choices.filter((c) => c.seg === s.seg));
-    return isHead(s.seg)
-      ? convertText(s.text, dict, ch).text
-      : convertForPublish(s.text, dict, ch, hiddenKeysOf(photos, s.seg)).text;
-  };
-  // 出さない写真ぶん切り落とす範囲。そこに掛かる当たり箇所（代替文字の名前）は公開されないので数えない
+  const titleSeg = makeSeg(TITLE_SEG, 'タイトル', 0, null, docOf(TITLE_SEG, 'title'), null);
+  // 説明が空なら段を作らない（frontmatter にも書かない）
+  const descSeg = description
+    ? makeSeg(DESCRIPTION_SEG, '説明', 0, null, docOf(DESCRIPTION_SEG, 'description'), null)
+    : null;
+  const bodySegs = chosen.map((k, i) => {
+    const pub = docOf(k.id, 'publish');
+    return makeSeg(k.id, `かけら ${i + 1}`, i + 1, k, pub ?? docOf(k.id, 'kakera'), pub);
+  });
+  const segs = [titleSeg, ...(descSeg ? [descSeg] : []), ...bodySegs];
+  const isHead = (seg: string) => seg === TITLE_SEG || seg === DESCRIPTION_SEG;
+  const segOf = (seg: string) => segs.find((s) => s.seg === seg) ?? null;
+  const cards: LinkCards = { ...(detail.cards ?? {}), ...pbCards };
+
+  // 書き出しと同じ組み立て（サーバの nikki-export.ts と同じ assembleNikki）。止まる理由があればここでも見せる
+  let assembled: Assembled | null = null;
+  let assembleError: string | null = null;
+  try {
+    assembled = assembleNikki(
+      {
+        title: { seg: titleSeg.seg, label: titleSeg.label, shape: titleSeg.shape, expected: title, body: false },
+        description: descSeg
+          ? { seg: descSeg.seg, label: descSeg.label, shape: descSeg.shape, expected: description, body: false }
+          : null,
+        bodies: bodySegs.map((s) => ({
+          seg: s.seg,
+          label: s.label,
+          shape: s.shape,
+          ...(s.pub ? {} : { expected: s.kakera!.body }),
+          body: true,
+          hidden: hiddenKeysOf(photos, s.seg),
+        })),
+      },
+      dict
+    );
+  } catch (e) {
+    assembleError = e instanceof Error ? e.message : String(e);
+  }
+
+  // 出さない写真ぶん切り落とす範囲。そこに掛かる記号（代替文字の名前）は公開されないので数えない
   const dropsOf = (s: Seg) => (isHead(s.seg) ? [] : hiddenPhotoSpans(s.text, hiddenKeysOf(photos, s.seg), s.tokens));
 
   const photoCount = { shown: 0, hidden: 0 };
@@ -262,44 +294,73 @@ export function ConvertScreen({
   }
 
   const counts = { dict: 0, edit: 0, reject: 0, exc: 0 };
-  const rejects: { s: Seg; hit: NameHit }[] = [];
+  const rejects: { s: Seg; m: ResolvedSpan }[] = [];
   for (const s of segs) {
     const drops = dropsOf(s);
-    for (const h of s.hits) {
-      if (overlapsAny(h.pos, h.pos + h.source.length, drops)) continue;
-      if (h.exception) {
-        counts.exc++;
-        continue;
-      }
-      const st = statusOf(s.seg, h);
-      counts[st]++;
-      if (st === 'reject') rejects.push({ s, hit: h });
+    for (const m of s.spans) {
+      if (overlapsAny(m.start, m.end, drops)) continue;
+      if (m.status === 'exception') counts.exc++;
+      else counts[m.status]++;
+      if (m.status === 'reject') rejects.push({ s, m });
     }
   }
 
-  function persist(next: SegChoice[]): void {
-    saveChain.current = saveChain.current
-      .then(() => api.saveNameChoices(katachiId, { kakera_ids: order, title: titleInput, choices: next }))
-      .then(() => undefined)
-      .catch((e: unknown) => say('選択を保存できませんでした: ' + (e instanceof Error ? e.message : String(e))));
+  const lostNotes: { key: string; label: string; line: string }[] = [];
+  for (const s of segs) {
+    const views = s.kakera ? [docOf(s.seg, 'kakera'), s.pub] : [s.doc];
+    for (const d of views) {
+      if (!d) continue;
+      d.lost_choices.forEach((l, i) =>
+        lostNotes.push({
+          key: `${d.doc_id}:${i}`,
+          label: s.label + (d.kind === 'publish' ? '（日記用の文）' : s.pub && d.kind === 'kakera' ? '（原本）' : ''),
+          line: lostLine(l),
+        })
+      );
+    }
   }
+
+  const sayError = (prefix: string) => (e: unknown) => say(prefix + (e instanceof Error ? e.message : String(e)));
 
   function persistPhotos(next: PhotoChoice[]): void {
     saveChain.current = saveChain.current
       .then(() => api.savePhotoChoices(katachiId, { kakera_ids: order, photos: next }))
       .then(() => undefined)
-      .catch((e: unknown) => say('写真の選択を保存できませんでした: ' + (e instanceof Error ? e.message : String(e))));
+      .catch(sayError('写真の選択を保存できませんでした: '));
   }
 
-  /**
-   * そのかけらの本文が変わった（書き換えを保存・原本に戻した）ので、名前の選択を白紙に戻して覚え直す。
-   * サーバも basis の食い違いで白紙にするが、次に開いたとき「白紙に戻しました」と出さないよう、ここで消しておく。
-   */
-  function dropSegChoices(seg: string): void {
-    const next = choices.filter((c) => c.seg !== seg);
-    setChoices(next);
-    persist(next);
-    setResetKakera((list) => list.filter((x) => x !== seg));
+  /** 画面の文書の記号一つを差し替える（その記号だけサーバへ保存する）。 */
+  function choose(s: Seg, m: ResolvedSpan, action: ChoiceAction, text?: string): void {
+    const ref = s.shape?.refs.find((r) => r.id === m.id);
+    if (!ref) return;
+    const next = normalizeChoice(ref, action, text, idx);
+    if ('error' in next) {
+      say(next.error);
+      return;
+    }
+    if (action === 'edit' && next.action === 'approve') say('辞書どおりと同じなので、承認にしました');
+    setDocs((list) =>
+      list.map((d) =>
+        d.refs.some((r) => r.id === m.id)
+          ? { ...d, refs: d.refs.map((r) => (r.id === m.id ? { ...r, action: next.action, text: next.text } : r)) }
+          : d
+      )
+    );
+    const input: RefChoiceInput = { ref_id: m.id, action: next.action, ...(next.text ? { text: next.text } : {}) };
+    saveChain.current = saveChain.current
+      .then(() => api.saveNameChoice(katachiId, input))
+      .then(() => undefined)
+      .catch(sayError('選択を保存できませんでした: '));
+    setSheet(null);
+    setFlash({ key: markKey(s.seg, m.id), n: Date.now() });
+  }
+
+  function replaceDocs(seg: string, publish: DocView | null, kakera: DocView | null): void {
+    setDocs((list) => [
+      ...list.filter((d) => !(d.seg === seg && (d.kind === 'publish' || (kakera && d.kind === 'kakera')))),
+      ...(kakera ? [kakera] : []),
+      ...(publish ? [publish] : []),
+    ]);
   }
 
   async function savePb(k: Kakera): Promise<void> {
@@ -308,23 +369,22 @@ export function ConvertScreen({
       say('本文が空です。日記に出さないなら「組み直す」で外してください');
       return;
     }
-    // 開いたときの初期値（変換後の文）から何も変えていないなら、書き換えを作らない・既にある書き換えも変えない
+    // 開いたときの文から何も変えていないなら、書き換えを作らない・既にある書き換えも変えない
     if (pbEdit.draft === pbEdit.initial) {
       setPbEdit(null);
       return;
     }
-    const before = pbOf(k.id)?.body ?? k.body;
+    const hadPub = !!docOf(k.id, 'publish');
     setPbBusy(true);
     try {
       await saveChain.current;
-      const r = await api.savePublishBody(katachiId, k.id, pbEdit.draft);
-      setPbs((list) => [...list.filter((p) => p.kakera_id !== k.id), ...(r.publish_body ? [r.publish_body] : [])]);
+      const r = await api.savePublishBody(katachiId, k.id, { base: pbEdit.initial, text: pbEdit.draft });
+      replaceDocs(k.id, r.publish, r.kakera);
       setPbCards((c) => ({ ...c, ...r.cards }));
-      if ((r.publish_body?.body ?? k.body) !== before) dropSegChoices(k.id);
       setPbEdit(null);
-      if (!r.publish_body) say('原本と同じ文なので、原本のまま出します');
+      if (!r.publish) say(hadPub ? '原本と同じ文になったので、原本のまま出します' : '原本と同じ文なので、原本のまま出します');
     } catch (e) {
-      say('日記用の文を保存できませんでした: ' + (e instanceof Error ? e.message : String(e)));
+      sayError('日記用の文を保存できませんでした: ')(e);
     } finally {
       setPbBusy(false);
     }
@@ -334,9 +394,11 @@ export function ConvertScreen({
     setPbBusy(true);
     try {
       const row = await api.acceptPublishBody(katachiId, k.id);
-      setPbs((list) => list.map((p) => (p.kakera_id === k.id ? row : p)));
+      setDocs((list) =>
+        list.map((d) => (d.seg === k.id && d.kind === 'publish' ? { ...d, basis: row.basis, stale: row.stale } : d))
+      );
     } catch (e) {
-      say('選べませんでした: ' + (e instanceof Error ? e.message : String(e)));
+      sayError('選べませんでした: ')(e);
     } finally {
       setPbBusy(false);
     }
@@ -344,16 +406,14 @@ export function ConvertScreen({
 
   async function discardPb(k: Kakera): Promise<void> {
     if (!confirm('日記用に直した文を捨てて、原本に戻します。よろしいですか？')) return;
-    const before = pbOf(k.id)?.body ?? k.body;
     setPbBusy(true);
     try {
       await saveChain.current;
       await api.deletePublishBody(katachiId, k.id);
-      setPbs((list) => list.filter((p) => p.kakera_id !== k.id));
-      if (before !== k.body) dropSegChoices(k.id);
+      replaceDocs(k.id, null, null);
       setPbEdit(null);
     } catch (e) {
-      say('原本に戻せませんでした: ' + (e instanceof Error ? e.message : String(e)));
+      sayError('原本に戻せませんでした: ')(e);
     } finally {
       setPbBusy(false);
     }
@@ -371,49 +431,50 @@ export function ConvertScreen({
     },
   });
 
-  function choose(seg: string, hit: NameHit, action: 'approve' | 'edit' | 'reject', text?: string): void {
-    const rest = choices.filter((c) => !(c.seg === seg && c.pos === hit.pos));
-    const next: SegChoice[] =
-      action === 'approve'
-        ? rest
-        : [...rest, { seg, pos: hit.pos, source: hit.source, action, ...(text ? { text } : {}) }];
-    setChoices(next);
-    persist(next);
-    setSheet(null);
-    setFlash({ key: keyOf(seg, hit.pos), n: Date.now() });
-  }
-
   const renderOf = (s: Seg): MarkRender => ({
     text: s.text,
-    hits: s.hits,
-    word: (h) => shownWord(h, choiceOf(s.seg, h)),
-    status: (h) => statusOf(s.seg, h),
-    keyOf: (h) => keyOf(s.seg, h.pos),
-    onPress: (h) => setSheet({ type: 'hit', seg: s.seg, pos: h.pos, editing: false, draft: '' }),
+    marks: s.spans,
+    keyOf: (m) => markKey(s.seg, m.id),
+    onPress: (m) => setSheet({ type: 'mark', seg: s.seg, id: m.id, editing: false, draft: '' }),
   });
 
-  const segLabel = (s: Seg) =>
-    s.seg === 'title' ? 'タイトル' : s.seg === DESCRIPTION_SEG ? '説明' : `かけら ${s.num}` + (s.kakera ? `・${timeOf(s.kakera.written_at)}` : '');
+  const segLabel = (s: Seg) => s.label + (s.kakera ? `・${timeOf(s.kakera.written_at)}` : '');
 
   async function publish(confirmRealNames: boolean): Promise<void> {
+    const used = segs.map((s) => s.doc).filter((d): d is DocView => !!d);
+    const choices: RefChoiceInput[] = used.flatMap((d) =>
+      d.refs.map((r) => {
+        const e = idx.get(r.source);
+        // 例外は選べない（辞書が例外に変わった後の古い選択は承認として送る）
+        if (e && e.target === e.source) return { ref_id: r.id, action: 'approve' as const };
+        return { ref_id: r.id, action: r.action, ...(r.action === 'edit' && r.text ? { text: r.text } : {}) };
+      })
+    );
     setBusy(true);
     try {
       await saveChain.current;
-      await onPublish({ kakera_ids: order, title: titleInput, choices, photos, confirm_real_names: confirmRealNames });
+      await onPublish({
+        kakera_ids: order,
+        title: titleInput,
+        choices,
+        photos,
+        confirm_real_names: confirmRealNames,
+        doc_revs: used.map((d) => ({ doc_id: d.doc_id, rev: d.rev })),
+        dict_rev: dictRevAtOpen,
+      });
     } finally {
       setBusy(false);
     }
   }
 
-  const titleOut = converted(titleSeg);
-  const descOut = descSeg ? converted(descSeg) : '';
-  const resetNums = bodySegs.filter((s) => resetKakera.includes(s.seg)).map((s) => s.num);
-  const staleNums = bodySegs.filter((s) => pbOf(s.seg)?.stale).map((s) => s.num);
-  // 空になるかけら（写真をすべて出さないにした等）と、全体が空かどうか。
-  // composeBody は空のかけらを飛ばして連結するので、trim が空＝1枚も中身が残らなかったとき
-  const bodyOuts = bodySegs.map((s) => ({ s, out: converted(s) }));
-  const emptySegs = new Set(bodyOuts.filter((x) => !x.out.trim().length).map((x) => x.s.seg));
-  const composedEmpty = !composeBody(bodyOuts.map((x) => x.out)).trim().length;
+  const titleOut = assembled?.title.text ?? '';
+  const descOut = assembled?.description?.text ?? '';
+  const staleNums = bodySegs.filter((s) => s.pub?.stale).map((s) => s.num);
+  const segErrors = segs.filter((s) => s.error);
+  // 空になるかけら（写真をすべて出さないにした等）と、全体が空かどうか
+  const emptySegs = new Set((assembled?.bodies ?? []).filter((b) => !b.text.trim().length).map((b) => b.seg));
+  const composedEmpty = !!assembled && !composeBody(assembled.bodies.map((b) => b.text)).trim().length;
+  const cannotExport = !!assembleError || segErrors.length > 0;
 
   return (
     <section>
@@ -429,21 +490,20 @@ export function ConvertScreen({
           ) : null}
         </p>
       ) : null}
-      {resetNums.length ? (
-        <p class="carry">
-          <b>かけら {resetNums.join('・')}</b> は本文が直されたので、そのかけらだけ辞書どおりに戻しました。
+      {lostNotes.map((n) => (
+        <p class="carry" key={n.key}>
+          <b>{n.label}</b> {n.line}
         </p>
-      ) : null}
+      ))}
       {staleNums.length ? (
         <p class="carry">
           <b>かけら {staleNums.join('・')}</b> は日記用に直したあとで原本が変わっています。選ぶまでは直した文で出ます。
         </p>
       ) : null}
-      {resetTitle ? <p class="carry">タイトルの文字が変わったので、タイトルの選択は辞書どおりに戻しました。</p> : null}
-      {resetDescription ? <p class="carry">説明の文字が変わったので、説明の選択は辞書どおりに戻しました。</p> : null}
       {!dict.length ? (
         <p class="warn-note">名前の辞書が空です。このまま書き出すと、名前は置き換わりません（日記タブの「名前の辞書」から足せます）。</p>
       ) : null}
+      {assembleError && !segErrors.length ? <p class="warn-note">{assembleError}</p> : null}
 
       <div class="seg" role="tablist">
         {(
@@ -500,50 +560,73 @@ export function ConvertScreen({
           <p class="plain-note">
             astro-blog に書き出す中身です。リンク先・裸の URL・写真の URL は元のまま（写真の URL だけ、書き出すときに公開用へ差し替わります）。日記に出さない写真は入りません。
           </p>
-          <pre class="conv-md">
-            {renderDiaryFile(
-              titleOut,
-              detail.katachi.date,
-              // 書き出し（astro-blog.ts）と同じ組み方（空行を U+00A0 の行に変える）
-              composePublishBody(bodySegs.map(converted), (key) => !!cards[key]),
-              descOut
-            )}
-          </pre>
+          {assembled ? (
+            <pre class="conv-md">
+              {renderDiaryFile(
+                titleOut,
+                detail.katachi.date,
+                // 書き出し（astro-blog.ts）と同じ組み方（空行を U+00A0 の行に変える）
+                composePublishBody(
+                  assembled.bodies.map((b) => b.text),
+                  (key) => !!cards[key]
+                ),
+                descOut
+              )}
+            </pre>
+          ) : (
+            <p class="warn-note">{assembleError ?? segErrors[0]?.error}</p>
+          )}
         </>
       ) : view === 'plain' ? (
         <>
           <p class="plain-note">公開されたら、こう読めます（印なし）。</p>
-          <p class="title-out">{titleOut || detail.katachi.date}</p>
-          {descOut ? <p class="desc-out">{descOut}</p> : null}
-          {bodySegs
-            .map((s) => ({ s, out: converted(s) }))
-            // 写真だけのかけらで写真を出さないと中身が空になる。書き出し（composeBody）と同じく飛ばす
-            .filter((x) => x.out.trim().length > 0)
-            .map(({ s, out }) => (
-              <div class="conv-block" key={s.seg}>
-                <hr class="conv-sep" />
-                <RichText text={out} imgClass="assembled-photo" cards={cards} />
-              </div>
-            ))}
+          {assembled ? (
+            <>
+              <p class="title-out">{titleOut || detail.katachi.date}</p>
+              {descOut ? <p class="desc-out">{descOut}</p> : null}
+              {assembled.bodies
+                // 写真だけのかけらで写真を出さないと中身が空になる。書き出し（composeBody）と同じく飛ばす
+                .filter((b) => b.text.trim().length > 0)
+                .map((b) => (
+                  <div class="conv-block" key={b.seg}>
+                    <hr class="conv-sep" />
+                    <RichText text={b.text} imgClass="assembled-photo" cards={cards} />
+                  </div>
+                ))}
+            </>
+          ) : (
+            <p class="warn-note">{assembleError ?? segErrors[0]?.error}</p>
+          )}
         </>
       ) : (
         <>
           <div class="blk-label">タイトル</div>
+          {titleSeg.error ? <p class="warn-note">{titleSeg.error}</p> : null}
           <p class="title-out">
-            {title ? renderSpan(renderOf(titleSeg), 0, title.length) : <span class="title-empty">{detail.katachi.date}</span>}
+            {titleSeg.text ? (
+              renderSpan(renderOf(titleSeg), 0, titleSeg.text.length)
+            ) : (
+              <span class="title-empty">{detail.katachi.date}</span>
+            )}
           </p>
           <div class="blk-label" style="margin-top:14px;">
             説明
-            {resetDescription ? <span class="tag-reset">文字が変わったので白紙</span> : null}
           </div>
           {descSeg ? (
-            <p class="desc-out" style="margin-top:0;">{renderSpan(renderOf(descSeg), 0, descSeg.text.length)}</p>
+            <>
+              {descSeg.error ? <p class="warn-note">{descSeg.error}</p> : null}
+              <p class="desc-out" style="margin-top:0;">
+                {renderSpan(renderOf(descSeg), 0, descSeg.text.length)}
+              </p>
+            </>
           ) : (
-            <p class="desc-out desc-empty" style="margin-top:0;">なし（ブログの紹介文が出ます）</p>
+            <p class="desc-out desc-empty" style="margin-top:0;">
+              なし（ブログの紹介文が出ます）
+            </p>
           )}
           {bodySegs.map((s) => {
             const k = s.kakera!;
-            const pb = pbOf(s.seg);
+            const pb = s.pub;
             const editing = pbEdit?.seg === s.seg ? pbEdit : null;
             return (
               <div class="conv-block" key={s.seg}>
@@ -551,9 +634,20 @@ export function ConvertScreen({
                 <div class="blk-label">
                   {segLabel(s)}
                   {pb ? <span class="tag-pb">日記用に直しています</span> : null}
-                  {resetKakera.includes(s.seg) ? <span class="tag-reset">本文を直したので白紙</span> : null}
                 </div>
-                {pb?.stale && !editing ? (
+                {s.error ? (
+                  <div class="pb-stale">
+                    <p class="pb-stale-head">{s.error}</p>
+                    {pb ? (
+                      <div class="pb-actions">
+                        <button type="button" class="btn-danger" disabled={pbBusy} onClick={() => void discardPb(k)}>
+                          原本に戻す
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+                {pb?.stale && !editing && !s.error ? (
                   <div class="pb-stale">
                     <p class="pb-stale-head">原本が変わっています</p>
                     <p class="pb-stale-sub">日記用に直したあとで、かけらの原本が直されました。選ぶまでは直した文で出ます。</p>
@@ -580,7 +674,7 @@ export function ConvertScreen({
                       onInput={(e) => setPbEdit({ ...editing, draft: e.currentTarget.value })}
                     />
                     <p class="pb-note">
-                      日記にだけ効きます。かけらの原本は変わりません。名前は実名のままでかまいません（保存すると印で置き換わります）。
+                      日記にだけ効きます。かけらの原本は変わりません。触らなかった名前の選択は残ります。新しく打った名前は、保存すると印で置き換わります。
                     </p>
                     <div class="pb-actions">
                       <button type="button" class="btn-primary" disabled={pbBusy} onClick={() => void savePb(k)}>
@@ -604,7 +698,7 @@ export function ConvertScreen({
                       ) : null}
                     </div>
                   </div>
-                ) : (
+                ) : !s.error ? (
                   <>
                     {emptySegs.has(s.seg) ? (
                       <p class="seg-empty-note">このかけらは日記に出る内容がないので外れます</p>
@@ -616,20 +710,16 @@ export function ConvertScreen({
                         class="pb-open"
                         disabled={pbBusy || !!pbEdit}
                         onClick={() => {
-                          // 開くときは変換後の状態で見せる: 名前はいまの選択どおりに置き換え、写真の記法は残す
-                          // （出す／出さないの選択は写真の key で効き続けるので、欄の中からは消さない）。
+                          // 開くときは置き換え済みの文で見せる: 名前はいまの選択どおり（拒否は実名）、写真の記法は残す。
                           // composePublishBody の空行の U+00A0 化・写真 URL の差し替え等、書き出し専用の変換は入れない。
-                          const text = pb?.body ?? k.body;
-                          const ch = choiceMap(choices.filter((c) => c.seg === s.seg));
-                          const draft = convertText(text, dict, ch).text;
-                          setPbEdit({ seg: s.seg, draft, initial: draft });
+                          setPbEdit({ seg: s.seg, draft: s.text, initial: s.text });
                         }}
                       >
                         {pb ? '日記用の文を直す' : '日記用に直す'}
                       </button>
                     </div>
                   </>
-                )}
+                ) : null}
               </div>
             );
           })}
@@ -645,7 +735,7 @@ export function ConvertScreen({
           type="button"
           class="btn-cta"
           style="width:100%;"
-          disabled={busy || !chosen.length || composedEmpty || !!pbEdit || pbBusy}
+          disabled={busy || !chosen.length || composedEmpty || cannotExport || !!pbEdit || pbBusy}
           onClick={() => (rejects.length ? setSheet({ type: 'confirm' }) : void publish(false))}
         >
           {busy ? '書き出しています' : '書き出す'}
@@ -658,63 +748,49 @@ export function ConvertScreen({
           <div class="sheet-scrim" onClick={() => setSheet(null)} />
           <div class="sheet" role="dialog" aria-modal="true">
             <div class="grip" />
-            {sheet.type === 'hit'
+            {sheet.type === 'mark'
               ? (() => {
                   const s = segOf(sheet.seg);
-                  const hit = s?.hits.find((h) => h.pos === sheet.pos && !h.exception);
-                  if (!s || !hit) return <p class="empty-note">その箇所はもうありません</p>;
-                  const st = statusOf(s.seg, hit);
-                  const cur = effectiveChoice(hit, choiceOf(s.seg, hit));
+                  const m = s?.spans.find((x) => x.id === sheet.id && x.status !== 'exception');
+                  const ref = s?.shape?.refs.find((x) => x.id === sheet.id);
+                  if (!s || !m || !ref) return <p class="empty-note">その箇所はもうありません</p>;
+                  const st = m.status;
                   const editing = sheet.editing || st === 'edit';
-                  const decide = () => {
-                    const w = cleanEditText(sheet.draft);
-                    if (!w) {
-                      say('言葉を入れてください');
-                      return;
-                    }
-                    if (w === hit.target) {
-                      say('辞書どおりと同じなので、承認にしました');
-                      choose(s.seg, hit, 'approve');
-                      return;
-                    }
-                    choose(s.seg, hit, 'edit', w);
-                  };
+                  const draftValue = sheet.editing ? sheet.draft : st === 'edit' ? (ref.text ?? '') : '';
+                  const decide = () => choose(s, m, 'edit', draftValue);
                   return (
                     <>
                       <p class="sh-ctx">{segLabel(s)}</p>
                       <p class="sh-head">
-                        {hit.source}
+                        {m.source}
                         <span class="arr">→</span>
-                        {shownWord(hit, choiceOf(s.seg, hit))}
+                        {m.word}
                       </p>
                       <p class="sh-snip">
-                        <Snippet text={s.text} pos={hit.pos} len={hit.source.length} bold />
+                        <Snippet text={s.text} start={m.start} end={m.end} bold />
                       </p>
 
                       <button
                         type="button"
                         class={'opt' + (st === 'dict' ? ' on' : '')}
-                        onClick={() => choose(s.seg, hit, 'approve')}
+                        disabled={!m.target}
+                        onClick={() => choose(s, m, 'approve')}
                       >
                         <span class="opt-box">{st === 'dict' ? '✓' : ''}</span>
                         <span class="opt-main">承認</span>
-                        <span class="opt-sub">
-                          辞書どおり <q>{hit.target}</q>
-                        </span>
+                        <span class="opt-sub">{m.target ? <>辞書どおり <q>{m.target}</q></> : '辞書にない名前です'}</span>
                       </button>
                       <button
                         type="button"
                         class={'opt' + (st === 'edit' ? ' on' : '')}
-                        onClick={() =>
-                          setSheet({ ...sheet, editing: true, draft: sheet.draft || (cur.action === 'edit' ? cur.text ?? '' : '') })
-                        }
+                        onClick={() => setSheet({ ...sheet, editing: true, draft: draftValue })}
                       >
                         <span class="opt-box">{st === 'edit' ? '✓' : ''}</span>
                         <span class="opt-main">手で直す</span>
                         <span class="opt-sub">
                           {st === 'edit' ? (
                             <>
-                              <q>{cur.text}</q>（この箇所だけ）
+                              <q>{ref.text}</q>（この箇所だけ）
                             </>
                           ) : (
                             'この箇所だけ別の言葉に'
@@ -726,7 +802,7 @@ export function ConvertScreen({
                           <input
                             ref={editRef}
                             type="text"
-                            value={sheet.draft || (!sheet.editing && cur.action === 'edit' ? cur.text ?? '' : '')}
+                            value={draftValue}
                             placeholder="この箇所だけの言葉"
                             enterKeyHint="done"
                             onInput={(e) => setSheet({ ...sheet, editing: true, draft: e.currentTarget.value })}
@@ -745,17 +821,17 @@ export function ConvertScreen({
                       <button
                         type="button"
                         class={'opt opt-rej' + (st === 'reject' ? ' on' : '')}
-                        onClick={() => choose(s.seg, hit, 'reject')}
+                        onClick={() => choose(s, m, 'reject')}
                       >
                         <span class="opt-box">{st === 'reject' ? '✓' : ''}</span>
                         <span class="opt-main">拒否</span>
                         <span class="opt-sub">
-                          実名のまま <q>{hit.source}</q> を出す
+                          実名のまま <q>{m.source}</q> を出す
                         </span>
                       </button>
                       <p class="sh-foot">
                         どれを選んでも、かけらの原本は変わりません。
-                        {s.seg === 'title' ? 'タイトルは X にも投稿されます。' : ''}
+                        {s.seg === TITLE_SEG ? 'タイトルは X にも投稿されます。' : ''}
                         {s.seg === DESCRIPTION_SEG ? '説明は X のカードにも出ます。' : ''}
                       </p>
                       <div class="sh-actions">
@@ -772,20 +848,20 @@ export function ConvertScreen({
                       実名のまま出る箇所が <em>{rejects.length}</em> つあります
                     </p>
                     <ul class="rej-list">
-                      {rejects.map(({ s, hit }) => (
-                        <li key={keyOf(s.seg, hit.pos)}>
+                      {rejects.map(({ s, m }) => (
+                        <li key={markKey(s.seg, m.id)}>
                           <button
                             type="button"
                             onClick={() => {
                               setSheet(null);
                               setView('marks');
-                              setFlash({ key: keyOf(s.seg, hit.pos), n: Date.now() });
+                              setFlash({ key: markKey(s.seg, m.id), n: Date.now() });
                             }}
                           >
-                            <span class="rej-name">{hit.source}</span>
+                            <span class="rej-name">{m.source}</span>
                             <span class="rej-where">
                               {segLabel(s)}
-                              <Snippet text={s.text} pos={hit.pos} len={hit.source.length} bold={false} />
+                              <Snippet text={s.text} start={m.start} end={m.end} bold={false} />
                             </span>
                             <span class="rej-go">›</span>
                           </button>
@@ -794,7 +870,7 @@ export function ConvertScreen({
                     </ul>
                     <p class="sh-foot sh-foot-plain">
                       このまま書き出すと、公開される日記に実名が出ます。
-                      {rejects.some((x) => x.s.seg === 'title') ? (
+                      {rejects.some((x) => x.s.seg === TITLE_SEG) ? (
                         <b class="sh-warn">タイトルに入っているので X にも出ます。</b>
                       ) : null}
                       {rejects.some((x) => x.s.seg === DESCRIPTION_SEG) ? (

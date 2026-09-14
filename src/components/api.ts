@@ -2,19 +2,33 @@
 
 import type { Kakera, KatachiDetail, KatachiSummary, SearchResult } from '../lib/kakera/types';
 import type { LinkCards } from '../lib/card/types';
-import type { LoadedChoices, SegChoice } from '../lib/names/db';
+import type { DocView } from '../lib/names/doc-db';
+import type { ChoiceAction, NameRef } from '../lib/names/doc';
 import type { NameEntry } from '../lib/names/replace';
 import type { PhotoChoice } from '../lib/publish/photo-choice';
 import type { PublishBodyView } from '../lib/publish/publish-body';
 
+/** 記号一つの選択。 */
+export interface RefChoiceInput {
+  ref_id: string;
+  action: ChoiceAction;
+  /** action が edit のときの言葉 */
+  text?: string;
+}
+
 export interface PublishNikkiInput {
   kakera_ids: string[];
   title: string;
-  choices: SegChoice[];
-  /** 日記に出さない写真（サーバが原本に実在する key だけ当てる） */
+  /** この日記に使う文書の全記号ぶんの選択 */
+  choices: RefChoiceInput[];
+  /** 日記に出さない写真（サーバが原本か日記用の文に実在する key だけ当てる） */
   photos: PhotoChoice[];
   /** 実名のまま出る箇所があると念押しで確かめたか（無いのに拒否が残っていればサーバが 409） */
   confirm_real_names: boolean;
+  /** 開いたときの文書の版（開いた後に変わっていればサーバが 409） */
+  doc_revs: { doc_id: string; rev: string }[];
+  /** 開いたときの辞書の印（開いた後に変わっていればサーバが 409） */
+  dict_rev: string;
 }
 
 export interface NameEntryInput {
@@ -23,12 +37,15 @@ export interface NameEntryInput {
   exception: boolean;
 }
 
-export interface NameChoiceLoad extends LoadedChoices {
+export interface NameChoiceLoad {
   entries: NameEntry[];
   /** 日記に使うタイトル（入力が空ならかたちの題） */
   title: string;
   /** D1 に保存してある日記の説明文（原本・改行は畳み済み）。空なら frontmatter に書かない */
   description: string;
+  dict_rev: string;
+  /** タイトル・説明・かけらごとの原本の文書と日記用の文書 */
+  docs: DocView[];
 }
 
 export class ApiFailure extends Error {
@@ -104,7 +121,7 @@ export const api = {
   detachKakera: (katachiId: string, kakeraId: string) =>
     req<{ kakera: Kakera }>(`/api/katachi/${katachiId}/kakera/${kakeraId}`, { method: 'DELETE' }),
 
-  /** 本文とタイトルはサーバが原本から置き換え直す。送るのは並び・タイトルの入力・選択だけ */
+  /** 本文とタイトルはサーバが D1 の文書から解き直す。送るのは並び・タイトルの入力・選択・版だけ */
   publishNikki: (katachiId: string, input: PublishNikkiInput) =>
     req<{ ok: true; path: string; slug: string }>(`/api/katachi/${katachiId}/nikki`, {
       method: 'POST',
@@ -125,17 +142,18 @@ export const api = {
 
   deleteNameEntry: (id: string) => req<{ ok: true }>(`/api/name-map/${id}`, { method: 'DELETE' }),
 
-  /** 変換ページを開くとき（タイトルを URL に載せないので POST） */
+  /** 変換ページを開くとき（タイトルを URL に載せないので POST）。文書の同期はここで走る */
   loadNameChoices: (katachiId: string, input: { kakera_ids: string[]; title: string }) =>
     req<NameChoiceLoad>(`/api/katachi/${katachiId}/name-choice`, { method: 'POST', body: JSON.stringify(input) }),
 
-  saveNameChoices: (katachiId: string, input: { kakera_ids: string[]; title: string; choices: SegChoice[] }) =>
-    req<{ ok: true; choices: SegChoice[] }>(`/api/katachi/${katachiId}/name-choice`, {
+  /** 記号一つの選択を保存する */
+  saveNameChoice: (katachiId: string, input: RefChoiceInput) =>
+    req<{ ref: NameRef }>(`/api/katachi/${katachiId}/name-choice`, {
       method: 'PUT',
       body: JSON.stringify(input),
-    }),
+    }).then((r) => r.ref),
 
-  /* ---- 日記にだけ効く文章の微修正（原本は触らない。書き出しはサーバが D1 から当て直す） ---- */
+  /* ---- 日記用に直した文（原本は触らない。書き出しはサーバが D1 から解き直す） ---- */
 
   loadPublishBodies: (katachiId: string) =>
     req<{ bodies: PublishBodyView[]; cards?: LinkCards }>(`/api/katachi/${katachiId}/publish-body`).then((r) => ({
@@ -143,12 +161,12 @@ export const api = {
       cards: r.cards ?? {},
     })),
 
-  /** 原本と同じ文なら publish_body は null（書き換えを持たない） */
-  savePublishBody: (katachiId: string, kakeraId: string, body: string) =>
-    req<{ publish_body: PublishBodyView | null; cards?: LinkCards }>(
+  /** base = 欄を開いたときの文。原本と同じになったら publish は null（書き換えを持たない） */
+  savePublishBody: (katachiId: string, kakeraId: string, input: { base: string; text: string }) =>
+    req<{ publish: DocView | null; kakera: DocView | null; cards?: LinkCards }>(
       `/api/katachi/${katachiId}/publish-body/${kakeraId}`,
-      { method: 'PUT', body: JSON.stringify({ body }) }
-    ).then((r) => ({ publish_body: r.publish_body, cards: r.cards ?? {} })),
+      { method: 'PUT', body: JSON.stringify(input) }
+    ).then((r) => ({ publish: r.publish, kakera: r.kakera, cards: r.cards ?? {} })),
 
   /** 「書き換えを使う」（原本が変わった後も書き換えで出す） */
   acceptPublishBody: (katachiId: string, kakeraId: string) =>

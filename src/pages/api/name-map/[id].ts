@@ -5,7 +5,10 @@ import { deleteNameEntry, parseNameEntryInput, updateNameEntry } from '../../../
 
 export const prerender = false;
 
-/** PATCH /api/name-map/:id — {source, target, exception?} 置き換え元が変わったら元の語の選択は捨てる */
+/**
+ * PATCH /api/name-map/:id — {source, target, exception?}
+ * 選択の行は消さない（記号方式。次に文書を読んだとき同期が整える）。置き換え先の変更は保存済みの日記用の文にも効く。
+ */
 export const PATCH: APIRoute = ({ locals, params, request }) =>
   handle(async () => {
     const { env } = ctxOf(locals);
@@ -14,7 +17,10 @@ export const PATCH: APIRoute = ({ locals, params, request }) =>
     return json({ entry });
   });
 
-/** DELETE /api/name-map/:id — 項目を消す。その語の選択も捨てる */
+/**
+ * DELETE /api/name-map/:id — 項目を消す。
+ * 選択の行は消さない（辞書どおりだった箇所は実名に戻り、手で直した言葉は残る。§12 の 20）。
+ */
 export const DELETE: APIRoute = ({ locals, params }) =>
   handle(async () => {
     const { env } = ctxOf(locals);

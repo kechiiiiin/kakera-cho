@@ -21,11 +21,6 @@ export interface NameEntry {
   updated_at?: string;
 }
 
-export type ChoiceAction = 'approve' | 'edit' | 'reject';
-
-/** 日記の説明文の選択の seg（'title' と同じく予約語。かけらの id＝ULID の大文字英数字とは衝突しない）。 */
-export const DESCRIPTION_SEG = 'description';
-
 /** 辞書に当たった箇所。pos は原本（置き換える前の文字列）の中の位置（UTF-16 の添字）。 */
 export interface NameHit {
   pos: number;
@@ -475,94 +470,3 @@ export function findHits(text: string, dict: NameEntry[], tokens: NameToken[] = 
   return out;
 }
 
-/* ---------------- 選択 ---------------- */
-
-export interface NameChoice {
-  pos: number;
-  source: string;
-  action: ChoiceAction;
-  /** action が edit のときの言葉 */
-  text?: string;
-}
-
-/** 手で直した言葉を整える（改行を落とし、前後の空白を落とし、長さを抑える）。空なら null。 */
-export function cleanEditText(raw: unknown): string | null {
-  if (typeof raw !== 'string') return null;
-  const s = raw.replace(/[\r\n\t]+/g, ' ').trim();
-  if (!s) return null;
-  return Array.from(s).slice(0, 60).join('');
-}
-
-/** その箇所に効く選択。位置と置き換え元が一致しないもの・例外・中身の無い edit は辞書どおりに倒す。 */
-export function effectiveChoice(hit: NameHit, choice: NameChoice | undefined): { action: ChoiceAction; text?: string } {
-  if (hit.exception || !choice || choice.pos !== hit.pos || choice.source !== hit.source) return { action: 'approve' };
-  if (choice.action === 'reject') return { action: 'reject' };
-  if (choice.action === 'edit') {
-    const t = cleanEditText(choice.text);
-    if (!t || t === hit.target) return { action: 'approve' };
-    return { action: 'edit', text: t };
-  }
-  return { action: 'approve' };
-}
-
-/** その箇所に出る言葉。 */
-export function shownWord(hit: NameHit, choice: NameChoice | undefined): string {
-  if (hit.exception) return hit.source;
-  const c = effectiveChoice(hit, choice);
-  if (c.action === 'reject') return hit.source;
-  if (c.action === 'edit') return c.text!;
-  return hit.target;
-}
-
-export interface ConvertResult {
-  text: string;
-  hits: NameHit[];
-  /** 実際に効いた選択（辞書どおり以外）。位置は原本の位置 */
-  applied: NameChoice[];
-}
-
-/**
- * 原本を置き換える。choices は pos をキーにした選択（無ければ全部辞書どおり）。
- * ⚠️ 書き出しでは、画面から届いた本文ではなく**原本**をこれに通す。
- *
- * @param drop 公開版から切り落とす範囲（原本の位置。出さない写真＝publish/photo-choice の hiddenPhotoSpans）。
- *   当たり箇所の計算と選択の照合は原本のまま行い、切り落とす範囲に掛かった当たり箇所は出さない
- *   （applied にも入れない＝出さない写真の代替文字に残った「拒否」で念押しを求めない）。
- *   位置で持つ名前の選択を崩さないよう、写真を除くのは**この一回の走査の中だけ**で行う。
- */
-export function convertText(
-  text: string,
-  dict: NameEntry[],
-  choices?: Map<number, NameChoice>,
-  drop: Span[] = []
-): ConvertResult {
-  const hits = findHits(text, dict);
-  const applied: NameChoice[] = [];
-  const ops: { start: number; end: number; put: string }[] = drop.map((d) => ({ start: d.start, end: d.end, put: '' }));
-  for (const h of hits) {
-    const end = h.pos + h.source.length;
-    if (drop.some((d) => h.pos < d.end && d.start < end)) continue;
-    const choice = choices?.get(h.pos);
-    const eff = effectiveChoice(h, choice);
-    if (!h.exception && eff.action !== 'approve') {
-      applied.push({ pos: h.pos, source: h.source, action: eff.action, ...(eff.text ? { text: eff.text } : {}) });
-    }
-    ops.push({ start: h.pos, end, put: shownWord(h, choice) });
-  }
-  ops.sort((a, b) => a.start - b.start);
-  let out = '';
-  let cur = 0;
-  for (const op of ops) {
-    if (op.start < cur) continue; // drop はまとめ済み・当たり箇所は drop と重ならないので来ない（念のため）
-    out += text.slice(cur, op.start) + op.put;
-    cur = op.end;
-  }
-  return { text: out + text.slice(cur), hits, applied };
-}
-
-/** 選択の列を pos のキーに引ける形にする。 */
-export function choiceMap(choices: NameChoice[] | undefined): Map<number, NameChoice> {
-  const m = new Map<number, NameChoice>();
-  for (const c of choices ?? []) m.set(c.pos, c);
-  return m;
-}

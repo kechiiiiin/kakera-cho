@@ -1,6 +1,7 @@
 import type { JSX } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
-import { findHits, type NameEntry } from '../lib/names/replace';
+import type { NameEntry } from '../lib/names/replace';
+import { buildRealShape, resolveShape } from '../lib/names/doc';
 import { api } from './api';
 import { renderSpan, type MarkRender } from './NameMarks';
 
@@ -152,7 +153,7 @@ export function NameMapScreen({ onBack, say }: { onBack: () => void; say: (msg: 
                   await reload();
                   setEditId(null);
                   setArm(false);
-                  say('消しました。その語の選択も捨てました');
+                  say('消しました。辞書どおりだった箇所は実名に戻り、手で直した言葉は残ります');
                 });
               }}
             >
@@ -188,13 +189,16 @@ export function NameMapScreen({ onBack, say }: { onBack: () => void; say: (msg: 
   const rep = list.filter((e) => !isException(e));
   const exc = list.filter(isException);
 
-  const tryHits = findHits(tryText, list);
+  // 試し書き: 変換ページと同じく、記号にしてから辞書どおりに解く（押せない印）
+  let trySeq = 0;
+  const tryResolved = resolveShape(
+    buildRealShape(tryText, list, () => `try${++trySeq}`),
+    list
+  );
   const tryRender: MarkRender = {
-    text: tryText,
-    hits: tryHits,
-    word: (h) => h.target,
-    status: () => 'dict',
-    keyOf: (h) => String(h.pos),
+    text: tryResolved.text,
+    marks: tryResolved.spans,
+    keyOf: (m) => m.id,
   };
 
   return (
@@ -295,7 +299,7 @@ export function NameMapScreen({ onBack, say }: { onBack: () => void; say: (msg: 
         onInput={(ev) => setTryText(ev.currentTarget.value)}
       />
       <p class="try-out">
-        {tryText ? renderSpan(tryRender, 0, tryText.length) : <span class="try-empty">（ここに結果が出ます）</span>}
+        {tryText ? renderSpan(tryRender, 0, tryRender.text.length) : <span class="try-empty">（ここに結果が出ます）</span>}
       </p>
       <p class="form-note export-note">
         辞書はかけら帳のデータベースにだけ置きます（リポジトリには書きません）。直すと、次に組み直した日記から効きます。

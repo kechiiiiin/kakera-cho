@@ -1,6 +1,7 @@
 import { Fragment } from 'preact';
 import type { JSX } from 'preact';
-import type { NameHit, NameToken } from '../lib/names/replace';
+import type { NameToken } from '../lib/names/replace';
+import type { ResolvedSpan } from '../lib/names/doc';
 import { isSafeHref } from '../lib/markdown';
 import { keyFromPhotoUrl } from '../lib/publish/photos';
 
@@ -37,7 +38,7 @@ function PhotoSwitch({ photoKey, p }: { photoKey: string; p: PhotoToggle }): JSX
 }
 
 /**
- * 公開名変換の印つき本文。
+ * 公開名変換の印つき本文。印は記号の出力範囲（解いた文の中の位置）で描く。
  *
  * ⚠️ `dangerouslySetInnerHTML` は使わない。原本も、手で直した言葉も、利用者の入力なので
  * すべて Preact の要素とテキストノードで組む。
@@ -45,43 +46,40 @@ function PhotoSwitch({ photoKey, p }: { photoKey: string; p: PhotoToggle }): JSX
  *    リンクは普通の文字色＋淡い点線（.conv-link）だけ。押す必要もないので a 要素にしない。
  */
 
-export type MarkStatus = 'dict' | 'edit' | 'reject';
-
 export interface MarkRender {
+  /** 解いた文（置き換え済み・打ち消しなし） */
   text: string;
-  hits: NameHit[];
-  /** その箇所に出る言葉 */
-  word: (hit: NameHit) => string;
-  status: (hit: NameHit) => MarkStatus;
-  keyOf: (hit: NameHit) => string;
-  /** 無ければ押せない印（試し書き） */
-  onPress?: (hit: NameHit) => void;
+  /** 記号の出力範囲（左から順） */
+  marks: ResolvedSpan[];
+  keyOf: (m: ResolvedSpan) => string;
+  /** 無ければ押せない印 */
+  onPress?: (m: ResolvedSpan) => void;
 }
 
-function Mark({ r, hit }: { r: MarkRender; hit: NameHit }): JSX.Element {
+function Mark({ r, m }: { r: MarkRender; m: ResolvedSpan }): JSX.Element {
   // 例外: 押せない・ごく薄い点線だけ（置き換わらなかったことが見える）
-  if (hit.exception) return <span class="m-exc">{hit.source}</span>;
-  const cls = `mk mk-${r.status(hit)}`;
+  if (m.status === 'exception') return <span class="m-exc">{m.word}</span>;
+  const cls = `mk mk-${m.status}`;
   const press = r.onPress;
-  if (!press) return <span class={cls + ' nopress'}>{r.word(hit)}</span>;
+  if (!press) return <span class={cls + ' nopress'}>{m.word}</span>;
   return (
     <span
       class={cls}
       role="button"
       tabIndex={0}
-      data-mark={r.keyOf(hit)}
+      data-mark={r.keyOf(m)}
       onClick={(e) => {
         e.stopPropagation();
-        press(hit);
+        press(m);
       }}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
-          press(hit);
+          press(m);
         }
       }}
     >
-      {r.word(hit)}
+      {m.word}
     </span>
   );
 }
@@ -90,11 +88,11 @@ function Mark({ r, hit }: { r: MarkRender; hit: NameHit }): JSX.Element {
 export function renderSpan(r: MarkRender, start: number, end: number): JSX.Element[] {
   const out: JSX.Element[] = [];
   let cur = start;
-  for (const h of r.hits) {
-    if (h.pos < start || h.pos >= end) continue;
-    if (h.pos > cur) out.push(<Fragment key={`t${cur}`}>{r.text.slice(cur, h.pos)}</Fragment>);
-    out.push(<Mark key={`h${h.pos}`} r={r} hit={h} />);
-    cur = h.pos + h.source.length;
+  for (const m of r.marks) {
+    if (m.start < start || m.start >= end) continue;
+    if (m.start > cur) out.push(<Fragment key={`t${cur}`}>{r.text.slice(cur, m.start)}</Fragment>);
+    out.push(<Mark key={`m${m.id}`} r={r} m={m} />);
+    cur = m.end;
   }
   if (cur < end) out.push(<Fragment key={`t${cur}`}>{r.text.slice(cur, end)}</Fragment>);
   return out;
@@ -113,14 +111,15 @@ function renderInline(r: MarkRender, tokens: NameToken[], a: number, b: number, 
         out.push(<Fragment key={key}>{renderSpan(r, s, e)}</Fragment>);
         break;
       case 'url':
+        // 日記用の文で URL の直後に残した記号は、URL の中に見える。印は付けて押せるようにする
         out.push(
           <span class="conv-link" key={key}>
-            {r.text.slice(t.start, t.end)}
+            {renderSpan(r, t.start, t.end)}
           </span>
         );
         break;
       case 'raw':
-        out.push(<Fragment key={key}>{r.text.slice(t.start, t.end)}</Fragment>);
+        out.push(<Fragment key={key}>{renderSpan(r, t.start, t.end)}</Fragment>);
         break;
       case 'link':
         out.push(
@@ -166,7 +165,7 @@ function isWs(c: string): boolean {
 
 /**
  * 本文を段落と写真に分けて描く（RichText の見た目に寄せた、変換ページ専用の描き方）。
- * 写真の代替文字に当たり箇所があれば、写真の下に「代替文字」として出して押せるようにする
+ * 写真の代替文字に印があれば、写真の下に「代替文字」として出して押せるようにする
  * （公開 HTML の alt に出るので、見えないままにしない）。
  */
 export function MarkedBody({

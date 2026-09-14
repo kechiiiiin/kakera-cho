@@ -23,7 +23,7 @@
 //  - 字下げ（4つの空白かタブ）の行に挟まれた空行（字下げのコードブロックを二つに割らない）
 //  - 本文の先頭・末尾の空行は、呼ぶ側（composeBody）の trim で落ちる
 //
-// ⚠️ 名前の置き換え・出さない写真の除去（convertForPublish）は原本の位置で計算する。これは**その後の本文**に当てる。
+// ⚠️ 名前の記号を解く・出さない写真を除く（names/assemble.ts）の**後の本文**に当てる。
 
 import { FENCE_LINE, HR_LINE, composeBody, parseEmbedTokens, parsePhotoTokens } from '../markdown';
 import { parseCardUrls } from '../card/url';

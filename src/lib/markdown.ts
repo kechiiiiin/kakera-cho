@@ -289,7 +289,7 @@ export type InlineNode =
   | { type: 'del'; children: InlineNode[] };
 
 /** バックスラッシュで打ち消せる記号。 */
-const ESCAPABLE = '\\`*_~[]()!#-';
+const ESCAPABLE = '\\`*_~[]()!#-<>&|';
 
 /**
  * リンクにしてよい URL か。**ホワイトリスト方式で http / https だけ**通す。
