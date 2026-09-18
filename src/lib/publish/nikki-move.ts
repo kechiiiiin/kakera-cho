@@ -26,14 +26,9 @@ import {
 } from '../backup/github';
 import { getKatachiRow, getNikkiRow } from '../kakera/db';
 import { blogRepo, diaryPath } from './astro-blog';
+import { REDIRECTS_PATH, updateRedirects } from './redirects';
 
-export const REDIRECTS_PATH = 'public/_redirects';
-
-/** 日記の公開 URL のパス（astro-blog の getDiaryPath と同じ形・末尾スラッシュ付き）。 */
-export function diaryUrlPath(date: string): string {
-  const [y, m, d] = date.split('-');
-  return `/diary/${y}/${m}/${d}/`;
-}
+export { REDIRECTS_PATH, diaryUrlPath, updateRedirects, dropRedirectsFrom } from './redirects';
 
 /** frontmatter の pubDate だけを差し替える。frontmatter か pubDate が無ければ null。 */
 export function rewritePubDate(text: string, date: string): string | null {
@@ -41,50 +36,8 @@ export function rewritePubDate(text: string, date: string): string | null {
   if (!m) return null;
   const fm = m[1]!;
   if (!/^pubDate:.*$/m.test(fm)) return null;
-  const next = fm.replace(/^pubDate:.*$/m, `pubDate: ${date}`);
-  return text.slice(0, m.index) + m[0].replace(fm, next) + text.slice(m.index + m[0].length);
-}
-
-const REDIRECTS_HEADER = [
-  '# 日記の日付を変えたときの転送（旧 URL → 新 URL）。かけら帳が日付を変えるたびに書き足す。',
-  '# Workers Static Assets の _redirects。https://developers.cloudflare.com/workers/static-assets/redirects/',
-];
-
-function stripSlash(p: string): string {
-  return p.length > 1 ? p.replace(/\/+$/, '') : p;
-}
-
-/**
- * _redirects に「from の日記 → to の日記」を足す。
- * - 移す先（to）から出ていく転送は消す（移し戻したときに新しい URL が転送で潰れないように）
- * - 今まで from を指していた転送は to へ付け替える（転送を連ねない）
- * - 転送元と転送先が同じになった行は消す
- * - 末尾スラッシュの有無の両方を載せる
- * 他の行（日記と関係ない転送・コメント）はそのまま残す。
- */
-export function updateRedirects(text: string | null, fromDate: string, toDate: string): string {
-  const from = diaryUrlPath(fromDate);
-  const to = diaryUrlPath(toDate);
-  const lines = text === null ? [...REDIRECTS_HEADER] : text.replace(/\r\n/g, '\n').replace(/\n+$/, '').split('\n');
-  const out: string[] = [];
-  for (const line of lines) {
-    const t = line.trim();
-    if (!t || t.startsWith('#')) {
-      out.push(line);
-      continue;
-    }
-    const [src, dst, ...rest] = t.split(/\s+/);
-    if (!src || !dst) {
-      out.push(line);
-      continue;
-    }
-    if (stripSlash(src) === stripSlash(to) || stripSlash(src) === stripSlash(from)) continue;
-    const nextDst = stripSlash(dst) === stripSlash(from) ? to : dst;
-    if (stripSlash(src) === stripSlash(nextDst)) continue;
-    out.push(nextDst === dst ? line : [src, nextDst, ...rest].join(' '));
-  }
-  out.push(`${stripSlash(from)} ${to} 301`, `${from} ${to} 301`);
-  return out.join('\n') + '\n';
+  const next = fm.replace(/^pubDate:.*$/m, () => `pubDate: ${date}`);
+  return text.slice(0, m.index) + m[0].replace(fm, () => next) + text.slice(m.index + m[0].length);
 }
 
 export interface MoveFiles {

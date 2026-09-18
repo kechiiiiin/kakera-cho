@@ -5,12 +5,13 @@
 
 import { replacePhotoUrls } from '../markdown';
 import { ApiError } from '../http';
-import { fileExists, putText, readFile, type RepoRef } from '../backup/github';
+import { commitChanges, fileExists, headSha, putText, readFile, readFileAt, type RepoRef } from '../backup/github';
 import { cardsForBodies, getLinkCardRows } from '../kakera/db';
 import { blogCardKeysOf } from '../card/url';
 import { copyPhotosForPublish } from './photos';
 import { renderDiaryFile } from './diary-file';
 import { composePublishBody } from './blank-lines';
+import { REDIRECTS_PATH, dropRedirectsFrom } from './redirects';
 import { LINK_CARDS_PATH, LinkCardsJsonError, buildCardEntries, mergeCardsJson } from './link-cards';
 
 /** astro-blog への読み書き（github.ts の upsert）。書き出しの順番を差し替えて確かめられるよう一つにまとめてある。 */
@@ -18,9 +19,13 @@ export interface BlogWriter {
   fileExists: typeof fileExists;
   readFile: typeof readFile;
   putText: typeof putText;
+  /** 転送（_redirects）を落とすときだけ使う（.md と同じ 1 commit にする） */
+  headSha?: typeof headSha;
+  readFileAt?: typeof readFileAt;
+  commitChanges?: typeof commitChanges;
 }
 
-const githubWriter: BlogWriter = { fileExists, readFile, putText };
+const githubWriter: BlogWriter = { fileExists, readFile, putText, headSha, readFileAt, commitChanges };
 
 export function blogRepo(env: Env): RepoRef {
   if (!env.BLOG_GITHUB_TOKEN) throw new ApiError(503, 'BLOG_GITHUB_TOKEN が設定されていません');
@@ -108,8 +113,51 @@ export async function publishNikki(
 
   const content = renderDiaryFile(input.title, input.date, body, input.description ?? '');
   const verb = input.alreadyPublished ? 'update' : 'create';
-  await gh.putText(ref, path, content, `${verb}(diary): ${input.title || input.date}`);
+  const message = `${verb}(diary): ${input.title || input.date}`;
+  await writeDiary(ref, path, content, message, input.date, gh);
   return { path };
+}
+
+/**
+ * 日記の .md を書く。
+ * ⚠️ public/_redirects にこの日付を転送元にしている行（日付を変えた日記の旧 URL）が残っていれば、
+ * それを落とす変更を**同じ 1 commit**に入れる。Workers Static Assets は実ファイルがあっても転送を優先するので、
+ * 残すと書き出した日記が開けない（X には投稿されるのに、URL は別の日へ飛ぶ）。
+ * 転送が無いときは今までどおり Contents API で書く。
+ */
+async function writeDiary(ref: RepoRef, path: string, content: string, message: string, date: string, gh: BlogWriter): Promise<void> {
+  if (!gh.headSha || !gh.readFileAt || !gh.commitChanges) {
+    await gh.putText(ref, path, content, message);
+    return;
+  }
+  let base: string;
+  let dropped: string | null;
+  try {
+    base = await gh.headSha(ref);
+    const redirects = await gh.readFileAt(ref, REDIRECTS_PATH, base);
+    dropped = redirects ? dropRedirectsFrom(redirects.text, date) : null;
+  } catch (e) {
+    console.error('[publish] redirects', e instanceof Error ? e.message : e);
+    throw new ApiError(502, `astro-blog の転送（${REDIRECTS_PATH}）を読めませんでした。日記は書き出していません。少し置いてからもう一度どうぞ。`);
+  }
+  if (dropped === null) {
+    await gh.putText(ref, path, content, message);
+    return;
+  }
+  try {
+    await gh.commitChanges(
+      ref,
+      base,
+      [
+        { path, content },
+        { path: REDIRECTS_PATH, content: dropped },
+      ],
+      `${message}\n\n${date} を転送元にしていた ${REDIRECTS_PATH} の行を落とす（この日付の日記を開けるように）。`
+    );
+  } catch (e) {
+    console.error('[publish] commit', e instanceof Error ? e.message : e);
+    throw new ApiError(502, 'astro-blog に書けませんでした（日記も転送も書き換えていません）。少し置いてからもう一度どうぞ。');
+  }
 }
 
 /**

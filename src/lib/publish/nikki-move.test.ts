@@ -15,6 +15,7 @@ import { publishNikki, type BlogWriter } from './astro-blog';
 import {
   REDIRECTS_PATH,
   diaryUrlPath,
+  dropRedirectsFrom,
   moveCommitMessage,
   moveNikkiDate,
   planNikkiMove,
@@ -59,6 +60,27 @@ describe('純粋な部品', () => {
     expect(rules.some((l) => l.startsWith('/diary/2026/09/18'))).toBe(false);
     expect(rules).toContain('/diary/2026/09/17/ /diary/2026/09/18/ 301');
     expect(rules).toContain('/diary/2026/09/15/ /diary/2026/09/18/ 301');
+  });
+
+  it('転送: その日付を転送元にしている行だけを落とす（転送先としての行は残す）', () => {
+    const text = [
+      '# 見出し',
+      '/diary/2026/09/18 /diary/2026/09/17/ 301',
+      '/diary/2026/09/18/ /diary/2026/09/17/ 301',
+      '/diary/2026/09/10 /diary/2026/09/18/ 301',
+      '/diary/2026/09/10/ /diary/2026/09/18/ 301',
+    ].join('\n');
+    const out = dropRedirectsFrom(text, '2026-09-18')!;
+    const rules = out.split('\n').filter((l) => l && !l.startsWith('#'));
+    expect(rules).toEqual(['/diary/2026/09/10 /diary/2026/09/18/ 301', '/diary/2026/09/10/ /diary/2026/09/18/ 301']);
+    expect(dropRedirectsFrom(out, '2026-09-18')).toBeNull();
+    expect(dropRedirectsFrom('# だけ\n', '2026-09-18')).toBeNull();
+  });
+
+  it('pubDate の書き換えは $ を含む frontmatter でも崩れない', () => {
+    const text = ['---', 'title: "$& と $\' と $$"', 'pubDate: 2026-09-18', '---', '', '本文', ''].join('\n');
+    const out = rewritePubDate(text, '2026-09-17')!;
+    expect(out).toBe(text.replace('pubDate: 2026-09-18', 'pubDate: 2026-09-17'));
   });
 
   it('転送: 日記と関係ない行はそのまま残す', () => {
@@ -233,5 +255,59 @@ describe('moveNikkiDate', () => {
     await expect(moveNikkiDate(env, K, TO, mover)).rejects.toMatchObject({ status: 409 });
     expect(commits).toHaveLength(0);
     await expect(prepareNikkiExport(env.DB, K, {})).rejects.toMatchObject({ status: 409 });
+  });
+});
+
+describe('書き出しと転送（Workers Static Assets は実ファイルより _redirects を優先する）', () => {
+  function writer(redirects: string | null) {
+    const puts: string[] = [];
+    const commits: { changes: FileChange[]; message: string }[] = [];
+    const gh: BlogWriter = {
+      fileExists: async () => false,
+      readFile: async () => null,
+      putText: async (_r, path) => {
+        puts.push(path);
+      },
+      headSha: async () => 'base-sha',
+      readFileAt: async (_r, path, sha) => {
+        expect(sha).toBe('base-sha');
+        return path === REDIRECTS_PATH && redirects !== null ? { sha: 'r', text: redirects } : null;
+      },
+      commitChanges: async (_r, base, changes, message) => {
+        expect(base).toBe('base-sha');
+        commits.push({ changes, message });
+        return 'new-sha';
+      },
+    };
+    return { gh, puts, commits };
+  }
+  const input = { date: FROM, title: 'ある日', bodies: ['本文の行'], alreadyPublished: false };
+
+  it('その日付を転送元にしている行があれば、.md と転送の削除を 1 commit にする', async () => {
+    const { gh, puts, commits } = writer(updateRedirects(null, FROM, TO));
+    await publishNikki(env, input, gh);
+    expect(puts).toEqual([]);
+    expect(commits).toHaveLength(1);
+    expect(commits[0]!.message.startsWith('create(diary): ある日')).toBe(true);
+    expect(commits[0]!.changes.map((c) => c.path)).toEqual([`src/content/diary/${FROM}.md`, REDIRECTS_PATH]);
+    expect(commits[0]!.changes[1]!.content).not.toContain('/diary/2026/09/18 ');
+    expect(commits[0]!.changes[1]!.content).not.toContain('/diary/2026/09/18/ ');
+  });
+
+  it('転送が無ければ今までどおり .md だけを書く', async () => {
+    const { gh, puts, commits } = writer(updateRedirects(null, '2026-09-01', '2026-09-02'));
+    await publishNikki(env, input, gh);
+    expect(puts).toEqual([`src/content/diary/${FROM}.md`]);
+    expect(commits).toHaveLength(0);
+  });
+
+  it('転送を読めなければ何も書かずに止める', async () => {
+    const { gh, puts, commits } = writer(null);
+    gh.readFileAt = async () => {
+      throw new Error('boom');
+    };
+    await expect(publishNikki(env, input, gh)).rejects.toMatchObject({ status: 502 });
+    expect(puts).toEqual([]);
+    expect(commits).toHaveLength(0);
   });
 });
