@@ -694,3 +694,10 @@ pre.conv-md {
 .d-cap span:nth-child(2) { visibility: hidden; }
 .try-out { font-size: 16px; line-height: 1.8; margin: 10px 0 0; padding: 10px 0 0; border-top: 1px dashed var(--line); overflow-wrap: anywhere; min-height: 2em; }
 .try-empty { color: var(--muted); }
+
+/* 読む画面の編集モードで日付を変える */
+.read-date-edit { margin-top: 14px; }
+.read-date-row { display: flex; gap: 8px; align-items: stretch; }
+.read-date-row input { flex: 1; min-width: 0; }
+.read-date-row button { flex: none; white-space: nowrap; }
+.read-date-note { margin: 10px 0 18px; font-size: 12px; color: var(--muted); }

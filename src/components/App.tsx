@@ -309,6 +309,13 @@ export default function App(): JSX.Element {
                 throw e;
               }
             }}
+            onChangeDate={(date) =>
+              guard(async () => {
+                setDetail(await api.updateKatachi(view.id, { date }));
+                await loadKatachiList();
+                say('日付を変えました');
+              })
+            }
             onDissolve={() =>
               guard(async () => {
                 await api.dissolveKatachi(view.id);

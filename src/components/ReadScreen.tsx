@@ -25,6 +25,7 @@ export function ReadScreen({
   onDelete,
   onDetach,
   onDissolve,
+  onChangeDate,
   nagare,
   nagareCards,
   nagareLoaded,
@@ -38,6 +39,8 @@ export function ReadScreen({
   onDelete: (id: string) => Promise<void>;
   onDetach: (id: string) => Promise<void>;
   onDissolve: () => Promise<void>;
+  /** かたちの日付を変える。失敗（1日にひとつ・日記済み）は呼び手が知らせる */
+  onChangeDate: (date: string) => Promise<void>;
   /** 「かけらを足す」で選ぶ、まだかたちになっていないかけら */
   nagare: Kakera[];
   nagareCards: LinkCards;
@@ -50,6 +53,8 @@ export function ReadScreen({
   const [openId, setOpenId] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [picking, setPicking] = useState(false);
+  const [dateDraft, setDateDraft] = useState(detail.katachi.date);
+  const [dateBusy, setDateBusy] = useState(false);
   const { katachi, kakera, nikki } = detail;
 
   return (
@@ -63,6 +68,7 @@ export function ReadScreen({
           class={'mode-btn' + (editing ? ' on' : '')}
           onClick={() => {
             setOpenId(null);
+            setDateDraft(katachi.date);
             setEditing(!editing);
           }}
         >
@@ -78,6 +84,40 @@ export function ReadScreen({
       ) : (
         <p class="page-date">{dateLiterary(katachi.date)}</p>
       )}
+
+      {/* 日付を変えるのも編集モードのときだけ。日記になったかたちは変えられない（サーバも 409・設計 §3） */}
+      {editing ? (
+        nikki ? (
+          <p class="read-date-note">日記になったかたちは日付を変えられません</p>
+        ) : (
+          <div class="field read-date-edit">
+            <label for="read-date">かたちの日付</label>
+            <div class="read-date-row">
+              <input
+                type="date"
+                id="read-date"
+                value={dateDraft}
+                onInput={(e) => setDateDraft(e.currentTarget.value)}
+              />
+              <button
+                type="button"
+                class="btn-primary"
+                disabled={dateBusy || !dateDraft || dateDraft === katachi.date}
+                onClick={async () => {
+                  setDateBusy(true);
+                  try {
+                    await onChangeDate(dateDraft);
+                  } finally {
+                    setDateBusy(false);
+                  }
+                }}
+              >
+                日付を変える
+              </button>
+            </div>
+          </div>
+        )
+      ) : null}
 
       <div>
         {kakera.map((k) => (
