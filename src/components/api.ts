@@ -106,7 +106,7 @@ export const api = {
   createKatachi: (input: { id: string; date: string; title: string; kakera_ids: string[] }) =>
     req<KatachiDetail>('/api/katachi', { method: 'POST', body: JSON.stringify(input) }),
 
-  updateKatachi: (id: string, patch: { date?: string; title?: string; description?: string }) =>
+  updateKatachi: (id: string, patch: { date?: string; title?: string; description?: string; move_nikki?: boolean }) =>
     req<KatachiDetail>(`/api/katachi/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
 
   dissolveKatachi: (id: string) => req<{ ok: true }>(`/api/katachi/${id}`, { method: 'DELETE' }),

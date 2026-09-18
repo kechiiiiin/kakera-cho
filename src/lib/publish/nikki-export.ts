@@ -48,6 +48,13 @@ function parseDocRevs(raw: unknown): Map<string, string> {
 
 export async function prepareNikkiExport(db: D1Database, katachiId: string, input: Record<string, unknown>): Promise<PreparedNikki> {
   const detail = await getKatachiDetail(db, katachiId);
+  // 日記の日付（nikki.slug）とかたちの日付が食い違っていたら書かない（別の日付のファイルが新しくでき、X に再投稿される）
+  if (detail.nikki && detail.nikki.slug !== detail.katachi.date) {
+    throw new ApiError(
+      409,
+      `かたちの日付（${detail.katachi.date}）と公開中の日記の日付（${detail.nikki.slug}）が食い違っています。書き出していません。`
+    );
+  }
   const chosen = pickKakera(detail, input.kakera_ids);
   // タイトルは「日記にする」画面で変えられる。初期値は katachi.title（かたちの題は変えない）
   const title = resolveNikkiTitle(input.title, detail.katachi.title);

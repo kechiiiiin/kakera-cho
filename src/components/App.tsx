@@ -309,11 +309,11 @@ export default function App(): JSX.Element {
                 throw e;
               }
             }}
-            onChangeDate={(date) =>
+            onChangeDate={(date, moveNikki) =>
               guard(async () => {
-                setDetail(await api.updateKatachi(view.id, { date }));
+                setDetail(await api.updateKatachi(view.id, moveNikki ? { date, move_nikki: true } : { date }));
                 await loadKatachiList();
-                say('日付を変えました');
+                say(moveNikki ? '日付を変えました。公開中の日記も新しい日付・URL に移しました' : '日付を変えました');
               })
             }
             onDissolve={() =>

@@ -60,6 +60,7 @@ export interface PublishInput {
  * 日記を書き出す。
  *
  * ⚠️ 安全弁（絶対に省略しない）:
+ * 日記済み（alreadyPublished）なのに astro-blog にファイルが無ければ 409（食い違い。書くと X に再投稿される）。
  * 上書きしてよいのは、かけら帳が作った日記だけ。nikki に行が無いのに astro-blog に
  * 同じ日付のファイルがあるときは 409 で拒否する。既存の日記 233 件のうち 219 件は
  * microCMS 移行分の `format: html` で、Markdown で上書きすると過去の記事を壊す（設計 §5）。
@@ -72,10 +73,19 @@ export async function publishNikki(
   const ref = blogRepo(env);
   const path = diaryPath(input.date);
 
-  if (!input.alreadyPublished && (await gh.fileExists(ref, path))) {
+  const exists = await gh.fileExists(ref, path);
+  if (!input.alreadyPublished && exists) {
     throw new ApiError(
       409,
       `${input.date} の日記は既に astro-blog にあります（かけら帳が作ったものではありません）。上書きすると過去の記事を壊すので書き出しません。`
+    );
+  }
+  // ⚠️ 日記済みなのに公開側にファイルが無い＝公開側で改名・削除された（かけら帳と食い違っている）。
+  // ここで書くと「新しい日記の追加」になり、X に同じ日記がもう一度投稿される。書かずに止める。
+  if (input.alreadyPublished && !exists) {
+    throw new ApiError(
+      409,
+      `公開中の日記（${input.date}）が astro-blog に見当たりません（公開側で日付を変えたか消した可能性があります）。新しい日記として出すと X にもう一度投稿されるので、書き出していません。`
     );
   }
 

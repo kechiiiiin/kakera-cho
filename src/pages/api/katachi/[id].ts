@@ -4,6 +4,8 @@ import { ctxOf } from '../../../lib/ctx';
 import {
   dissolveKatachi,
   getKatachiDetail,
+  getKatachiRow,
+  getNikkiRow,
   kakeraOfKatachi,
   saveKatachiDescription,
   updateKatachi,
@@ -13,6 +15,7 @@ import { DESCRIPTION_MAX, descriptionLength, flattenDescription } from '../../..
 import { isDateKey } from '../../../lib/time';
 import { syncKatachiDissolved, syncKatachiRenamed } from '../../../lib/backup/sync';
 import { ensureCards } from '../../../lib/card/ensure';
+import { moveNikkiDate } from '../../../lib/publish/nikki-move';
 
 export const prerender = false;
 
@@ -29,7 +32,10 @@ export const GET: APIRoute = ({ locals, params }) =>
   });
 
 /**
- * PATCH /api/katachi/:id — {date?, title?, description?} ※date 変更は控えの改名も行う
+ * PATCH /api/katachi/:id — {date?, title?, description?, move_nikki?} ※date 変更は控えの改名も行う
+ * ★日記になったかたちの date 変更は、公開中の日記の日付と URL も移す（lib/publish/nikki-move.ts）。
+ *   move_nikki: true（画面で「公開中の日記も変わる」を確かめた印）が無ければ 409。
+ *   astro-blog に書けなければ D1 も元に戻して止まる（日付は変わらない）。
  * description（日記の説明文・原本は実名のまま）は改行を空白に畳んで保存する。DESCRIPTION_MAX 字を超えたら 400。
  * ★description を変えても katachi.updated_at は進めない（日付か題が変わったときだけ進む）。
  * ★order は受け付けない（400）。かたちの中の並びは常に書いた順（migrations/0005）。
@@ -60,12 +66,26 @@ export const PATCH: APIRoute = ({ locals, params, request }) =>
       throw new ApiError(400, 'かたちの並びは書いた順で決まるので、order は受け付けません（並びを組むのは日記にするときです）');
     }
 
+    // 日記になったかたちの日付を変えるときは、先に公開中の日記ごと移す（失敗したら何も変えずに止まる）
+    let movedFrom: string | null = null;
+    if (input.date !== undefined) {
+      const row = await getKatachiRow(env.DB, id);
+      if (!row) throw new ApiError(404, 'そのかたちはありません');
+      if (row.date !== input.date && (await getNikkiRow(env.DB, id))) {
+        if (input.move_nikki !== true) {
+          throw new ApiError(409, '日記になったかたちの日付を変えると、公開中の日記の日付と URL も変わります。確かめてからもう一度どうぞ。');
+        }
+        movedFrom = (await moveNikkiDate(env, id, input.date as string)).oldDate;
+      }
+    }
+
     if (description !== undefined) await saveKatachiDescription(env.DB, id, description);
-    const { detail, oldDate } = await updateKatachi(env.DB, id, {
+    const { detail, oldDate: patchedFrom } = await updateKatachi(env.DB, id, {
       date: input.date as string | undefined,
       title: input.title === undefined ? undefined : (input.title as string).trim(),
     });
 
+    const oldDate = movedFrom ?? patchedFrom;
     // 日付が変わったら控えのファイルを改名する（旧ファイルを消す）。説明が変わったときも控えを書き直す（同じ関数で足りる）
     waitUntil(syncKatachiRenamed(env, id, oldDate));
     return json(await withCards(env.DB, detail));

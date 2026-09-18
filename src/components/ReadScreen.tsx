@@ -39,8 +39,11 @@ export function ReadScreen({
   onDelete: (id: string) => Promise<void>;
   onDetach: (id: string) => Promise<void>;
   onDissolve: () => Promise<void>;
-  /** かたちの日付を変える。失敗（1日にひとつ・日記済み）は呼び手が知らせる */
-  onChangeDate: (date: string) => Promise<void>;
+  /**
+   * かたちの日付を変える。moveNikki = 日記になったかたち（公開中の日記も移す・確認済み）。
+   * 失敗（1日にひとつ・公開側との食い違い等）は呼び手が知らせる
+   */
+  onChangeDate: (date: string, moveNikki: boolean) => Promise<void>;
   /** 「かけらを足す」で選ぶ、まだかたちになっていないかけら */
   nagare: Kakera[];
   nagareCards: LinkCards;
@@ -85,38 +88,43 @@ export function ReadScreen({
         <p class="page-date">{dateLiterary(katachi.date)}</p>
       )}
 
-      {/* 日付を変えるのも編集モードのときだけ。日記になったかたちは変えられない（サーバも 409・設計 §3） */}
+      {/* 日付を変えるのも編集モードのときだけ。日記になったかたちは、公開中の日記の日付と URL も一緒に移る（設計 §3） */}
       {editing ? (
-        nikki ? (
-          <p class="read-date-note">日記になったかたちは日付を変えられません</p>
-        ) : (
-          <div class="field read-date-edit">
-            <label for="read-date">かたちの日付</label>
-            <div class="read-date-row">
-              <input
-                type="date"
-                id="read-date"
-                value={dateDraft}
-                onInput={(e) => setDateDraft(e.currentTarget.value)}
-              />
-              <button
-                type="button"
-                class="btn-primary"
-                disabled={dateBusy || !dateDraft || dateDraft === katachi.date}
-                onClick={async () => {
-                  setDateBusy(true);
-                  try {
-                    await onChangeDate(dateDraft);
-                  } finally {
-                    setDateBusy(false);
-                  }
-                }}
-              >
-                日付を変える
-              </button>
-            </div>
+        <div class="field read-date-edit">
+          <label for="read-date">かたちの日付</label>
+          <div class="read-date-row">
+            <input
+              type="date"
+              id="read-date"
+              value={dateDraft}
+              onInput={(e) => setDateDraft(e.currentTarget.value)}
+            />
+            <button
+              type="button"
+              class="btn-primary"
+              disabled={dateBusy || !dateDraft || dateDraft === katachi.date}
+              onClick={async () => {
+                if (
+                  nikki &&
+                  !confirm(
+                    `このかたちは日記になっています。日付を ${dateDraft} に変えると、公開中の日記の日付と URL も変わります（旧 URL は新しい方へ転送します。X には投稿しません）。よろしいですか？`
+                  )
+                ) {
+                  return;
+                }
+                setDateBusy(true);
+                try {
+                  await onChangeDate(dateDraft, !!nikki);
+                } finally {
+                  setDateBusy(false);
+                }
+              }}
+            >
+              日付を変える
+            </button>
           </div>
-        )
+          {nikki ? <p class="read-date-note">日記になっています。変えると公開中の日記の日付と URL も変わります</p> : null}
+        </div>
       ) : null}
 
       <div>

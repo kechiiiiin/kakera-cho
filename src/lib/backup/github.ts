@@ -114,3 +114,58 @@ export async function deleteFile(ref: RepoRef, path: string, message: string): P
     branch: ref.branch ?? 'main',
   });
 }
+
+/* ---------------- 1 コミットで複数ファイルを変える（Git Data API） ---------------- */
+
+/** ブランチの先頭の commit sha。 */
+export async function headSha(ref: RepoRef): Promise<string> {
+  const res = await client(ref).rest.git.getRef({ owner: ref.owner, repo: ref.repo, ref: `heads/${ref.branch ?? 'main'}` });
+  return res.data.object.sha;
+}
+
+/** 決まった commit 時点のファイルを読む。無ければ null。 */
+export async function readFileAt(ref: RepoRef, path: string, commitSha: string): Promise<ExistingFile | null> {
+  return await readFile({ ...ref, branch: commitSha }, path);
+}
+
+/** content が null なら消す。 */
+export interface FileChange {
+  path: string;
+  content: string | null;
+}
+
+/**
+ * base（ブランチ先頭の sha）の上に、変更をまとめて**1つの commit**として積み、ブランチを進める。
+ * - 途中の状態（足しただけ・消しただけ）がブランチに現れない
+ * - ブランチが base から進んでいたら force しないので失敗する（誰かの commit を消さない）
+ * - ブランチの更新の応答が失われたときは、先頭を読み直して自分の commit なら成功とみなす
+ * @returns 積んだ commit の sha
+ */
+export async function commitChanges(ref: RepoRef, base: string, changes: FileChange[], message: string): Promise<string> {
+  const gh = client(ref);
+  const { owner, repo } = ref;
+  const baseCommit = await gh.rest.git.getCommit({ owner, repo, commit_sha: base });
+  const tree = await gh.rest.git.createTree({
+    owner,
+    repo,
+    base_tree: baseCommit.data.tree.sha,
+    tree: changes.map((c) =>
+      c.content === null
+        ? { path: c.path, mode: '100644' as const, type: 'blob' as const, sha: null }
+        : { path: c.path, mode: '100644' as const, type: 'blob' as const, content: c.content }
+    ),
+  });
+  const commit = await gh.rest.git.createCommit({ owner, repo, message, tree: tree.data.sha, parents: [base] });
+  try {
+    await gh.rest.git.updateRef({ owner, repo, ref: `heads/${ref.branch ?? 'main'}`, sha: commit.data.sha, force: false });
+  } catch (e) {
+    let now: string | null = null;
+    try {
+      now = await headSha(ref);
+    } catch {
+      /* 読み直せなければ失敗として扱う */
+    }
+    if (now !== commit.data.sha) throw e;
+  }
+  return commit.data.sha;
+}

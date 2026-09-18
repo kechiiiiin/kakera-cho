@@ -182,7 +182,8 @@ export async function createKatachi(
 /**
  * かたちの日付・題を変える（並びは書いた順で決まるので、ここでは変えない）。
  * ★katachi.updated_at は日付か題が実際に変わったときだけ進める。
- * ★日記になったかたちは日付を変えられない（変えると次の書き出しで別の日付のファイルができ、
+ * ★日記になったかたちの日付はここでは変えない（409）。公開中の日記も一緒に移す
+ *   lib/publish/nikki-move.ts の moveNikkiDate を通す（ここで変えると次の書き出しで別の日付のファイルができ、
  *   古い日付の記事が astro-blog に取り残されるため）。
  */
 export async function updateKatachi(
@@ -198,7 +199,7 @@ export async function updateKatachi(
 
   if (nextDate !== before.date) {
     const nikki = await getNikkiRow(db, id);
-    if (nikki) throw new ApiError(409, '日記になったかたちは日付を変えられません');
+    if (nikki) throw new ApiError(409, '日記になったかたちの日付は、公開中の日記と一緒に移す必要があります');
     const dup = await db
       .prepare('SELECT id FROM katachi WHERE date = ? AND id != ?')
       .bind(nextDate, id)
