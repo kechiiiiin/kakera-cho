@@ -38,8 +38,19 @@ export function monthHeading(monthKey: string): string {
   return `${y}年${parseInt(m!, 10)}月`;
 }
 
+/**
+ * 本文の高さまで textarea を伸ばす。
+ *
+ * ⚠️ 縮んだぶんを測るために一度 auto へ戻すが、その瞬間だけ文書が短くなる。長いかけらを
+ * 開いていると、ブラウザがそこでスクロール位置を切り詰めてしまい、高さを戻しても位置は
+ * 戻らない——iOS で一文字打つたびに画面が一番上へ飛んでいた（2026-09-23）。
+ * 縮める前の位置を控えて、同じフレームのうちに戻す。
+ */
 export function autoGrow(ta: HTMLTextAreaElement | null): void {
   if (!ta) return;
+  const scroller = document.scrollingElement ?? document.documentElement;
+  const keep = scroller.scrollTop;
   ta.style.height = 'auto';
   ta.style.height = Math.max(ta.scrollHeight, 70) + 'px';
+  if (scroller.scrollTop !== keep) scroller.scrollTop = keep;
 }
