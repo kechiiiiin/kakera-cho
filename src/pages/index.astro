@@ -14,6 +14,10 @@ export const prerender = false;
     <meta name="robots" content="noindex, nofollow" />
     <meta name="theme-color" content="#fdfdfc" />
     <meta name="apple-mobile-web-app-title" content="かけら帳" />
+    <!-- 印は scripts/make-favicon.mjs で作る -->
+    <link rel="icon" href="/favicon.ico" sizes="48x48" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <!-- ⚠️ Google Fonts は読み込まない（端末の書体で組む・設計 §9） -->
     <!-- ⚠️ apple-mobile-web-app-capable は入れない。standalone だと Access の
          Google ログイン画面への遷移が壊れることがある（blog-cms スマホ対応の知見） -->
