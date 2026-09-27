@@ -3,11 +3,11 @@
 // 使い方（リポジトリ外の作業ディレクトリで）:
 //   npm i opentype.js
 //   curl -LO https://github.com/google/fonts/raw/main/ofl/shipporimincho/ShipporiMincho-SemiBold.ttf   # SIL OFL 1.1
-//   node make-favicon.mjs   → favicon.svg（角丸）・touch.svg（全面・apple-touch-icon 用）
-//   magick -background none -density 1200 touch.svg -resize 180x180 apple-touch-icon.png
+//   node make-favicon.mjs   → favicon.svg
 //   for s in 16 32 48; do magick -background none -density 600 favicon.svg -resize ${s}x${s} f$s.png; done
 //   magick f16.png f32.png f48.png favicon.ico
-// できたもの（favicon.svg・favicon.ico・apple-touch-icon.png）を public/ へ。
+// できたもの（favicon.svg・favicon.ico）を public/ へ。
+// apple-touch-icon（ホーム画面）は4字の「かけ／ら帳」にしたので make-touch-icon.mjs で作る。
 import opentype from "opentype.js";
 import { readFileSync, writeFileSync } from "node:fs";
 const buf = readFileSync("ShipporiMincho-SemiBold.ttf");
@@ -21,5 +21,3 @@ const base = 16 - (bb.y1 + bb.y2) / 2;
 const d = g.getPath(cx - adv / 2, base, size).toPathData(2);
 const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="3" fill="#b03a2e"/><path fill="#fdfdfc" d="${d}"/></svg>\n`;
 writeFileSync("favicon.svg", svg);
-// 角丸なしの全面版（apple-touch-icon 用。iOS が自前で角を丸めるため）
-writeFileSync("touch.svg", svg.replace('rx="3" ', ""));
