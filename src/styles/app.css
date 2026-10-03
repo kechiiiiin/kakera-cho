@@ -251,6 +251,12 @@ ol.rich-text-list { list-style: decimal; }
 .frag-edit .k-editor-content { border: 1px solid var(--line); border-radius: 2px; padding: 10px; }
 .editor-embed .embed-youtube, .editor-embed .embed-tweet, .editor-embed .embed-spotify { margin: 0; }
 .k-editor-url-embed .k-editor-remove { top: 6px; right: 6px; }
+/* 区切り線は、かたちの読む画面でかけらの間に出る手書き風の罫と同じ線に（2026-10-04 啓輔さん） */
+#app .k-editor-hr {
+  border: none; width: 100%; height: 12px; margin: 1.4em 0;
+  background: var(--kakera-wave) center/100% 12px no-repeat; opacity: .75;
+}
+#app .k-editor-hr.ProseMirror-selectednode { opacity: 1; outline: 1px solid var(--accent); outline-offset: 4px; }
 .assembled-photo { width: 100%; border-radius: 2px; overflow: hidden; margin: 8px 0; }
 .assembled-photo:first-child { margin-top: 0; }
 .assembled-photo:last-child { margin-bottom: 0; }
@@ -466,10 +472,11 @@ mark.search-hit { background: none; color: var(--accent); font-weight: 600; }
 .read-date-small { font-family: var(--serif); font-size: 12px; color: var(--muted); margin: 0 0 6px; letter-spacing: .02em; }
 .read-frag { margin-bottom: 2.2em; }
 .read-frag:last-child { margin-bottom: 0; }
-/* かけらの間は全幅の手書き風の罫（インライン SVG） */
+/* かけらの間は全幅の手書き風の罫（インライン SVG）。書く欄の区切り線（k-editor の hr）も同じ線を使う */
+:root { --kakera-wave: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%20300%2012%27%20preserveAspectRatio%3D%27none%27%3E%3Cpath%20d%3D%27M4%2C7.4C34%2C4.2%2C58%2C9.2%2C88%2C6.6C118%2C4%2C142%2C9.4%2C172%2C6.8C202%2C4.2%2C226%2C8.8%2C256%2C6.4C272%2C5.1%2C284%2C7.0%2C296%2C5.6%27%20fill%3D%27none%27%20stroke%3D%27%23b3ac9d%27%20stroke-width%3D%271.6%27%20stroke-linecap%3D%27round%27%2F%3E%3C%2Fsvg%3E"); }
 .read-frag:not(:last-child)::after {
   content: ""; display: block; width: 100%; height: 12px;
-  background: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%20300%2012%27%20preserveAspectRatio%3D%27none%27%3E%3Cpath%20d%3D%27M4%2C7.4C34%2C4.2%2C58%2C9.2%2C88%2C6.6C118%2C4%2C142%2C9.4%2C172%2C6.8C202%2C4.2%2C226%2C8.8%2C256%2C6.4C272%2C5.1%2C284%2C7.0%2C296%2C5.6%27%20fill%3D%27none%27%20stroke%3D%27%23b3ac9d%27%20stroke-width%3D%271.6%27%20stroke-linecap%3D%27round%27%2F%3E%3C%2Fsvg%3E") center/100% 12px no-repeat;
+  background: var(--kakera-wave) center/100% 12px no-repeat;
   opacity: .75; margin: 2.4em auto 0;
 }
 .read-frag-tools { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
