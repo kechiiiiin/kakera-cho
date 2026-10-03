@@ -5,12 +5,13 @@ import { KatachiPickSheet } from './PickSheets';
 import type { LinkCards } from '../lib/card/types';
 import { dateOf, dayGroupHeading, timeOf } from './format';
 import { RichText } from './RichText';
+import type { KEditorInstance } from 'k-editor/preact';
 import { Editor } from './Editor';
 import { KakeraEdit } from './KakeraEdit';
 
 /**
  * かけら（トップ）。
- *  - 常に空のテキストエリアが一番上。保存すると下に積まれて欄が空に戻る（連投しやすく）
+ *  - 常に空の書く欄（k-editor）が一番上。保存すると下に積まれて欄が空に戻る（連投しやすく）
  *  - 下はまだかたちになっていないかけらだけの流れ。日ごとの小見出しで区切り、各行に時刻
  *  - 流れは**全文のまま**。写真・X / YouTube の埋め込み・リンクもかたちと同じ姿で出す（2026-09-13 決定）
  *  - 行をタップするとその場で開いて編集。他を開くと前は閉じる
@@ -58,7 +59,7 @@ export function WriteScreen({
   /** 行き先を選んでいるかけら */
   const [movingId, setMovingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const taRef = useRef<HTMLTextAreaElement>(null);
+  const editorRef = useRef<KEditorInstance | null>(null);
 
   async function save(): Promise<void> {
     if (!draft.trim() || saving) return;
@@ -66,7 +67,7 @@ export function WriteScreen({
     try {
       await onSave();
       // 保存したら入力欄にフォーカスを戻す（連投しやすさの要）
-      taRef.current?.focus();
+      editorRef.current?.focus();
     } finally {
       setSaving(false);
     }
@@ -83,7 +84,8 @@ export function WriteScreen({
           kakeraId={draftId}
           writtenAt={draftWrittenAt}
           placeholder="いま、何が浮かびましたか"
-          taRef={taRef}
+          editorRef={editorRef}
+          cards={cards}
           inlineAction={
             <button type="button" class="btn-primary" disabled={!draft.trim() || saving} onClick={save}>
               保存
@@ -136,6 +138,7 @@ export function WriteScreen({
                   {openId === k.id ? (
                     <KakeraEdit
                       kakera={k}
+                      cards={cards}
                       onSave={async (body) => {
                         await onEdit(k.id, body);
                         setOpenId(null);

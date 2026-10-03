@@ -21,6 +21,8 @@
 //  - 写真・埋め込み・カードに接する空行。かけら帳の読む画面（RichText）はそれらの前後の空行を trim して
 //    隙間として見せないので、ブログでも隙間にしない（見える隙間の数を揃える）
 //  - 字下げ（4つの空白かタブ）の行に挟まれた空行（字下げのコードブロックを二つに割らない）
+//  - リストの中の空行（`- a` と `- b` の間、項目とその字下げの続きの間）。U+00A0 の行を挟むと
+//    リストが二つに割れ、番号付きは 1 から振り直しになる（k-editor で箇条書きが書けるようになった 2026-10-03）
 //  - 本文の先頭・末尾の空行は、呼ぶ側（composeBody）の trim で落ちる
 //
 // ⚠️ 名前の記号を解く・出さない写真を除く（names/assemble.ts）の**後の本文**に当てる。
@@ -33,6 +35,10 @@ export const NBSP = '\u00A0'; // ⚠️ 見た目では普通の空白と区別�
 
 const BLANK_LINE = /^[ \t]*$/;
 const INDENTED = /^(?: {4}|\t)/;
+/** リストの項目の行（CommonMark: 先頭空白3つまで・記号の後に空白か行末） */
+const LIST_ITEM = /^ {0,3}(?:[-*+]|\d{1,9}[.)])(?:[ \t]|$)/;
+/** 項目の続き（字下げした行） */
+const LIST_CONT = /^[ \t]+\S/;
 
 /**
  * 1枚のかけらの本文（公開版・trim 済み）の空行を、U+00A0 の行に変える。
@@ -80,6 +86,20 @@ export function markBlankLinesForBlog(body: string, hasCard?: (key: string) => b
     }
   }
 
+  // リストの中か（項目の行から、空行・字下げの続き・次の項目が続くあいだ）。区切り線は項目にしない
+  const inList: boolean[] = new Array(n).fill(false);
+  let listOpen = false;
+  for (let i = 0; i < n; i++) {
+    const line = lines[i]!;
+    if (inFence[i]) {
+      listOpen = false;
+      continue;
+    }
+    if (LIST_ITEM.test(line) && !HR_LINE.test(line)) listOpen = true;
+    else if (!BLANK_LINE.test(line) && !LIST_CONT.test(line)) listOpen = false;
+    inList[i] = listOpen;
+  }
+
   const out: string[] = [];
   for (let i = 0; i < n; i++) {
     const line = lines[i]!;
@@ -100,7 +120,9 @@ export function markBlankLinesForBlog(body: string, hasCard?: (key: string) => b
       HR_LINE.test(lines[next]!) ||
       endsWithSlot(prev) ||
       startsWithSlot(next) ||
-      (INDENTED.test(lines[prev]!) && INDENTED.test(lines[next]!));
+      (INDENTED.test(lines[prev]!) && INDENTED.test(lines[next]!)) ||
+      // リストの中（次の行が項目か、項目の字下げの続き）
+      (inList[prev]! && (LIST_ITEM.test(lines[next]!) || LIST_CONT.test(lines[next]!)) && !HR_LINE.test(lines[next]!));
     if (keep) {
       for (let k = i; k <= j; k++) out.push(lines[k]!);
     } else {

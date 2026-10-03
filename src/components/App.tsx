@@ -143,9 +143,23 @@ export default function App(): JSX.Element {
     });
   }
 
+  // 書く欄のツールバーを、上に貼り付いた見出し（topbar）のすぐ下に貼り付けるため、その高さを CSS 変数に渡す
+  const topbarRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const el = topbarRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const set = (): void => {
+      el.parentElement?.style.setProperty('--topbar-h', `${Math.round(el.getBoundingClientRect().height)}px`);
+    };
+    set();
+    const ro = new ResizeObserver(set);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   return (
     <div id="app" class={isReadWorld(view) ? 'mode-read' : undefined}>
-      <header class="topbar">
+      <header class="topbar" ref={topbarRef}>
         <div class="topbar-row">
           <span class="brand">かけら帳</span>
         </div>

@@ -1,4 +1,4 @@
-// Markdown の扱い。書く側（素の textarea）と読む側の両方から使うので、DOM に依存しない。
+// Markdown の扱い。書く側（k-editor に渡す判別）と読む側・書き出しの両方から使うので、DOM に依存しない。
 
 /**
  * 行全体が区切り線（thematic break）か。
@@ -220,24 +220,6 @@ export function parseStandaloneUrls(text: string): StandaloneUrl[] {
 /** 画像記法を取り除いた素の本文（一覧の抜粋・タイトル代わりに使う）。 */
 export function textForExcerpt(text: string): string {
   return text.replace(IMAGE_TOKEN_RE, '').replace(/\s+/g, ' ').trim();
-}
-
-/** 1つの画像記法だけを本文から外す（周りの空行は整える）。 */
-export function removePhotoTokenAt(text: string, start: number, end: number): string {
-  let merged = text.slice(0, start) + text.slice(end);
-  merged = merged.replace(/\n{3,}/g, '\n\n');
-  return merged.replace(/^\n+/, '').replace(/\n+$/, '');
-}
-
-/**
- * 画像記法をカーソル位置に差し込む文字列を組む。
- * 本文の途中なら前後に改行を足して独立した行にする（設計 §10「写真の UI」）。
- */
-export function buildPhotoInsertion(before: string, after: string, url: string): string {
-  let ins = `![](${url})`;
-  if (before.length && before.charAt(before.length - 1) !== '\n') ins = '\n' + ins;
-  if (after.length && after.charAt(0) !== '\n') ins = ins + '\n';
-  return ins;
 }
 
 /**
@@ -507,64 +489,4 @@ export function parseInline(text: string): InlineNode[] {
 
   flush();
   return out;
-}
-
-// ───────────────────────────────────────────────────────────────
-// 書く欄の書式ボタン（textarea のまま扱う。DOM には触らない）
-// ───────────────────────────────────────────────────────────────
-
-export interface TextEdit {
-  text: string;
-  selectionStart: number;
-  selectionEnd: number;
-}
-
-/**
- * 選択範囲を `**` で囲む／既に囲まれていれば外す。
- * 選択が無ければ `****` を入れてカーソルを真ん中へ。
- */
-export function toggleBold(text: string, start: number, end: number): TextEdit {
-  if (start === end) {
-    return {
-      text: text.slice(0, start) + '****' + text.slice(start),
-      selectionStart: start + 2,
-      selectionEnd: start + 2,
-    };
-  }
-  const selected = text.slice(start, end);
-
-  // 選択そのものが **…** のとき
-  if (selected.length >= 4 && selected.startsWith('**') && selected.endsWith('**')) {
-    const inner = selected.slice(2, -2);
-    return {
-      text: text.slice(0, start) + inner + text.slice(end),
-      selectionStart: start,
-      selectionEnd: start + inner.length,
-    };
-  }
-  // 選択の外側が **…** のとき
-  if (start >= 2 && text.slice(start - 2, start) === '**' && text.slice(end, end + 2) === '**') {
-    return {
-      text: text.slice(0, start - 2) + selected + text.slice(end + 2),
-      selectionStart: start - 2,
-      selectionEnd: start - 2 + selected.length,
-    };
-  }
-  return {
-    text: text.slice(0, start) + '**' + selected + '**' + text.slice(end),
-    selectionStart: start + 2,
-    selectionEnd: start + 2 + selected.length,
-  };
-}
-
-/**
- * 選択範囲を `[選んだ文字]()` にしてカーソルを `()` の中へ。
- * 選択が無ければ `[]()` を入れてカーソルを `[]` の中へ。
- * ⚠️ URL は prompt() で尋ねない（iOS で辛い）。記法を入れてカーソルを置くだけ。
- */
-export function insertLink(text: string, start: number, end: number): TextEdit {
-  const selected = text.slice(start, end);
-  const next = text.slice(0, start) + '[' + selected + ']()' + text.slice(end);
-  const caret = selected ? start + selected.length + 3 : start + 1;
-  return { text: next, selectionStart: caret, selectionEnd: caret };
 }

@@ -3,6 +3,8 @@ import type { JSX } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { Embed, InlineNode } from '../lib/markdown';
 import {
+  FENCE_LINE,
+  HR_LINE,
   SPOTIFY_ID_RE,
   SPOTIFY_TYPE_RE,
   YOUTUBE_ID_RE,
@@ -45,9 +47,170 @@ function renderInline(nodes: InlineNode[], prefix = ''): JSX.Element[] {
   });
 }
 
-/** 本文のひとかたまりを、行内書式を開いて段落として描く。 */
+/** 本文のひとかたまり（写真・埋め込み・カードの間の文字）を描く。 */
 function Block({ text, keyPrefix }: { text: string; keyPrefix: string }): JSX.Element {
-  return <p class="rich-text-block">{renderInline(parseInline(text), keyPrefix)}</p>;
+  const segs = splitBlocks(text);
+  // 見出し・リスト等が無ければ今までどおり段落ひとつ（改行は pre-wrap で見せる）
+  if (segs.length === 1 && segs[0]!.kind === 'text') {
+    return <p class="rich-text-block">{renderInline(parseInline(text), keyPrefix)}</p>;
+  }
+  return <>{segs.map((seg, i) => renderSeg(seg, `${keyPrefix}${i}-`))}</>;
+}
+
+// ───────────────────────────────────────────────────────────────
+// 行のまとまり（k-editor で書ける 見出し・箇条書き・番号付き・引用・区切り線）
+//
+// ⚠️ ここも**データを組むだけ**で HTML 文字列は作らない。
+// 段落の中の改行・空行は今までどおり pre-wrap の段落の中で見せる。見出し等に接する空行だけは
+// 段落の外の「空き」（rich-text-blank）にする（段落の端の改行は pre-wrap でも高さにならないため）。
+// コードフェンスの中は割らない（今までどおり文字のまま）。
+// ───────────────────────────────────────────────────────────────
+
+const HEADING_RE = /^(#{1,6}) (.*)$/;
+const BULLET_RE = /^([-*+]) (.*)$/;
+const ORDERED_RE = /^(\d{1,9})([.)]) (.*)$/;
+const QUOTE_RE = /^> ?(.*)$/;
+/** リストの続きの行（字下げ） */
+const CONT_RE = /^ {2,}(\S.*)$/;
+
+type Seg =
+  | { kind: 'text'; text: string }
+  | { kind: 'blank'; count: number }
+  | { kind: 'heading'; level: number; text: string }
+  | { kind: 'ul'; items: string[] }
+  | { kind: 'ol'; start: number; items: string[] }
+  | { kind: 'quote'; text: string }
+  | { kind: 'hr' };
+
+function splitBlocks(text: string): Seg[] {
+  const lines = text.split('\n');
+  const segs: Seg[] = [];
+  let buf: string[] = [];
+  let fence: string | null = null;
+  const flush = (): void => {
+    if (!buf.length) return;
+    // 端の空行は段落の外の空きにする
+    let a = 0;
+    let b = buf.length;
+    while (a < b && buf[a] === '') a++;
+    while (b > a && buf[b - 1] === '') b--;
+    if (a > 0) segs.push({ kind: 'blank', count: a });
+    if (b > a) segs.push({ kind: 'text', text: buf.slice(a, b).join('\n') });
+    if (buf.length - b > 0 && b > a) segs.push({ kind: 'blank', count: buf.length - b });
+    buf = [];
+  };
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    if (fence) {
+      buf.push(line);
+      const f = line.match(FENCE_LINE);
+      if (f && f[1]![0] === fence[0] && f[1]!.length >= fence.length && line.trim() === f[1]) fence = null;
+      continue;
+    }
+    const f = line.match(FENCE_LINE);
+    if (f) {
+      fence = f[1]!;
+      buf.push(line);
+      continue;
+    }
+    if (HR_LINE.test(line)) {
+      flush();
+      segs.push({ kind: 'hr' });
+      continue;
+    }
+    const h = HEADING_RE.exec(line);
+    if (h && h[2]!.trim()) {
+      flush();
+      segs.push({ kind: 'heading', level: h[1]!.length, text: h[2]! });
+      continue;
+    }
+    const bm = BULLET_RE.exec(line);
+    const om = bm ? null : ORDERED_RE.exec(line);
+    if (bm || om) {
+      flush();
+      const items: string[] = [];
+      const re = bm ? BULLET_RE : ORDERED_RE;
+      while (i < lines.length) {
+        const l = lines[i]!;
+        const m = HR_LINE.test(l) ? null : re.exec(l);
+        if (m && (bm ? m[1] === bm[1] : m[2] === om![2])) {
+          items.push(bm ? m[2]! : m[3]!);
+          i++;
+          continue;
+        }
+        const c = CONT_RE.exec(l);
+        if (c && items.length) {
+          items[items.length - 1] += '\n' + c[1]!;
+          i++;
+          continue;
+        }
+        break;
+      }
+      i--;
+      segs.push(bm ? { kind: 'ul', items } : { kind: 'ol', start: parseInt(om![1]!, 10), items });
+      continue;
+    }
+    if (line.startsWith('>')) {
+      flush();
+      const inner: string[] = [];
+      while (i < lines.length && lines[i]!.startsWith('>')) {
+        inner.push(QUOTE_RE.exec(lines[i]!)![1]!);
+        i++;
+      }
+      i--;
+      segs.push({ kind: 'quote', text: inner.join('\n') });
+      continue;
+    }
+    buf.push(line);
+  }
+  flush();
+  // 空きの数を、見出し等の間の空行の数にそろえる（連続する blank はまとめる）
+  return segs;
+}
+
+function renderSeg(seg: Seg, key: string): JSX.Element {
+  switch (seg.kind) {
+    case 'text':
+      return (
+        <p class="rich-text-block" key={key}>
+          {renderInline(parseInline(seg.text), key)}
+        </p>
+      );
+    case 'blank':
+      return <div class="rich-text-blank" key={key} style={{ height: `${seg.count * 1.6}em` }} aria-hidden="true" />;
+    case 'heading': {
+      const Tag = (`h${Math.min(6, seg.level + 1)}` as unknown) as 'h3';
+      return (
+        <Tag class={`rich-text-heading rich-text-h${seg.level}`} key={key}>
+          {renderInline(parseInline(seg.text), key)}
+        </Tag>
+      );
+    }
+    case 'ul':
+      return (
+        <ul class="rich-text-list" key={key}>
+          {seg.items.map((it, i) => (
+            <li key={`${key}${i}`}>{renderInline(parseInline(it), `${key}${i}-`)}</li>
+          ))}
+        </ul>
+      );
+    case 'ol':
+      return (
+        <ol class="rich-text-list" start={seg.start} key={key}>
+          {seg.items.map((it, i) => (
+            <li key={`${key}${i}`}>{renderInline(parseInline(it), `${key}${i}-`)}</li>
+          ))}
+        </ol>
+      );
+    case 'quote':
+      return (
+        <blockquote class="rich-text-quote" key={key}>
+          <Block text={seg.text} keyPrefix={key} />
+        </blockquote>
+      );
+    case 'hr':
+      return <hr class="rich-text-hr" key={key} />;
+  }
 }
 
 // ───────────────────────────────────────────────────────────────
@@ -134,7 +297,7 @@ function Spotify({ type, id }: { type: string; id: string }): JSX.Element | null
   );
 }
 
-function EmbedBlock({ embed }: { embed: Embed }): JSX.Element | null {
+export function EmbedBlock({ embed }: { embed: Embed }): JSX.Element | null {
   switch (embed.kind) {
     case 'youtube':
       return <YouTube id={embed.id} />;
@@ -156,7 +319,7 @@ function EmbedBlock({ embed }: { embed: Embed }): JSX.Element | null {
 //    （相手の URL を直接 src に入れない＝閲覧が相手に伝わらない）。
 // ───────────────────────────────────────────────────────────────
 
-const CARD_IMAGE_SRC = /^\/api\/photo\/kakera\/cards\/[A-Za-z0-9_.-]+$/;
+export const CARD_IMAGE_SRC = /^\/api\/photo\/kakera\/cards\/[A-Za-z0-9_.-]+$/;
 
 /** 画像が無いことを示す空白の画像。外部の画像は読まず、SVG を要素として組む（文字・絵文字なし）。 */
 function BlankThumb(): JSX.Element {
@@ -228,7 +391,8 @@ function slotsOf(text: string, cards: LinkCards | undefined): Slot[] {
  * 画像記法を実際の写真に開き、**行として独立した X / YouTube の URL**と**段落がそれだけの Spotify の URL**を埋め込みに、
  * **キャッシュのある行として独立した URL**をリンクカードに開き、
  * **行内書式**（太字・斜体・リンク・コード・打ち消し）も開く。
- * 見出し・区切り線・引用・リスト・表は開かない（改行はそのまま見せる: white-space: pre-wrap）。
+ * k-editor で書ける**見出し・箇条書き・番号付き・引用・区切り線**も開く（2026-10-03）。表は開かない。
+ * 段落の中の改行・空行はそのまま見せる（white-space: pre-wrap）。
  */
 export function RichText({
   text,

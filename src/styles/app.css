@@ -26,7 +26,9 @@ body {
 }
 button { font-family: inherit; }
 ::selection { background: #b03a2e; color: #fdfdfc; }
-html, body { max-width: 100%; overflow-x: hidden; }
+/* ⚠️ hidden だと body がスクロールの箱になり、上の見出し（sticky）と書く欄のツールバーが貼り付かない。
+   clip ははみ出しを切るだけで箱を作らない（2026-10-03） */
+html, body { max-width: 100%; overflow-x: clip; }
 
 #frame {
   position: relative;   /* 並べ替え中の行をここにぶら下げる */
@@ -216,6 +218,39 @@ ul.frag-list li.frag:last-child { border-bottom: 1px solid var(--line); }
 #app.mode-read .rich-text-block {
   font-family: var(--serif); font-size: 17px; line-height: 1.9; margin: 0 0 1.5em; color: var(--fg);
 }
+/* k-editor で書ける行のまとまり（見出し・箇条書き・番号付き・引用・区切り線）。2026-10-03 */
+.rich-text-heading { margin: 0 0 6px; font-weight: 700; line-height: 1.5; color: var(--fg); overflow-wrap: anywhere; }
+.rich-text-h1 { font-size: 21px; }
+.rich-text-h2 { font-size: 19px; }
+.rich-text-h3 { font-size: 17px; }
+.rich-text-h4, .rich-text-h5, .rich-text-h6 { font-size: 16px; }
+.rich-text-list { margin: 0 0 6px; padding-left: 1.4em; list-style: disc; font-size: 16px; line-height: 1.6; color: var(--fg); overflow-wrap: anywhere; }
+ol.rich-text-list { list-style: decimal; }
+.rich-text-list li { white-space: pre-wrap; }
+.rich-text-quote { margin: 0 0 6px; padding-left: .9em; border-left: 3px solid var(--line); color: var(--muted); }
+.rich-text-quote .rich-text-block, .rich-text-quote .rich-text-list { color: var(--muted); }
+.rich-text-hr { border: none; border-top: 1px solid var(--line); margin: 14px 0; }
+.rich-text-blank { margin: 0; }
+.rich-text-heading:last-child, .rich-text-list:last-child, .rich-text-quote:last-child { margin-bottom: 0; }
+.rich-text-heading strong, .rich-text-list strong { font-weight: 700; }
+.rich-text-heading del, .rich-text-list del { color: var(--muted); }
+.rich-text-heading a, .rich-text-list a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+.rich-text-list code, .rich-text-heading code { font-family: var(--mono); font-size: .92em; background: var(--line); border-radius: 2px; padding: 0 4px; }
+#app.mode-read .rich-text-heading { font-family: var(--serif); font-weight: 600; margin: 0 0 1em; }
+#app.mode-read .rich-text-list, #app.mode-read .rich-text-quote { font-family: var(--serif); font-size: 17px; line-height: 1.9; margin: 0 0 1.5em; }
+
+/* ---- 書く欄（k-editor）。色は朱ひとつ・罫線だけ（§9）。 ----
+   ツールバーは上の見出し（header.topbar・sticky）の下に貼り付く。高さは topbar に合わせる */
+#app .k-editor {
+  --k-editor-bg: var(--bg); --k-editor-fg: var(--fg); --k-editor-muted: var(--muted);
+  --k-editor-line: var(--line); --k-editor-accent: var(--accent);
+  --k-editor-sticky-top: var(--topbar-h, 90px);
+}
+#app .k-editor-prose { line-height: 1.7; }
+.composer .k-editor-toolbar-wrap { margin-top: -6px; }
+.frag-edit .k-editor-content { border: 1px solid var(--line); border-radius: 2px; padding: 10px; }
+.editor-embed .embed-youtube, .editor-embed .embed-tweet, .editor-embed .embed-spotify { margin: 0; }
+.k-editor-url-embed .k-editor-remove { top: 6px; right: 6px; }
 .assembled-photo { width: 100%; border-radius: 2px; overflow: hidden; margin: 8px 0; }
 .assembled-photo:first-child { margin-top: 0; }
 .assembled-photo:last-child { margin-bottom: 0; }

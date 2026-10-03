@@ -1,30 +1,32 @@
+import { h, render } from 'preact';
 import type { JSX, RefObject } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
-import type { TextEdit } from '../lib/markdown';
-import {
-  buildPhotoInsertion,
-  insertLink,
-  parsePhotoTokens,
-  removePhotoTokenAt,
-  toggleBold,
-} from '../lib/markdown';
-import { autoGrow } from './format';
-import { pickPhotos, uploadPhotos } from './photo';
+import { useRef } from 'preact/hooks';
+import { KEditor, type KEditorInstance } from 'k-editor/preact';
+import type { LinkCardData } from 'k-editor';
+import 'k-editor/style.css';
+import { isSafeHref, matchBareUrl, matchEmbed, parsePhotoTokens } from '../lib/markdown';
+import { isCardCandidate, normalizeUrl } from '../lib/card/url';
+import type { LinkCards } from '../lib/card/types';
+import { pickPhotos, uploadOnePhoto } from './photo';
+import { CARD_IMAGE_SRC, EmbedBlock } from './RichText';
 
 /**
  * かけらの本文を書くところ。composer（新規）と、流れ／かたちのその場編集で共用する。
  *
- *  - 「写真」ボタンはカーソル位置に画像記法を挿入する（本文の途中なら前後に改行を足して独立した行に）
- *  - 「太字」「リンク」は Markdown の記法を差し込むだけ（リッチエディタにはしない。素の textarea のまま）。
- *    ⚠️ リンクの URL は prompt() で尋ねない（iOS で辛い）。記法を入れてカーソルを置くだけ
- *  - Cmd/Ctrl+B で太字をトグルできる（増やすのはこれ一つだけ）
- *  - 本文へ画像ファイルを**ドラッグ＆ドロップ**しても同じ経路で貼れる（ボタンと処理を共有する）
- *  - **クリップボードから貼り付け**（スクリーンショットのコピー等）ても同じ経路で貼れる。
- *    ⚠️ 文字も一緒に入っているとき（ウェブページや文書からのコピー）は、写真にせず文字として貼る
- *  - テキストエリアの下に貼った写真のサムネを並べ、× でその1枚だけ本文から外す
- *  - 失敗は alert ではなくその場のテキストで知らせる（iOS の alert はスクロール位置が飛ぶ）
+ * 中身は k-editor（github.com/kechiiiiin/k-editor・Tiptap の上の WYSIWYG）。保存の形は今までどおり Markdown:
+ *  - 単独の改行・空行の数・写真の行・行として独立した URL・`---` は、読み込んで何も触らなければ 1 文字も変わらない
+ *  - 上に貼り付くツールバー: 写真／埋め込み／見出し／太字／取り消し線／リンク／箇条書き／番号付き／引用／区切り線／戻す・やり直す
+ *    ⚠️ 斜体は入れない（2026-10-03）。⚠️ リンクの URL は prompt() で尋ねない（小さな欄で）
+ *  - 写真はボタン・ドラッグ＆ドロップ・貼り付け（画像だけのとき）の3経路。写真は本文の中に見え、× で外せる
+ *  - 他所からの貼り付けは文字だけ（書式は持ち込まない）。文字入りのコピーは文字として
+ *  - 失敗は alert ではなくその場の文字で（iOS の alert はスクロール位置が飛ぶ）
  *
- * 並びは 本文 → サムネ → 知らせ → 「写真」と inlineAction の行 → belowAction。
+ * ⚠️ 埋め込みの判別（matchEmbed）とカードの判別はかけら帳の側にあり、k-editor へは関数で渡す
+ *    （判別の写しを三か所目に増やさない。astro-blog との二か所の約束はそのまま）。
+ * ⚠️ エディタの中では Spotify を置き方に関係なく埋め込みで見せる（行の前後の空行は見ない）。
+ *    公開される姿は読む画面（RichText）が正。
+ *
+ * 並びは ツールバー → 本文 → 知らせ → inlineAction の行 → belowAction。
  */
 export function Editor({
   value,
@@ -32,7 +34,8 @@ export function Editor({
   kakeraId,
   writtenAt,
   placeholder,
-  taRef,
+  editorRef,
+  cards,
   inlineAction,
   belowAction,
 }: {
@@ -41,193 +44,71 @@ export function Editor({
   kakeraId: string;
   writtenAt: string;
   placeholder?: string;
-  taRef?: RefObject<HTMLTextAreaElement>;
-  /** 「写真」と同じ行の右に置くもの（composer の「保存」） */
+  /** フォーカスを戻す等のための操作口 */
+  editorRef?: RefObject<KEditorInstance | null>;
+  /** 既に取ってあるリンクカード（正規化 URL → カード）。無い URL は URL のまま見せる */
+  cards?: LinkCards;
+  /** 本文の下の行の右に置くもの（「保存」） */
   inlineAction?: JSX.Element;
-  /** その下に置くもの（その場編集の 保存／取消／削除） */
+  /** その下に置くもの（その場編集の 取消／削除） */
   belowAction?: JSX.Element;
 }): JSX.Element {
-  const fallbackRef = useRef<HTMLTextAreaElement>(null);
-  const ref = taRef ?? fallbackRef;
-  const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [dropping, setDropping] = useState(false);
+  // 写真の連番（n）を数えるための、いちばん新しい本文（再描画を待たずに読む）
+  const latest = useRef(value);
+  latest.current = value;
 
-  const tokens = parsePhotoTokens(value);
-
-  // 開いた瞬間と、写真の差し込みなど外から本文が変わったときも、本文の高さまで伸ばす。
-  // ⚠️ 入力のときだけ伸ばしていたので、長いかけらを開くと狭い箱の中でスクロールしていた（2026-09-13）。
-  useEffect(() => {
-    autoGrow(ref.current);
-  }, [value]);
-
-  /** 選ばれた／落とされた写真を上げて、カーソル位置に画像記法を差し込む。 */
-  async function insertFiles(files: File[]): Promise<void> {
-    if (!files.length || busy) return;
-    setError(null);
-    setBusy(`0 / ${files.length}`);
-    const { urls, error: err } = await uploadPhotos(
-      files,
-      { kakeraId, writtenAt, startIndex: tokens.length },
-      (done, total) => setBusy(`${done} / ${total}`)
-    );
-    setBusy(null);
-    if (err) setError(err);
-    if (!urls.length) return;
-
-    const ta = ref.current;
-    const start = ta?.selectionStart ?? value.length;
-    const end = ta?.selectionEnd ?? value.length;
-    const before = value.slice(0, start);
-    const after = value.slice(end);
-    let inserted = '';
-    for (const url of urls) inserted += buildPhotoInsertion(before + inserted, after, url);
-    onInput(before + inserted + after);
-
-    // 差し込んだ直後の位置にカーソルを戻す
-    requestAnimationFrame(() => {
-      const el = ref.current;
-      if (!el) return;
-      const caret = before.length + inserted.length;
-      el.focus();
-      el.setSelectionRange(caret, caret);
-      autoGrow(el);
-    });
+  async function uploadImage(file: File): Promise<string> {
+    const n = parsePhotoTokens(latest.current).length + 1;
+    return await uploadOnePhoto(file, { kakeraId, writtenAt, n });
   }
 
-  async function onPickPhotos(): Promise<void> {
-    setError(null);
-    await insertFiles(await pickPhotos());
+  function renderEmbed(url: string): { dom: HTMLElement; destroy: () => void } | null {
+    const embed = matchEmbed(url);
+    if (!embed) return null;
+    const dom = document.createElement('div');
+    dom.className = 'editor-embed';
+    render(h(EmbedBlock, { embed }), dom);
+    return { dom, destroy: () => render(null, dom) };
   }
 
-  /**
-   * ドロップされたものから画像だけを拾う。
-   * 画像以外（テキスト・リンク・PDF）は素通しして、ブラウザの既定の挙動に任せる。
-   */
-  function imagesFrom(dt: DataTransfer | null): File[] {
-    if (!dt) return [];
-    return Array.from(dt.files).filter((f) => f.type.startsWith('image/'));
-  }
-
-  function onDragOver(e: DragEvent): void {
-    if (!imagesFrom(e.dataTransfer).length) return;
-    e.preventDefault(); // これを止めないと drop が発火しない
-    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
-    if (!dropping) setDropping(true);
-  }
-
-  function onDrop(e: DragEvent): void {
-    const files = imagesFrom(e.dataTransfer);
-    setDropping(false);
-    if (!files.length) return; // 画像でなければブラウザに任せる
-    e.preventDefault();
-    void insertFiles(files);
-  }
-
-  /**
-   * クリップボードから貼り付けた画像を拾う。
-   * スクリーンショットは dt.files に無く dt.items だけに入るブラウザがあるので、items からも拾う。
-   */
-  function pastedImages(dt: DataTransfer | null): File[] {
-    if (!dt) return [];
-    const fromFiles = imagesFrom(dt);
-    if (fromFiles.length) return fromFiles;
-    return Array.from(dt.items)
-      .filter((it) => it.kind === 'file' && it.type.startsWith('image/'))
-      .map((it) => it.getAsFile())
-      .filter((f): f is File => !!f);
-  }
-
-  function onPaste(e: ClipboardEvent): void {
-    const dt = e.clipboardData;
-    const files = pastedImages(dt);
-    if (!files.length) return; // 画像が無ければブラウザに任せる（ふつうの文字の貼り付け）
-    // 文字も一緒に入っているコピーは、文字として貼る（写真だけ差し込むと文章が消える）
-    if (dt && dt.getData('text/plain').trim()) return;
-    e.preventDefault();
-    void insertFiles(files);
-  }
-
-  /**
-   * 書式ボタンの共通処理。
-   * 本文を差し替えたあと、必ず textarea にフォーカスを戻して選択範囲を置き直す
-   * （insertFiles と同じく requestAnimationFrame で、Preact が値を描き直した後に当てる）。
-   */
-  function applyEdit(make: (text: string, start: number, end: number) => TextEdit): void {
-    const ta = ref.current;
-    const start = ta?.selectionStart ?? value.length;
-    const end = ta?.selectionEnd ?? value.length;
-    const next = make(value, start, end);
-    onInput(next.text);
-    requestAnimationFrame(() => {
-      const el = ref.current;
-      if (!el) return;
-      el.focus();
-      el.setSelectionRange(next.selectionStart, next.selectionEnd);
-      autoGrow(el);
-    });
-  }
-
-  function onKeyDown(e: KeyboardEvent): void {
-    if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
-    if (e.key !== 'b' && e.key !== 'B') return;
-    e.preventDefault();
-    applyEdit(toggleBold);
-  }
-
-  function removePhoto(i: number): void {
-    const fresh = parsePhotoTokens(value);
-    const target = fresh[i];
-    if (!target) return;
-    onInput(removePhotoTokenAt(value, target.start, target.end));
+  function fetchCard(url: string): LinkCardData | null {
+    if (!cards || !isCardCandidate(url)) return null;
+    const key = normalizeUrl(url);
+    const card = key ? cards[key] : undefined;
+    if (!card) return null;
+    return {
+      title: card.title,
+      description: card.description,
+      domain: card.domain,
+      // 画像は自分の /api/photo/kakera/cards/* だけ（相手の URL を src に入れない）
+      image: card.image && CARD_IMAGE_SRC.test(card.image) ? card.image : null,
+    };
   }
 
   return (
     <>
-      <textarea
-        ref={ref}
-        class={dropping ? 'dropping' : undefined}
+      <KEditor
+        class="editor"
         value={value}
-        placeholder={placeholder}
-        rows={3}
-        onDragOver={onDragOver}
-        onDragLeave={() => setDropping(false)}
-        onDrop={onDrop}
-        onPaste={onPaste}
-        onKeyDown={onKeyDown}
-        onInput={(e) => {
-          const el = e.currentTarget;
-          autoGrow(el);
-          onInput(el.value);
+        onChange={(md) => {
+          latest.current = md;
+          onInput(md);
         }}
+        placeholder={placeholder}
+        editorRef={editorRef}
+        uploadImage={uploadImage}
+        pickImages={pickPhotos}
+        renderEmbed={renderEmbed}
+        fetchCard={fetchCard}
+        // 行まるごとが URL の行（parseStandaloneUrls と同じ条件）を埋め込み・カードの枠にする
+        isBlockUrl={(line) => isSafeHref(line) && matchBareUrl(line, 0)?.url === line}
       />
-      {tokens.length ? (
-        <div class="photo-strip">
-          {tokens.map((t, i) => (
-            <div class="photo-thumb" key={t.url + i}>
-              <img src={t.url} alt="" />
-              <button type="button" class="photo-thumb-x" aria-label="この写真を外す" onClick={() => removePhoto(i)}>
-                ×
-              </button>
-            </div>
-          ))}
+      {inlineAction ? (
+        <div class="composer-actions">
+          <span />
+          {inlineAction}
         </div>
       ) : null}
-      {error ? <p class="warn-note">{error}</p> : null}
-      <div class="composer-actions">
-        <div class="composer-tools">
-          <button type="button" class="icon-btn" disabled={!!busy} onClick={onPickPhotos}>
-            {busy ? `送っています ${busy}` : '写真'}
-          </button>
-          <button type="button" class="icon-btn" onClick={() => applyEdit(toggleBold)}>
-            太字
-          </button>
-          <button type="button" class="icon-btn" onClick={() => applyEdit(insertLink)}>
-            リンク
-          </button>
-        </div>
-        {inlineAction ?? <span />}
-      </div>
       {belowAction}
     </>
   );

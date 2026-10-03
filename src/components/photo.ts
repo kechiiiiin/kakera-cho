@@ -65,38 +65,14 @@ export function pickPhotos(): Promise<File[]> {
   });
 }
 
-export interface UploadTarget {
-  kakeraId: string;
-  writtenAt: string;
-  /** すでに本文に貼ってある枚数（key の連番の続きから始める） */
-  startIndex: number;
-}
-
-/**
- * 選んだぶんを直列に上げて、貼れた URL を順に返す。
- * 途中で失敗したらそこで止め、成功したぶんは返す（何枚目で失敗したか分かるように）。
- */
-export async function uploadPhotos(
-  files: File[],
-  target: UploadTarget,
-  onProgress?: (done: number, total: number) => void
-): Promise<{ urls: string[]; error: string | null }> {
-  const urls: string[] = [];
-  for (let i = 0; i < files.length; i++) {
-    onProgress?.(i, files.length);
-    try {
-      const compressed = await compressImage(files[i]!);
-      const form = new FormData();
-      form.append('file', compressed);
-      form.append('kakera_id', target.kakeraId);
-      form.append('written_at', target.writtenAt);
-      form.append('n', String(target.startIndex + i + 1));
-      const { url } = await api.uploadPhoto(form);
-      urls.push(url);
-    } catch (e) {
-      return { urls, error: `${i + 1}枚目で失敗しました（${e instanceof Error ? e.message : String(e)}）` };
-    }
-  }
-  onProgress?.(files.length, files.length);
-  return { urls, error: null };
+/** 1枚を縮めて上げ、URL を返す。n は本文の中で何枚目か（key の連番）。失敗は投げる。 */
+export async function uploadOnePhoto(file: File, target: { kakeraId: string; writtenAt: string; n: number }): Promise<string> {
+  const compressed = await compressImage(file);
+  const form = new FormData();
+  form.append('file', compressed);
+  form.append('kakera_id', target.kakeraId);
+  form.append('written_at', target.writtenAt);
+  form.append('n', String(target.n));
+  const { url } = await api.uploadPhoto(form);
+  return url;
 }

@@ -1,6 +1,7 @@
 import type { JSX } from 'preact';
 import { useState } from 'preact/hooks';
 import type { Kakera } from '../lib/kakera/types';
+import type { LinkCards } from '../lib/card/types';
 import { Editor } from './Editor';
 
 /**
@@ -14,8 +15,11 @@ export function KakeraEdit({
   onCancel,
   onDelete,
   onPutIntoKatachi,
+  cards,
 }: {
   kakera: Kakera;
+  /** 既に取ってあるリンクカード（エディタの中の URL をカードで見せる） */
+  cards?: LinkCards;
   onSave: (body: string) => Promise<void>;
   onCancel: () => void;
   onDelete: () => Promise<void>;
@@ -32,6 +36,7 @@ export function KakeraEdit({
         onInput={setBody}
         kakeraId={kakera.id}
         writtenAt={kakera.written_at}
+        cards={cards}
         // 「保存」は書く欄（WriteScreen）と同じく道具の並びの右端に置く。場所を揃えて迷わせない（2026-09-14）
         inlineAction={
           <button

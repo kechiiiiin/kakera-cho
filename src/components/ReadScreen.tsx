@@ -133,6 +133,7 @@ export function ReadScreen({
             {editing && openId === k.id ? (
               <KakeraEdit
                 kakera={k}
+                cards={detail.cards}
                 onSave={async (body) => {
                   await onEdit(k.id, body);
                   setOpenId(null);
