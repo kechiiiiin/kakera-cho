@@ -330,6 +330,13 @@ export default function App(): JSX.Element {
                 say(moveNikki ? '日付を変えました。公開中の日記も新しい日付・URL に移しました' : '日付を変えました');
               })
             }
+            onChangeTitle={(title) =>
+              guard(async () => {
+                setDetail(await api.updateKatachi(view.id, { title }));
+                await loadKatachiList();
+                say('題を変えました');
+              })
+            }
             onDissolve={() =>
               guard(async () => {
                 await api.dissolveKatachi(view.id);

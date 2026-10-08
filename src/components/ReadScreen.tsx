@@ -26,6 +26,7 @@ export function ReadScreen({
   onDetach,
   onDissolve,
   onChangeDate,
+  onChangeTitle,
   nagare,
   nagareCards,
   nagareLoaded,
@@ -44,6 +45,8 @@ export function ReadScreen({
    * 失敗（1日にひとつ・公開側との食い違い等）は呼び手が知らせる
    */
   onChangeDate: (date: string, moveNikki: boolean) => Promise<void>;
+  /** かたちの題を変える（空なら題なし＝日付表示に戻る）。公開中の日記には触れない */
+  onChangeTitle: (title: string) => Promise<void>;
   /** 「かけらを足す」で選ぶ、まだかたちになっていないかけら */
   nagare: Kakera[];
   nagareCards: LinkCards;
@@ -58,7 +61,11 @@ export function ReadScreen({
   const [picking, setPicking] = useState(false);
   const [dateDraft, setDateDraft] = useState(detail.katachi.date);
   const [dateBusy, setDateBusy] = useState(false);
+  const [titleDraft, setTitleDraft] = useState(detail.katachi.title ?? '');
+  const [titleBusy, setTitleBusy] = useState(false);
   const { katachi, kakera, nikki } = detail;
+  // 題は1行。改行は空白にして前後を落とす
+  const titleNorm = titleDraft.replace(/\s*[\r\n]+\s*/g, ' ').trim();
 
   return (
     <section>
@@ -72,6 +79,7 @@ export function ReadScreen({
           onClick={() => {
             setOpenId(null);
             setDateDraft(katachi.date);
+            setTitleDraft(katachi.title ?? '');
             setEditing(!editing);
           }}
         >
@@ -79,7 +87,37 @@ export function ReadScreen({
         </button>
       </div>
 
-      {katachi.title ? (
+      {editing ? (
+        <div class="field read-title-edit">
+          <p class="read-date-small">{dateHeading(katachi.date)}</p>
+          <label for="read-title">かたちの題</label>
+          <textarea
+            id="read-title"
+            class="read-title-input"
+            rows={1}
+            value={titleDraft}
+            placeholder={dateLiterary(katachi.date)}
+            onInput={(e) => setTitleDraft(e.currentTarget.value)}
+          />
+          <button
+            type="button"
+            class="btn-primary"
+            disabled={titleBusy || titleNorm === (katachi.title ?? '')}
+            onClick={async () => {
+              setTitleBusy(true);
+              try {
+                await onChangeTitle(titleNorm);
+                setTitleDraft(titleNorm);
+              } finally {
+                setTitleBusy(false);
+              }
+            }}
+          >
+            題を変える
+          </button>
+          {nikki ? <p class="read-date-note">公開中の日記の題は、次に日記へ書き足すときに変わります</p> : null}
+        </div>
+      ) : katachi.title ? (
         <>
           <p class="read-date-small">{dateHeading(katachi.date)}</p>
           <p class="page-date">{katachi.title}</p>
