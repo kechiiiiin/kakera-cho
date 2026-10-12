@@ -16,6 +16,7 @@
 - 原本の控え: **`kakera-data`（private）** に Markdown（保存の都度・`waitUntil` で裏に回す）
 - 公開先: **`astro-blog`** の `src/content/diary/YYYY-MM-DD.md` へ octokit で直接 commit
 - 写真: 非公開バケット **`kakera-photos`**。日記に出すときだけ公開バケット `images` へコピー
+  （貼る前にブラウザで縮める。面積 ≤ 2048×2048 相当・縦横比 2 超の細長い画像は横幅優先で ≤ 12MP／長辺 ≤ 16384px。`src/lib/image/fit-size.ts`）
 - 公開ドメイン: `kakera.kechiiiiin.com`（Cloudflare Access で保護・`workers.dev` は生やさない）
 
 ⚠️ **このリポジトリと astro-blog は public。** 原本（かけら・かたち）を置いてはいけない。

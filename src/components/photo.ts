@@ -1,15 +1,23 @@
 // 写真を貼る。blog-cms のスマホ対応で得た知見をそのまま使う（依存ライブラリはゼロ）。
 //
-//   - 長辺 2048px / JPEG 0.85 に落としてから送る（iPhone の写真は 3〜10MB ある）
-//   - フォールバックの三段構え: デコード不能／toBlob が null／縮んでいない → いずれも原本を送る
+//   - 画素数（面積）の上限まで縮め、JPEG 0.85 にしてから送る（iPhone の写真は 3〜10MB ある）。
+//     普通の写真（縦横比 2 以下）は面積 ≤ 2048×2048（約 4.2MP）、細長い画像（縦横比 2 超）は横幅を保つ方を優先して
+//     面積 ≤ 12MP・長辺 ≤ 16384px（fitUploadSize）。元が上限内なら縮めない（拡大もしない）
+//     （2026-10-12 縦長画像で変更。長辺 2048px で縮めていたため、縦横比 1:15 のスクリーンショットが 95×2048 になり読めなかった）
+//   - 描く canvas は上限の内側（≤ 12MP）なので、iOS Safari の canvas の上限（約 16.7MP）を越えない。
+//     原本がそれより大きくても、原寸の canvas は作らない（ImageBitmap から縮めて描くだけ）
+//   - 白で下地を塗ってから描く（透明の PNG が JPEG で黒く抜けない）。それでも描けていない（全部透明の）canvas なら原本を送る
+//   - フォールバックの三段構え: デコード不能／toBlob が null／縮んでいない → いずれも原本を送る（＋描けていない canvas）。
+//     原本が 20MB を越えるときはサーバが 413 で断る（src/pages/api/photo/index.ts）。黙って巨大なまま保存されることはない
 //   - GIF・SVG は素通し（アニメと図を壊さない）
 //   - HEIC は変換ライブラリを入れない。写真アプリから選べば iOS が JPEG にしてくれる。
 //     生で来たときはサーバが親切なエラーを返す
 //   - 複数選択は直列ループ（順序を保ち、回線を平らに使う）
 
 import { api } from './api';
+import { fitUploadSize } from '../lib/image/fit-size';
+import { blankProbePoints, looksBlank } from '../lib/publish/photo-face';
 
-const MAX_EDGE = 2048;
 const QUALITY = 0.85;
 
 export async function compressImage(file: File): Promise<File> {
@@ -22,24 +30,37 @@ export async function compressImage(file: File): Promise<File> {
     return file; // デコードできない（HEIC 等）ならそのまま送ってサーバに判断させる
   }
 
-  const scale = Math.min(1, MAX_EDGE / Math.max(bitmap.width, bitmap.height));
-  const w = Math.round(bitmap.width * scale);
-  const h = Math.round(bitmap.height * scale);
+  const { width: w, height: h } = fitUploadSize(bitmap.width, bitmap.height);
+  if (!w || !h) {
+    bitmap.close();
+    return file;
+  }
 
   const canvas = document.createElement('canvas');
-  canvas.width = w;
-  canvas.height = h;
-  const cx = canvas.getContext('2d');
-  if (!cx) return file;
-  cx.drawImage(bitmap, 0, 0, w, h);
-  bitmap.close();
+  try {
+    canvas.width = w;
+    canvas.height = h;
+    const cx = canvas.getContext('2d');
+    if (!cx) return file;
+    cx.fillStyle = '#fff';
+    cx.fillRect(0, 0, w, h);
+    cx.drawImage(bitmap, 0, 0, w, h);
+    // 描けていない canvas（iOS が黙って空にした等）を JPEG にすると真っ黒な写真になる。原本を送る
+    const samples = blankProbePoints(w, h).map((p) => cx.getImageData(p.x, p.y, p.w, p.h).data);
+    if (looksBlank(samples)) return file;
 
-  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', QUALITY));
-  if (!blob) return file;
-  if (blob.size >= file.size) return file; // 縮まないなら原本のまま
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', QUALITY));
+    if (!blob) return file;
+    if (blob.size >= file.size) return file; // 縮まないなら原本のまま
 
-  const name = file.name.replace(/\.[^.]+$/, '') + '.jpg';
-  return new File([blob], name, { type: 'image/jpeg' });
+    const name = file.name.replace(/\.[^.]+$/, '') + '.jpg';
+    return new File([blob], name, { type: 'image/jpeg' });
+  } finally {
+    bitmap.close();
+    // iOS Safari は canvas の合計の大きさにも上限がある。使い終わったらすぐ縮めて返す
+    canvas.width = 0;
+    canvas.height = 0;
+  }
 }
 
 /** 隠しの input を出して写真を選ばせる（撮影も選べる）。 */

@@ -8,6 +8,8 @@
 //  - 座標は写真に対する 0〜1 の比率。小数 4 桁に丸めて持つ（画面とサーバで同じ指紋になるように）
 //  - 「枠の指紋」は隠す枠の集合から作るハッシュ（8 桁）。枠を直せば指紋が変わり、モザイク済みの版も公開 key も変わる
 
+import { aspectOf, fitSize, LONG_ASPECT, type FitLimit } from '../image/fit-size';
+
 /** 顔の枠 1 つ。 */
 export interface PhotoFace {
   /** 写真の中での id（自動は a…・手で足した枠は m…） */
@@ -173,7 +175,7 @@ export function isPublicKeyOf(key: string, publicKey: string): boolean {
 
 /* ---------------- モザイクの範囲 ---------------- */
 
-/** 描いた canvas の大きさ（px。長辺 4096px・16MP 以下に縮めたもの）でモザイクをかける四角とブロックの大きさ（§3.3: 枠を 20% 広げる・ブロックは顔の幅の 1/8、最小 8px）。 */
+/** 描いた canvas の大きさ（px。fitCanvasSize で 16MP 以下に縮めたもの）でモザイクをかける四角とブロックの大きさ（§3.3: 枠を 20% 広げる・ブロックは顔の幅の 1/8、最小 8px）。 */
 export function mosaicRect(f: { x: number; y: number; w: number; h: number }, width: number, height: number): {
   x: number;
   y: number;
@@ -317,25 +319,29 @@ export function mergeDetections(found: { x: number; y: number; w: number; h: num
 /**
  * canvas の上限。iOS Safari は面積が大きすぎる canvas を**黙って空のまま**にする（24MP の原寸を描くと真っ黒・透明）。
  * 空の canvas で検出すると「顔 0 件 → 調べ済み → 素顔の原本が公開」になりうるので、必ずこの内側に縮めて描く。
+ * 面積 16MP は iOS の上限（IOS_CANVAS_MAX_AREA = 16,777,216）の内側。
+ *
+ * 長辺の上限は、普通の写真（縦横比 2 以下）は 4096px のまま、細長い画像（縦横比 2 超）は 16384px に緩める
+ * （2026-10-12 縦長画像で変更。長辺 4096px だと 1290×19350 のスクリーンショットが 273×4096 まで細くなり、
+ * 公開される版が読めなかった）。
  */
-export const CANVAS_LIMIT = { maxEdge: 4096, maxArea: 16_000_000 } as const;
+export const CANVAS_LIMIT = { maxEdge: 4096, maxEdgeLong: 16_384, maxArea: 16_000_000 } as const;
 
-/** 写真を検出・モザイクに使う canvas の大きさ（長辺 4096px かつ面積 16MP 以下。大きくはしない）。 */
+/**
+ * 写真を検出・モザイクに使う canvas の大きさ。面積 16MP 以下、長辺は 4096px（縦横比 2 超なら 16384px）以下。大きくはしない。
+ * limit を渡したときはそれをそのまま使う。
+ */
 export function fitCanvasSize(
   width: number,
   height: number,
-  limit: { maxEdge: number; maxArea: number } = CANVAS_LIMIT
+  limit?: FitLimit
 ): { width: number; height: number; scale: number } {
-  if (!(width > 0 && height > 0)) return { width: 0, height: 0, scale: 0 };
-  const scale = Math.min(1, limit.maxEdge / Math.max(width, height), Math.sqrt(limit.maxArea / (width * height)));
-  // 丸めで上限を越えないよう切り捨てる
-  let w = Math.max(1, Math.floor(width * scale));
-  let h = Math.max(1, Math.floor(height * scale));
-  while (w * h > limit.maxArea) {
-    w = Math.max(1, w - 1);
-    h = Math.max(1, Math.floor((w * height) / width));
-  }
-  return { width: w, height: h, scale: w / width };
+  const lim =
+    limit ??
+    (aspectOf(width, height) > LONG_ASPECT
+      ? { maxEdge: CANVAS_LIMIT.maxEdgeLong, maxArea: CANVAS_LIMIT.maxArea }
+      : { maxEdge: CANVAS_LIMIT.maxEdge, maxArea: CANVAS_LIMIT.maxArea });
+  return fitSize(width, height, lim);
 }
 
 /** 空の canvas か見る場所（縦横 3×3 の 9 か所・各 4×4px）。 */

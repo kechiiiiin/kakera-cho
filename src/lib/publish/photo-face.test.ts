@@ -160,14 +160,26 @@ describe('顔モザイクの決まり', () => {
 });
 
 describe('検出・モザイクに使う canvas と区画（2026-10-12 レビュー）', () => {
-  it('縮小: 長辺 4096px かつ面積 16MP 以下。小さい写真は大きくしない', () => {
+  it('縮小: 面積 16MP 以下・長辺 4096px（縦横比 2 超は 16384px）以下。小さい写真は大きくしない', () => {
     const big = fitCanvasSize(6000, 4000); // 24MP
     expect(big.width).toBeLessThanOrEqual(4096);
     expect(big.width * big.height).toBeLessThanOrEqual(16_000_000);
     expect(Math.abs(big.width / big.height - 1.5)).toBeLessThan(0.01);
-    const tall = fitCanvasSize(3000, 9000); // 長辺で効く
-    expect(tall.height).toBe(4096);
-    expect(tall.width).toBe(1365);
+    const narrow = fitCanvasSize(3000, 5000); // 縦横比 2 以下は長辺 4096px で効く
+    expect(narrow.height).toBe(4096);
+    expect(narrow.width).toBe(2457);
+    // 縦横比 2 超は長辺を 16384px まで緩め、面積で効く（2026-10-12 縦長画像で変更。以前は 1365×4096）
+    const tall = fitCanvasSize(3000, 9000);
+    expect(tall).toMatchObject({ width: 2309, height: 6928 });
+    expect(tall.width * tall.height).toBeLessThanOrEqual(16_000_000);
+    // 1:15 のスクリーンショット（以前は 273×4096）
+    const shot = fitCanvasSize(1290, 19350);
+    expect(shot).toMatchObject({ width: 1032, height: 15491 });
+    expect(shot.width * shot.height).toBeLessThanOrEqual(16_000_000);
+    // 面積が小さくても長辺 16384px は越えない
+    expect(fitCanvasSize(400, 30000)).toMatchObject({ width: 218, height: 16384 });
+    // 上限を明示して渡したときはそれをそのまま使う
+    expect(fitCanvasSize(3000, 9000, { maxEdge: 4096, maxArea: 16_000_000 })).toMatchObject({ width: 1365, height: 4096 });
     const square = fitCanvasSize(4096, 4096); // 面積で効く
     expect(square.width * square.height).toBeLessThanOrEqual(16_000_000);
     expect(square.width).toBe(4000);
@@ -229,6 +241,29 @@ describe('検出・モザイクに使う canvas と区画（2026-10-12 レビュ
     // 細長い写真は短い辺を 1 区画のまま（1024 の段）
     const thin = faceTiles(3000, 600, [1024]);
     expect(thin.every((t) => t.y === 0 && t.h === 600)).toBe(true);
+  });
+
+  it('区画: 縦長の画像でも区画数は普通の写真と同じ桁に収まる（2026-10-12 縦長画像）', () => {
+    // 面積を 16MP に抑えているので、区画数は面積にほぼ比例して頭打ちになる（普通の写真 4032×3024 で 150）
+    const count = (w: number, h: number) => {
+      const c = fitCanvasSize(w, h);
+      return faceTiles(c.width, c.height).length;
+    };
+    expect(count(4032, 3024)).toBe(150);
+    expect(count(1290, 19350)).toBe(191); // 1032×15491
+    expect(count(1290, 19000)).toBe(238); // 1042×15351（384 の段が横 4 列になる）
+    expect(count(894, 13416)).toBe(149); // アップロード時に縮めた 1290×19350
+    for (const [w, h] of [[1290, 19350], [1290, 19000], [1000, 16000], [400, 30000], [3000, 6200], [3000, 9000], [4000, 4000]] as const) {
+      expect(count(w, h)).toBeLessThanOrEqual(260);
+    }
+    // 縦長でも区画は画像の内側で、端まで覆う
+    const c = fitCanvasSize(1290, 19350);
+    const tiles = faceTiles(c.width, c.height);
+    for (const t of tiles) {
+      expect(t.x + t.w).toBeLessThanOrEqual(c.width);
+      expect(t.y + t.h).toBeLessThanOrEqual(c.height);
+    }
+    expect(Math.max(...tiles.map((t) => t.y + t.h))).toBe(c.height);
   });
 
   it('区画ごとの検出をまとめる: 区画の重なりで二重に拾った顔は一つになり、離れた小さい顔は全部残る', () => {

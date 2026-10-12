@@ -5,7 +5,8 @@
 //   - 版は固定（package.json の @mediapipe/tasks-vision と wasm・モデルの URL を揃える。photo-face.ts の FACE_MODEL）
 //   - しきい値は 0.4。拾いすぎる側に倒す。full range でも入力は 192px に縮むので、
 //     写真全体の 1 回に加えて、1024px と 384px の区画をそれぞれ 2 割重ねて検出し、重なった枠は IoU でまとめる（faceTiles）
-//   - 写真は長辺 4096px・面積 16MP 以下に縮めた canvas に描き、検出にもモザイクにも同じ大きさを使う（fitCanvasSize）。
+//   - 写真は面積 16MP・長辺 4096px（縦横比 2 超の細長い画像は 16384px・2026-10-12 縦長画像で変更）以下に縮めた canvas に描き、
+//     検出にもモザイクにも同じ大きさを使う（fitCanvasSize）。
 //     iOS Safari は大きすぎる canvas を黙って空にするため。描けていない（空の）canvas なら検出できなかったことにする
 //     （調べ済みの印を付けない＝書き出しが止まる）
 //   - canvas から作り直した JPEG には EXIF が載らない
@@ -52,7 +53,7 @@ function loadDetector(): Promise<FaceDetector> {
 }
 
 /**
- * 原本を読んで、向きを直し、上限（長辺 4096px・面積 16MP）の内側に縮めた canvas にする。
+ * 原本を読んで、向きを直し、上限（面積 16MP・長辺 4096px、細長い画像は 16384px）の内側に縮めた canvas にする。
  * ⚠️ <img> 経由で描く（今の Safari・Chrome は EXIF の向きを当てて描く）。画面に見えている向きと枠の位置を揃える。
  * ⚠️ 描けていない（空の）canvas なら投げる。空のまま検出すると「顔 0 件」になり、素顔の原本が出てしまう。
  */
