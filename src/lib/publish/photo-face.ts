@@ -1,0 +1,288 @@
+// 写真の顔を、日記に出すときだけ隠す（顔モザイク設計）。
+// 画面とサーバの両方から使うので、DOM にも Workers の API にも依存しない。データを返すだけ。
+//
+// 決まり:
+//  - 隠すのは公開するときだけ。原本（kakera-photos）には手を入れず、公開用 images へのコピーにだけモザイクをかける
+//  - 枠は**写真の key**に紐づける（かけら単位ではない）。同じ写真が別のかたちに入っても、決めた隠し方を引き継ぐ
+//  - 見つけた顔は最初から全部「隠す」（shown = false）。画面で顔ごとに「出す」へ切り替えられる
+//  - 座標は写真に対する 0〜1 の比率。小数 4 桁に丸めて持つ（画面とサーバで同じ指紋になるように）
+//  - 「枠の指紋」は隠す枠の集合から作るハッシュ（8 桁）。枠を直せば指紋が変わり、モザイク済みの版も公開 key も変わる
+
+/** 顔の枠 1 つ。 */
+export interface PhotoFace {
+  /** 写真の中での id（自動は a…・手で足した枠は m…） */
+  id: string;
+  /** 写真に対する比率（0〜1）。左上と大きさ */
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  source: 'auto' | 'manual';
+  /** true = 出す（隠さない）。見つけた顔も描いた枠も false で始まる */
+  shown: boolean;
+}
+
+/** 写真 1 枚の顔の状態（画面へ返す形）。 */
+export interface PhotoFaceState {
+  /** kakera-photos の key */
+  key: string;
+  /** 顔の検出が済んでいるか（顔が 0 件でも済んでいれば true） */
+  scanned: boolean;
+  faces: PhotoFace[];
+  /** 隠す枠の指紋。隠す枠が無ければ null（原本をそのまま出す） */
+  fp: string | null;
+  /** いまの指紋に合うモザイク済みの版が非公開バケットにあるか */
+  masked: boolean;
+}
+
+/** 検出に使ったモデルの名前（photo_face_scan.model に残す）。変えるときは版を上げる。 */
+export const FACE_MODEL = 'mediapipe-tasks-vision@0.10.35/blaze_face_full_range/float16/1@0.4';
+
+/** 写真 1 枚に持てる枠の数の上限（拾いすぎても困らない程度に大きく）。 */
+export const MAX_FACES = 200;
+
+/** モザイクのかけ方（§3.3）。変えたら指紋の版も上げる（古い版を作り直させる）。 */
+export const MOSAIC = {
+  /** 枠を上下左右に広げる割合 */
+  expand: 0.2,
+  /** ブロックの大きさ = 顔の幅（px）÷ これ */
+  blockDiv: 8,
+  /** ブロックの最小（px） */
+  minBlock: 8,
+  version: 'v1',
+} as const;
+
+/** 顔の検出・モザイクをかける写真か（かけらに貼った写真だけ。リンクカードの画像 kakera/cards/… は対象外）。 */
+export function isFacePhotoKey(key: string): boolean {
+  return /^kakera\/\d{4}\/\d{2}\/[A-Za-z0-9_.-]+$/.test(key) && !key.includes('..');
+}
+
+const round4 = (n: number): number => Math.round(n * 10000) / 10000;
+const clamp01 = (n: number): number => Math.min(1, Math.max(0, n));
+
+/** 比率の枠を、写真の内側に収めて小数 4 桁に丸める。小さすぎる・はみ出しきった枠は null。 */
+export function normalizeBox(b: { x: number; y: number; w: number; h: number }): { x: number; y: number; w: number; h: number } | null {
+  if (![b.x, b.y, b.w, b.h].every((n) => Number.isFinite(n))) return null;
+  const x0 = clamp01(b.x);
+  const y0 = clamp01(b.y);
+  const x1 = clamp01(b.x + b.w);
+  const y1 = clamp01(b.y + b.h);
+  const x = round4(x0);
+  const y = round4(y0);
+  const w = round4(x1 - x0);
+  const h = round4(y1 - y0);
+  if (w < 0.002 || h < 0.002) return null;
+  return { x, y, w, h };
+}
+
+/** 画面・API から届いた枠を形だけ検める。形が違えば null（どれか一つでも崩れていたら全体を受け付けない）。 */
+export function parseFaces(raw: unknown): PhotoFace[] | null {
+  if (!Array.isArray(raw) || raw.length > MAX_FACES) return null;
+  const out: PhotoFace[] = [];
+  const seen = new Set<string>();
+  for (const c of raw) {
+    if (!c || typeof c !== 'object') return null;
+    const o = c as Record<string, unknown>;
+    if (typeof o.id !== 'string' || !/^[am][A-Za-z0-9-]{0,40}$/.test(o.id) || seen.has(o.id)) return null;
+    if (o.source !== 'auto' && o.source !== 'manual') return null;
+    if (typeof o.shown !== 'boolean') return null;
+    const box = normalizeBox({ x: Number(o.x), y: Number(o.y), w: Number(o.w), h: Number(o.h) });
+    if (!box) return null;
+    seen.add(o.id);
+    out.push({ id: o.id, ...box, source: o.source, shown: o.shown });
+  }
+  return out;
+}
+
+/** 隠す枠（出すにした枠を除く）。 */
+export function hiddenFaces(faces: PhotoFace[]): PhotoFace[] {
+  return faces.filter((f) => !f.shown);
+}
+
+/**
+ * 隠す枠の指紋（SHA-256 の先頭 8 桁）。隠す枠が無ければ null。
+ * 並び順・出す枠・id の振り方には左右されない（隠す範囲が同じなら同じ指紋）。
+ */
+export async function faceFingerprint(faces: PhotoFace[]): Promise<string | null> {
+  const hidden = hiddenFaces(faces)
+    .map((f) => [f.x, f.y, f.w, f.h].map((n) => round4(n).toFixed(4)).join(','))
+    .sort();
+  if (!hidden.length) return null;
+  const text = `${MOSAIC.version}|${hidden.join('|')}`;
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return [...new Uint8Array(digest)]
+    .slice(0, 4)
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+export function isFingerprint(s: unknown): s is string {
+  return typeof s === 'string' && /^[0-9a-f]{8}$/.test(s);
+}
+
+/** 拡張子を除いた名前（kakera/2026/10/12_1432_<ULID>_1.jpg → 2026/10/12_1432_<ULID>_1）。 */
+function stemOf(key: string): string {
+  return key.replace(/^kakera\//, '').replace(/\.[A-Za-z0-9]+$/, '');
+}
+
+/** モザイク済みの版の key（非公開バケット）。例: kakera/masked/2026/10/12_1432_<ULID>_1.<指紋>.jpg */
+export function maskedKeyFor(key: string, fp: string): string {
+  return `kakera/masked/${stemOf(key)}.${fp}.jpg`;
+}
+
+/**
+ * モザイク済みの版の公開 key。指紋を入れる（例: diary/2026/10/12_1432_<ULID>_1.m-<指紋>.jpg）。
+ * ⚠️ 同じ key を上書きすると、CDN に素顔の版が残って見え続けるおそれがある。だから枠を直すたびに key を変える。
+ */
+export function maskedPublicKeyFor(key: string, fp: string): string {
+  return `diary/${stemOf(key)}.m-${fp}.jpg`;
+}
+
+/**
+ * その写真の公開 key が取りうる前方一致（素顔の版 `<名前>.<拡張子>` もモザイクの版 `<名前>.m-<指紋>.jpg` も拾う）。
+ * 末尾の `.` まで含めるので、`_1.` が `_10.` を拾うことはない。
+ */
+export function publicPrefixFor(key: string): string {
+  return `diary/${stemOf(key)}.`;
+}
+
+/* ---------------- モザイクの範囲 ---------------- */
+
+/** 原寸（px）でモザイクをかける四角とブロックの大きさ（§3.3: 枠を 20% 広げる・ブロックは顔の幅の 1/8、最小 8px）。 */
+export function mosaicRect(f: { x: number; y: number; w: number; h: number }, width: number, height: number): {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  block: number;
+} {
+  const fw = f.w * width;
+  const fh = f.h * height;
+  const x0 = Math.max(0, Math.floor(f.x * width - fw * MOSAIC.expand));
+  const y0 = Math.max(0, Math.floor(f.y * height - fh * MOSAIC.expand));
+  const x1 = Math.min(width, Math.ceil(f.x * width + fw * (1 + MOSAIC.expand)));
+  const y1 = Math.min(height, Math.ceil(f.y * height + fh * (1 + MOSAIC.expand)));
+  const block = Math.max(MOSAIC.minBlock, Math.round(fw / MOSAIC.blockDiv));
+  return { x: x0, y: y0, w: Math.max(0, x1 - x0), h: Math.max(0, y1 - y0), block };
+}
+
+/**
+ * RGBA の画素列の四角い範囲を、ブロックごとの平均色で塗りつぶす（その場で書き換える）。
+ * ぼかしではなくモザイクにして、元に戻せない粗さを保つ（§3.3）。
+ */
+export function pixelate(
+  data: Uint8ClampedArray,
+  width: number,
+  rect: { x: number; y: number; w: number; h: number; block: number }
+): void {
+  const { block } = rect;
+  for (let by = rect.y; by < rect.y + rect.h; by += block) {
+    for (let bx = rect.x; bx < rect.x + rect.w; bx += block) {
+      const ex = Math.min(bx + block, rect.x + rect.w);
+      const ey = Math.min(by + block, rect.y + rect.h);
+      let r = 0;
+      let g = 0;
+      let b = 0;
+      let a = 0;
+      let n = 0;
+      for (let y = by; y < ey; y++) {
+        for (let x = bx; x < ex; x++) {
+          const i = (y * width + x) * 4;
+          r += data[i]!;
+          g += data[i + 1]!;
+          b += data[i + 2]!;
+          a += data[i + 3]!;
+          n++;
+        }
+      }
+      if (!n) continue;
+      r = Math.round(r / n);
+      g = Math.round(g / n);
+      b = Math.round(b / n);
+      a = Math.round(a / n);
+      for (let y = by; y < ey; y++) {
+        for (let x = bx; x < ex; x++) {
+          const i = (y * width + x) * 4;
+          data[i] = r;
+          data[i + 1] = g;
+          data[i + 2] = b;
+          data[i + 3] = a;
+        }
+      }
+    }
+  }
+}
+
+/* ---------------- JPEG の検め ---------------- */
+
+/** JPEG か（先頭が SOI）。 */
+export function isJpeg(bytes: Uint8Array): boolean {
+  return bytes.length > 4 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+}
+
+/**
+ * JPEG に EXIF（APP1 の "Exif\0\0"）が載っているか。SOS（画素の始まり）までの区画だけ見る。
+ * 作り直した JPEG に EXIF を載せない（§3.3）ので、載っていたら受け取らない。
+ */
+export function hasExif(bytes: Uint8Array): boolean {
+  if (!isJpeg(bytes)) return false;
+  let i = 2;
+  while (i + 4 <= bytes.length) {
+    if (bytes[i] !== 0xff) return false; // 区画の頭が崩れている（ここから先は読まない）
+    const marker = bytes[i + 1]!;
+    if (marker === 0xd9 || marker === 0xda) return false; // EOI・SOS
+    if (marker === 0xff) {
+      i++;
+      continue;
+    }
+    if (marker >= 0xd0 && marker <= 0xd7) {
+      i += 2;
+      continue;
+    }
+    const len = (bytes[i + 2]! << 8) | bytes[i + 3]!;
+    if (marker === 0xe1 && len >= 8) {
+      const s = String.fromCharCode(...bytes.slice(i + 4, i + 10));
+      if (s === 'Exif\0\0') return true;
+    }
+    i += 2 + len;
+  }
+  return false;
+}
+
+/* ---------------- 検出した枠のまとめ ---------------- */
+
+/** 比率の枠の重なり（IoU）。 */
+export function iou(a: { x: number; y: number; w: number; h: number }, b: { x: number; y: number; w: number; h: number }): number {
+  const ix = Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x));
+  const iy = Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
+  const inter = ix * iy;
+  const union = a.w * a.h + b.w * b.h - inter;
+  return union > 0 ? inter / union : 0;
+}
+
+/**
+ * 写真全体と切り分けた区画の両方で検出した枠を一つにまとめる。
+ * 重なる枠（IoU 0.3 以上、または小さい方の 6 割以上が大きい方に入る）は、確からしさの高い方を残す。
+ * 残った枠に a1, a2, … の id を振り、全部「隠す」で始める。
+ */
+export function mergeDetections(found: { x: number; y: number; w: number; h: number; score: number }[]): PhotoFace[] {
+  const sorted = found
+    .map((f) => ({ ...f, box: normalizeBox(f) }))
+    .filter((f): f is typeof f & { box: NonNullable<typeof f.box> } => !!f.box)
+    .sort((a, b) => b.score - a.score);
+  const kept: (typeof sorted)[number][] = [];
+  for (const f of sorted) {
+    const dup = kept.some((k) => {
+      if (iou(k.box, f.box) >= 0.3) return true;
+      const ix = Math.max(0, Math.min(k.box.x + k.box.w, f.box.x + f.box.w) - Math.max(k.box.x, f.box.x));
+      const iy = Math.max(0, Math.min(k.box.y + k.box.h, f.box.y + f.box.h) - Math.max(k.box.y, f.box.y));
+      const small = Math.min(k.box.w * k.box.h, f.box.w * f.box.h);
+      return small > 0 && (ix * iy) / small >= 0.6;
+    });
+    if (!dup) kept.push(f);
+  }
+  return kept
+    .sort((a, b) => a.box.y - b.box.y || a.box.x - b.box.x)
+    .slice(0, MAX_FACES)
+    .map((f, i) => ({ id: `a${i + 1}`, ...f.box, source: 'auto' as const, shown: false }));
+}

@@ -6,6 +6,7 @@ import type { DocView } from '../lib/names/doc-db';
 import type { ChoiceAction, NameRef } from '../lib/names/doc';
 import type { NameEntry } from '../lib/names/replace';
 import type { PhotoChoice } from '../lib/publish/photo-choice';
+import type { PhotoFace, PhotoFaceState } from '../lib/publish/photo-face';
 import type { PublishBodyView } from '../lib/publish/publish-body';
 
 /** 記号一つの選択。 */
@@ -191,6 +192,25 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(input),
     }),
+
+  /* ---- 写真の顔（顔モザイク設計） ---- */
+
+  loadPhotoFaces: (keys: string[]) =>
+    req<{ photos: PhotoFaceState[] }>('/api/photo-face', {
+      method: 'POST',
+      body: JSON.stringify({ keys }),
+    }).then((r) => r.photos),
+
+  /** 写真 1 枚の枠を丸ごと入れ替える。model を付けると「検出が済んだ」印も付く */
+  savePhotoFaces: (input: { key: string; faces: PhotoFace[]; model?: string }) =>
+    req<{ photo: PhotoFaceState }>('/api/photo-face', {
+      method: 'PUT',
+      body: JSON.stringify(input),
+    }).then((r) => r.photo),
+
+  /** モザイク済みの JPEG を置く（form: key / fp / file） */
+  uploadMaskedPhoto: (form: FormData) =>
+    req<{ ok: true; masked_key: string }>('/api/photo-face/masked', { method: 'POST', body: form }),
 
   uploadPhoto: (form: FormData) =>
     req<{ key: string; url: string }>('/api/photo', { method: 'POST', body: form }),

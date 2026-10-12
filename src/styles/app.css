@@ -593,6 +593,58 @@ mark.search-hit { background: none; color: var(--accent); font-weight: 600; }
   font-size: 11px; padding: 2px 8px; margin-left: 6px; min-height: 32px; cursor: pointer;
 }
 
+/* ---- 写真の顔（顔モザイク設計 §3.5） ----
+   隠す枠はモザイクの見た目（ぼかし＋升目）、出す枠は細い線だけ。タップで切り替え。
+   囲むモードの間だけ touch-action: none にして、指のドラッグでスクロールさせない。
+   ⚠️ 見た目のモザイクは目安。公開されるのは書き出しの前に原寸で作るモザイク。 */
+.face-photo { min-width: 0; }
+.face-stage {
+  position: relative; width: 100%; border-radius: 2px; overflow: hidden; line-height: 0;
+  -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+}
+.face-stage img { width: 100%; height: auto; display: block; pointer-events: none; }
+.face-stage.drawing { touch-action: none; cursor: crosshair; outline: 1px dashed var(--accent); outline-offset: -1px; }
+.face-box {
+  position: absolute; box-sizing: border-box; cursor: pointer; -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.face-box.masked {
+  -webkit-backdrop-filter: blur(7px) saturate(.6); backdrop-filter: blur(7px) saturate(.6);
+  background-color: rgba(120, 116, 108, .25);
+  background-image:
+    linear-gradient(rgba(255,255,255,.18) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,.18) 1px, transparent 1px);
+  background-size: 9px 9px;
+  border: 1px solid rgba(255,255,255,.75);
+}
+.face-box.shown { border: 1px solid rgba(255,255,255,.9); box-shadow: 0 0 0 1px rgba(23,23,26,.45); }
+.face-box.manual.masked { border-style: dashed; }
+.face-box:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.face-stage.drawing .face-box { pointer-events: none; }
+.face-del {
+  position: absolute; top: -1px; right: -1px; width: 26px; height: 26px; padding: 0; line-height: 1;
+  border: none; border-radius: 0 0 0 2px; background: rgba(23,23,26,.72); color: #fdfdfc;
+  font-size: 15px; cursor: pointer;
+}
+.face-draft { position: absolute; border: 2px dashed var(--accent); background: rgba(176,58,46,.12); pointer-events: none; }
+.face-bar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0;
+  padding: 6px 2px 2px; font-size: 12px; color: var(--muted);
+}
+.face-status { flex: 1 1 auto; min-width: 0; }
+.face-status b { color: var(--fg); margin: 0 2px; }
+.face-err { color: var(--accent); }
+.face-btn {
+  border: 1px solid var(--line); background: transparent; color: var(--fg); border-radius: 1px;
+  font-size: 12px; padding: 4px 10px; min-height: 36px; cursor: pointer; flex-shrink: 0;
+}
+.face-btn.on { border-color: var(--accent); color: var(--accent); }
+.face-btn:disabled { opacity: .4; cursor: default; }
+.face-hint { font-size: 11px; color: var(--muted); margin: 2px 0 0; }
+.tally .t-face { white-space: nowrap; }
+.tally .t-face b { margin-right: 0; }
+.tally .t-face .t-slash { margin: 0 6px; }
+
 /* ---- 印（状態で描き分ける） ----
    辞書どおり … 灰の細い実線の下線だけ。静か。
    手で直した … 黒の点線の下線 ＋ 薄い地。

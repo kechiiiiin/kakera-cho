@@ -20,7 +20,10 @@ import {
 } from '../lib/names/doc';
 import { assembleNikki, type Assembled } from '../lib/names/assemble';
 import { hiddenKeysOf, hiddenPhotoSpans, overlapsAny, photoKeysIn, type PhotoChoice } from '../lib/publish/photo-choice';
+import { FACE_MODEL, faceFingerprint, hiddenFaces, isFacePhotoKey, type PhotoFace, type PhotoFaceState } from '../lib/publish/photo-face';
 import { api, type PublishNikkiInput, type RefChoiceInput } from './api';
+import { detectFaces, makeMaskedJpeg } from './faces';
+import { FacePhoto } from './FacePhoto';
 import { timeOf } from './format';
 import { RichText } from './RichText';
 import { MarkedBody, renderSpan, type MarkRender, type PhotoToggle } from './NameMarks';
@@ -32,6 +35,9 @@ import { MarkedBody, renderSpan, type MarkRender, type PhotoToggle } from './Nam
  *  選択は記号ごとに D1 へ覚える（押すたびにその記号だけ保存）。拒否が残ったまま書き出すときは念押しを出す。
  *  原本・タイトル・説明を直しても白紙に戻らない。直した場所の名前だけ辞書どおりに戻り、どの名前かを知らせる。
  *  写真: 写真ごとに「日記に出す／出さない」。選択は写真の key に紐づけて D1 へ覚える。
+ *  顔（顔モザイク設計）: 日記に出す写真ごとに顔を検出し（1 枚 1 回・結果は D1）、見つけた顔は全部「隠す」で始める。
+ *  枠をタップで隠す／出す、「囲む」で枠を足す。書き出す前に、隠す枠のある写真のモザイク済みの版を原寸で作って置く。
+ *  検出モデルは faces.ts が初めて呼ばれたときに読み込む（他の画面は重くならない）。
  *  日記用に直す: かけらごとに、日記に出す文だけを書き換えられる（原本は触らない）。欄は置き換え済みの文で開き、
  *  保存すると差分で名前を記号に戻す（触らなかった名前の選択は残る）。原本が変わったら「原本が変わっています」。
  *
@@ -128,6 +134,26 @@ export function ConvertScreen({
   /** 「日記用に直す」を開いているかけら（initial = 開いたときの文。保存でサーバに base として送る） */
   const [pbEdit, setPbEdit] = useState<{ seg: string; draft: string; initial: string } | null>(null);
   const [pbBusy, setPbBusy] = useState(false);
+  /** 写真の key → 顔の枠（日記に出す写真だけ読む） */
+  const [faces, setFaces] = useState<Record<string, PhotoFaceState>>({});
+  /** 検出に失敗した写真の key → 理由 */
+  const [faceErrors, setFaceErrors] = useState<Record<string, string>>({});
+  /** いま検出している写真の key（1 枚ずつ順に） */
+  const [scanning, setScanning] = useState<string | null>(null);
+  /** 書き出しの手前でモザイクを作っている間の表示 */
+  const [busyLabel, setBusyLabel] = useState<string | null>(null);
+  const facesRef = useRef(faces);
+  facesRef.current = faces;
+  const faceErrorsRef = useRef(faceErrors);
+  faceErrorsRef.current = faceErrors;
+  const scanningRef = useRef<string | null>(null);
+  /** 顔を調べる写真（描くたびに描画の中で決め直す。下の pumpFaces が読む） */
+  const wantFacesRef = useRef<string[]>([]);
+  /** サーバへ枠を読みに行った写真 */
+  const requestedFaces = useRef(new Set<string>());
+  /** 枠の保存の並び（写真ごとの版。古い保存の返事で新しい枠を戻さない） */
+  const faceChain = useRef<Promise<void>>(Promise.resolve());
+  const faceVer = useRef(new Map<string, number>());
 
   useEffect(() => {
     let alive = true;
@@ -186,6 +212,38 @@ export function ConvertScreen({
     // 「手で直す」を開いた瞬間だけ入力欄に寄せる
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sheet?.type === 'mark' && sheet.editing]);
+
+  // 日記に出す写真の顔の枠を読み、まだ調べていない写真を 1 枚ずつ検出する（描くたびに続きを進める）
+  useEffect(() => {
+    const want = wantFacesRef.current;
+    const unknown = want.filter((k) => !requestedFaces.current.has(k));
+    if (unknown.length) {
+      unknown.forEach((k) => requestedFaces.current.add(k));
+      api
+        .loadPhotoFaces(unknown)
+        .then((list) => setFaces((f) => ({ ...f, ...Object.fromEntries(list.map((st) => [st.key, st])) })))
+        .catch((e: unknown) => {
+          const msg = e instanceof Error ? e.message : String(e);
+          setFaceErrors((m) => ({ ...m, ...Object.fromEntries(unknown.map((k) => [k, msg])) }));
+        });
+    }
+    if (scanningRef.current) return;
+    const next = want.find((k) => {
+      const st = facesRef.current[k];
+      return st && !st.scanned && !faceErrorsRef.current[k];
+    });
+    if (!next) return;
+    scanningRef.current = next;
+    setScanning(next);
+    detectFaces(next)
+      .then((found) => api.savePhotoFaces({ key: next, faces: found, model: FACE_MODEL }))
+      .then((st) => setFaces((f) => ({ ...f, [next]: st })))
+      .catch((e: unknown) => setFaceErrors((m) => ({ ...m, [next]: e instanceof Error ? e.message : String(e) })))
+      .finally(() => {
+        scanningRef.current = null;
+        setScanning(null);
+      });
+  });
 
   const back = (
     <div class="back-row">
@@ -288,9 +346,25 @@ export function ConvertScreen({
   const dropsOf = (s: Seg) => (isHead(s.seg) ? [] : hiddenPhotoSpans(s.text, hiddenKeysOf(photos, s.seg), s.tokens));
 
   const photoCount = { shown: 0, hidden: 0 };
+  const wantFaces = new Set<string>();
   for (const s of bodySegs) {
     const hidden = hiddenKeysOf(photos, s.seg);
-    for (const key of photoKeysIn(s.text, s.tokens)) photoCount[hidden.has(key) ? 'hidden' : 'shown']++;
+    for (const key of photoKeysIn(s.text, s.tokens)) {
+      photoCount[hidden.has(key) ? 'hidden' : 'shown']++;
+      // 「出さない」にした写真は検出もモザイクもしない
+      if (!hidden.has(key) && isFacePhotoKey(key)) wantFaces.add(key);
+    }
+  }
+  wantFacesRef.current = [...wantFaces];
+  const faceCount = { hidden: 0, shown: 0, pending: 0 };
+  for (const key of wantFaces) {
+    const st = faces[key];
+    if (!st?.scanned) faceCount.pending++;
+    else {
+      const h = hiddenFaces(st.faces).length;
+      faceCount.hidden += h;
+      faceCount.shown += st.faces.length - h;
+    }
   }
 
   const counts = { dict: 0, edit: 0, reject: 0, exc: 0 };
@@ -327,6 +401,59 @@ export function ConvertScreen({
       .then(() => api.savePhotoChoices(katachiId, { kakera_ids: order, photos: next }))
       .then(() => undefined)
       .catch(sayError('写真の選択を保存できませんでした: '));
+  }
+
+  /** 写真 1 枚の枠を差し替える（画面はすぐ変え、保存は順に。モザイク済みの版は作り直しになる）。 */
+  function changeFaces(key: string, next: PhotoFace[]): void {
+    const ver = (faceVer.current.get(key) ?? 0) + 1;
+    faceVer.current.set(key, ver);
+    setFaces((f) => (f[key] ? { ...f, [key]: { ...f[key]!, faces: next, masked: false } } : f));
+    faceChain.current = faceChain.current
+      .then(() => api.savePhotoFaces({ key, faces: next }))
+      .then((st) => {
+        if (faceVer.current.get(key) === ver) setFaces((f) => ({ ...f, [key]: st }));
+      })
+      .catch(sayError('顔の枠を保存できませんでした: '));
+  }
+
+  function retryFaces(key: string): void {
+    if (!facesRef.current[key]) requestedFaces.current.delete(key);
+    setFaceErrors((m) => {
+      const { [key]: _drop, ...rest } = m;
+      return rest;
+    });
+  }
+
+  /**
+   * 書き出しの手前: 日記に出す写真の顔の検出が済んでいるか確かめ、隠す枠のある写真のモザイク済みの版を作って置く。
+   * サーバも同じことを検めて止める（ここは早めに知らせて、版を用意するため）。
+   */
+  async function prepareMasks(): Promise<boolean> {
+    await faceChain.current;
+    const want = wantFacesRef.current;
+    const pending = want.filter((k) => !facesRef.current[k]?.scanned);
+    if (pending.length) {
+      say(`顔を調べ終わっていない写真が ${pending.length} 枚あります。終わってから書き出してください。`);
+      return false;
+    }
+    const todo: { key: string; faces: PhotoFace[]; fp: string }[] = [];
+    for (const key of want) {
+      const st = facesRef.current[key]!;
+      const fp = await faceFingerprint(st.faces);
+      if (fp && !(st.masked && st.fp === fp)) todo.push({ key, faces: st.faces, fp });
+    }
+    for (const [i, t] of todo.entries()) {
+      setBusyLabel(`モザイクをかけています（${i + 1}／${todo.length}）`);
+      const blob = await makeMaskedJpeg(t.key, t.faces);
+      if (!blob) continue;
+      const form = new FormData();
+      form.append('key', t.key);
+      form.append('fp', t.fp);
+      form.append('file', new File([blob], 'masked.jpg', { type: 'image/jpeg' }));
+      await api.uploadMaskedPhoto(form);
+      setFaces((f) => (f[t.key] ? { ...f, [t.key]: { ...f[t.key]!, fp: t.fp, masked: true } } : f));
+    }
+    return true;
   }
 
   /** 画面の文書の記号一つを差し替える（その記号だけサーバへ保存する）。 */
@@ -429,6 +556,19 @@ export function ConvertScreen({
       setPhotos(next);
       persistPhotos(next);
     },
+    renderPhoto: (key, src) =>
+      isFacePhotoKey(key) ? (
+        <FacePhoto
+          src={src}
+          state={faces[key] ?? null}
+          scanning={scanning === key}
+          error={faceErrors[key] ?? null}
+          onChange={(next) => changeFaces(key, next)}
+          onRetry={() => retryFaces(key)}
+        />
+      ) : (
+        <img src={src} alt="" loading="lazy" />
+      ),
   });
 
   const renderOf = (s: Seg): MarkRender => ({
@@ -453,6 +593,14 @@ export function ConvertScreen({
     setBusy(true);
     try {
       await saveChain.current;
+      try {
+        if (!(await prepareMasks())) return;
+      } catch (e) {
+        sayError('モザイクをかけた写真を用意できませんでした: ')(e);
+        return;
+      } finally {
+        setBusyLabel(null);
+      }
       await onPublish({
         kakera_ids: order,
         title: titleInput,
@@ -552,6 +700,14 @@ export function ConvertScreen({
               <b>{photoCount.hidden}</b>
             </span>
           ) : null}
+          {wantFaces.size ? (
+            <span class="t-face">
+              顔 隠す<b>{faceCount.hidden}</b>
+              <span class="t-slash">／</span>
+              出す<b>{faceCount.shown}</b>
+              {faceCount.pending ? <span class="t-pending">（調べています {faceCount.pending}）</span> : null}
+            </span>
+          ) : null}
         </div>
       ) : null}
 
@@ -579,7 +735,7 @@ export function ConvertScreen({
         </>
       ) : view === 'plain' ? (
         <>
-          <p class="plain-note">公開されたら、こう読めます（印なし）。</p>
+          <p class="plain-note">公開されたら、こう読めます（印なし）。顔のモザイクは、書き出すときに写真へかかります（ここでは素顔のまま）。</p>
           {assembled ? (
             <>
               <p class="title-out">{titleOut || detail.katachi.date}</p>
@@ -738,7 +894,7 @@ export function ConvertScreen({
           disabled={busy || !chosen.length || composedEmpty || cannotExport || !!pbEdit || pbBusy}
           onClick={() => (rejects.length ? setSheet({ type: 'confirm' }) : void publish(false))}
         >
-          {busy ? '書き出しています' : '書き出す'}
+          {busy ? (busyLabel ?? '書き出しています') : '書き出す'}
         </button>
         <p class="form-note export-note">ここで選んだことは日記にだけ効きます。かけらの原本は実名のまま残ります。</p>
       </div>

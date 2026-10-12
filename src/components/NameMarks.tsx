@@ -9,6 +9,8 @@ import { keyFromPhotoUrl } from '../lib/publish/photos';
 export interface PhotoToggle {
   hidden: (key: string) => boolean;
   onToggle: (key: string) => void;
+  /** 日記に出す写真の描き方を差し替える（顔の枠を重ねる・顔モザイク設計）。無ければ素の <img> */
+  renderPhoto?: (key: string, src: string) => JSX.Element;
 }
 
 /**
@@ -214,7 +216,7 @@ export function MarkedBody({
       <>
         {src ? (
           <div class={imgClass}>
-            <img src={src} alt="" loading="lazy" />
+            {pk && !off && photo?.renderPhoto ? photo.renderPhoto(pk, src) : <img src={src} alt="" loading="lazy" />}
           </div>
         ) : null}
         {pk && photo ? <PhotoSwitch photoKey={pk} p={photo} /> : null}

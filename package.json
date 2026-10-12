@@ -31,11 +31,14 @@
     "db:migrate:name-doc:local": "wrangler d1 execute kakera --local --file=./migrations/0009_name_doc.sql",
     "db:migrate:name-doc:remote": "wrangler d1 execute kakera --remote --file=./migrations/0009_name_doc.sql",
     "db:migrate:drop-position-choice:local": "wrangler d1 execute kakera --local --file=./migrations/0010_drop_position_choice.sql",
-    "db:migrate:drop-position-choice:remote": "wrangler d1 execute kakera --remote --file=./migrations/0010_drop_position_choice.sql"
+    "db:migrate:drop-position-choice:remote": "wrangler d1 execute kakera --remote --file=./migrations/0010_drop_position_choice.sql",
+    "db:migrate:photo-face:local": "wrangler d1 execute kakera --local --file=./migrations/0011_photo_face.sql",
+    "db:migrate:photo-face:remote": "wrangler d1 execute kakera --remote --file=./migrations/0011_photo_face.sql"
   },
   "dependencies": {
     "@astrojs/cloudflare": "^12.6.10",
     "@astrojs/preact": "^4.1.1",
+    "@mediapipe/tasks-vision": "0.10.35",
     "astro": "^5.14.1",
     "jose": "^6.1.0",
     "k-editor": "github:kechiiiiin/k-editor#v0.2.1",
