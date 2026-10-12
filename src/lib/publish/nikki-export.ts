@@ -27,6 +27,7 @@ import { hiddenKeysOf, parsePhotoChoices, validatePhotoChoices, type PhotoChoice
 import { loadPhotoChoices, savePhotoChoices } from './photo-choice-db';
 import { photoBasisOf } from './publish-body';
 import type { PublishInput } from './astro-blog';
+import { timeHeadOf, type KakeraTimeHead } from '../kakera/time-label';
 
 export interface PreparedNikki {
   detail: KatachiDetail;
@@ -125,6 +126,10 @@ export async function prepareNikkiExport(db: D1Database, katachiId: string, inpu
   }
   if (sentPhotos) await savePhotoChoices(db, photoBasis, photos);
 
+  // 時刻の小見出し（かけら時刻表示設計・2026-10-12）。かたちの中で「時刻を出す」にしたかけらだけ。
+  // 時刻は今の kakera.written_at から、かたちの日付と違う日なら日付を添える（kakeraTimeLabel）
+  const timeHeads = timeHeadsFor(assembled.bodies, chosen, detail.katachi.date);
+
   return {
     detail,
     chosen,
@@ -135,7 +140,24 @@ export async function prepareNikkiExport(db: D1Database, katachiId: string, inpu
       description: assembled.description?.text ?? '',
       bodies,
       hiddenPhotoKeys: new Set(photos.map((p) => p.key)),
+      ...(timeHeads.some((h) => h) ? { timeHeads } : {}),
       alreadyPublished: !!detail.nikki,
     },
   };
+}
+
+/**
+ * 書き出す本文（assembleNikki の bodies・seg はかけらの id）と同じ並びで、時刻の小見出しを返す。
+ * 出さないかけら（チェックなし・かたちに見当たらない）は null。
+ */
+export function timeHeadsFor(
+  bodies: readonly { seg: string }[],
+  chosen: readonly Kakera[],
+  katachiDate: string
+): (KakeraTimeHead | null)[] {
+  const byId = new Map(chosen.map((k) => [k.id, k]));
+  return bodies.map((b) => {
+    const k = byId.get(b.seg);
+    return k ? timeHeadOf(k, katachiDate) : null;
+  });
 }

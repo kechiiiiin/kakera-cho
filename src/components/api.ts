@@ -104,8 +104,16 @@ export const api = {
 
   katachi: (id: string) => req<KatachiDetail>(`/api/katachi/${id}`),
 
-  createKatachi: (input: { id: string; date: string; title: string; kakera_ids: string[] }) =>
+  /** show_time_ids = 時刻を出すかけら（かたちにする画面でチェックしたもの） */
+  createKatachi: (input: { id: string; date: string; title: string; kakera_ids: string[]; show_time_ids: string[] }) =>
     req<KatachiDetail>('/api/katachi', { method: 'POST', body: JSON.stringify(input) }),
+
+  /** かたちの中のかけらに「時刻を出す」を付ける／外す（1枚でも全部でも）。戻りはかたちの詳細 */
+  setShowTime: (katachiId: string, kakeraIds: string[], show: boolean) =>
+    req<KatachiDetail>(`/api/katachi/${katachiId}/show-time`, {
+      method: 'PUT',
+      body: JSON.stringify({ kakera_ids: kakeraIds, show }),
+    }),
 
   updateKatachi: (id: string, patch: { date?: string; title?: string; description?: string; move_nikki?: boolean }) =>
     req<KatachiDetail>(`/api/katachi/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),

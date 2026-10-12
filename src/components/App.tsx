@@ -256,6 +256,7 @@ export default function App(): JSX.Element {
                   date: input.date,
                   title: input.title,
                   kakera_ids: input.kakera_ids,
+                  show_time_ids: input.show_time_ids,
                 });
                 await Promise.all([loadNagare(), loadKatachiList()]);
                 setDetail(created);
@@ -336,6 +337,12 @@ export default function App(): JSX.Element {
                 setDetail(await api.updateKatachi(view.id, moveNikki ? { date, move_nikki: true } : { date }));
                 await loadKatachiList();
                 say(moveNikki ? '日付を変えました。公開中の日記も新しい日付・URL に移しました' : '日付を変えました');
+              })
+            }
+            onSetShowTime={(ids, show) =>
+              guard(async () => {
+                // 「時刻を出す」はかたちの中での見せ方。公開中の日記は次に書き出したときに変わる
+                setDetail(await api.setShowTime(view.id, ids, show));
               })
             }
             onChangeTitle={(title) =>

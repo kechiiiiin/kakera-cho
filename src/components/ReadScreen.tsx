@@ -6,10 +6,13 @@ import { KakeraPickSheet } from './PickSheets';
 import { dateHeading, dateLiterary } from './format';
 import { RichText } from './RichText';
 import { KakeraEdit } from './KakeraEdit';
+import { TimeBulkBar, TimeToggle } from './TimeToggle';
+import { kakeraTimeLabel } from '../lib/kakera/time-label';
 
 /**
  * かたちを読む。
- *  明朝の組版。⚠️ 時刻は出さない。かけらの間は手書き風の罫（CSS の ::after）。
+ *  明朝の組版。⚠️ 時刻は出さない——ただし「時刻を出す」にしたかけらだけ、本文の上に灰色・等幅で出す
+ *  （かけら時刻表示設計・2026-10-12。かたちの日付と違う日だけ日付を添える）。かけらの間は手書き風の罫（CSS の ::after）。
  *  ⚠️ 公開済みの印は出さない（読む場所は読むことに徹する）。
  *
  * 原本を直す場所はここしかないので編集の導線は要る（設計 §8「かたちに入ったかけらを直す」。
@@ -27,6 +30,7 @@ export function ReadScreen({
   onDissolve,
   onChangeDate,
   onChangeTitle,
+  onSetShowTime,
   nagare,
   nagareCards,
   nagareLoaded,
@@ -47,6 +51,8 @@ export function ReadScreen({
   onChangeDate: (date: string, moveNikki: boolean) => Promise<void>;
   /** かたちの題を変える（空なら題なし＝日付表示に戻る）。公開中の日記には触れない */
   onChangeTitle: (title: string) => Promise<void>;
+  /** 「時刻を出す」を付ける／外す（1枚でも全部でも）。失敗は呼び手が知らせる */
+  onSetShowTime: (ids: string[], show: boolean) => Promise<void>;
   /** 「かけらを足す」で選ぶ、まだかたちになっていないかけら */
   nagare: Kakera[];
   nagareCards: LinkCards;
@@ -63,9 +69,20 @@ export function ReadScreen({
   const [dateBusy, setDateBusy] = useState(false);
   const [titleDraft, setTitleDraft] = useState(detail.katachi.title ?? '');
   const [titleBusy, setTitleBusy] = useState(false);
+  const [timeBusy, setTimeBusy] = useState(false);
   const { katachi, kakera, nikki } = detail;
   // 題は1行。改行は空白にして前後を落とす
   const titleNorm = titleDraft.replace(/\s*[\r\n]+\s*/g, ' ').trim();
+
+  async function setTime(ids: string[], show: boolean): Promise<void> {
+    if (timeBusy) return;
+    setTimeBusy(true);
+    try {
+      await onSetShowTime(ids, show);
+    } finally {
+      setTimeBusy(false);
+    }
+  }
 
   return (
     <section>
@@ -165,6 +182,19 @@ export function ReadScreen({
         </div>
       ) : null}
 
+      {/* 時刻を出すかけらの「全部に付ける／全部外す」も編集モードのときだけ */}
+      {editing && kakera.length ? (
+        <>
+          <TimeBulkBar
+            shown={kakera.filter((k) => k.show_time).length}
+            total={kakera.length}
+            disabled={timeBusy}
+            onAll={(show) => void setTime(kakera.map((k) => k.id), show)}
+          />
+          {nikki ? <p class="read-date-note time-note">公開中の日記の時刻は、次に日記へ書き足すときに変わります</p> : null}
+        </>
+      ) : null}
+
       <div>
         {kakera.map((k) => (
           <div class="read-frag" key={k.id}>
@@ -184,6 +214,11 @@ export function ReadScreen({
               />
             ) : (
               <>
+                {k.show_time ? (
+                  <time class="read-time" dateTime={k.written_at}>
+                    {kakeraTimeLabel(k.written_at, katachi.date)}
+                  </time>
+                ) : null}
                 <RichText text={k.body} imgClass="read-photo" cards={detail.cards} />
                 {editing ? (
                 <div class="read-frag-tools">
@@ -200,6 +235,11 @@ export function ReadScreen({
                   >
                     かけらたちへ戻す
                   </button>
+                  <TimeToggle
+                    checked={!!k.show_time}
+                    disabled={timeBusy}
+                    onChange={(on) => void setTime([k.id], on)}
+                  />
                 </div>
                 ) : null}
               </>

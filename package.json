@@ -31,7 +31,9 @@
     "db:migrate:name-doc:local": "wrangler d1 execute kakera --local --file=./migrations/0009_name_doc.sql",
     "db:migrate:name-doc:remote": "wrangler d1 execute kakera --remote --file=./migrations/0009_name_doc.sql",
     "db:migrate:drop-position-choice:local": "wrangler d1 execute kakera --local --file=./migrations/0010_drop_position_choice.sql",
-    "db:migrate:drop-position-choice:remote": "wrangler d1 execute kakera --remote --file=./migrations/0010_drop_position_choice.sql"
+    "db:migrate:drop-position-choice:remote": "wrangler d1 execute kakera --remote --file=./migrations/0010_drop_position_choice.sql",
+    "db:migrate:show-time:local": "wrangler d1 execute kakera --local --file=./migrations/0012_show_time.sql",
+    "db:migrate:show-time:remote": "wrangler d1 execute kakera --remote --file=./migrations/0012_show_time.sql"
   },
   "dependencies": {
     "@astrojs/cloudflare": "^12.6.10",

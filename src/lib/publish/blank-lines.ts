@@ -29,6 +29,8 @@
 
 import { FENCE_LINE, HR_LINE, composeBody, parseEmbedTokens, parsePhotoTokens } from '../markdown';
 import { parseCardUrls } from '../card/url';
+import type { KakeraTimeHead } from '../kakera/time-label';
+import { withTimeHead } from './time-head';
 
 /** 空行段落の印（astro-blog の remark-blank-lines の NBSP_LINE_RE に当たる行）。 */
 export const NBSP = '\u00A0'; // ⚠️ 見た目では普通の空白と区別できないので、生の文字で書かない
@@ -140,6 +142,14 @@ export function markBlankLinesForBlog(body: string, hasCard?: (key: string) => b
  *    「公開される姿」は変える前の本文を RichText で描く（空行がそのまま隙間に見える＝ブログの見え方と同じ）。
  * 空かどうかの判定には composeBody を使ってよい（空行の変換は中身の有無を変えない）。
  */
-export function composePublishBody(bodies: string[], hasCard?: (key: string) => boolean): string {
-  return composeBody(bodies.map((b) => markBlankLinesForBlog(b.trim(), hasCard)));
+export function composePublishBody(
+  bodies: string[],
+  hasCard?: (key: string) => boolean,
+  /**
+   * かけらごとの時刻の小見出し（bodies と同じ並び・出さないかけらは null）。かけら時刻表示設計・2026-10-12。
+   * 渡さなければ（どれもチェックしていなければ）、今までと同じ本文になる
+   */
+  timeHeads?: readonly (KakeraTimeHead | null)[]
+): string {
+  return composeBody(bodies.map((b, i) => withTimeHead(markBlankLinesForBlog(b.trim(), hasCard), timeHeads?.[i])));
 }
