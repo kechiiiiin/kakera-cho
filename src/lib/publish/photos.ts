@@ -6,7 +6,7 @@
 // 顔を隠す写真は、変換ページで作ったモザイク済みの版をコピーする（顔モザイク設計）。
 
 import { ApiError } from '../http';
-import { faceFingerprint, isFacePhotoKey, maskedKeyFor, maskedPublicKeyFor, publicPrefixFor } from './photo-face';
+import { faceFingerprint, isFacePhotoKey, isPublicKeyOf, maskedKeyFor, maskedPublicKeyFor, publicPrefixFor } from './photo-face';
 import { loadFaces } from './photo-face-db';
 
 /** 非公開バケットの key を、認証の裏から読む相対 URL にする。かけらの本文にはこれを書く。 */
@@ -142,10 +142,10 @@ export async function planPhotoCopies(
   return plans;
 }
 
-/** 書き出しの後で消す、同じ写真の古い公開 key の目印（前方一致と、残す key）。 */
+/** 書き出しの後で消す、同じ写真の古い公開 key の目印（写真の key と、残す公開 key）。 */
 export interface StalePublicKeys {
-  /** publicPrefixFor の前方一致（素顔の版も前の指紋の版も拾う） */
-  prefix: string;
+  /** kakera-photos の key（この写真の公開 key を isPublicKeyOf で見分ける） */
+  key: string;
   /** いま置いた公開 key（これだけ残す） */
   keep: string;
 }
@@ -175,7 +175,7 @@ export async function copyPhotosForPublish(
     await env.IMAGES.put(plan.to, await obj.arrayBuffer(), {
       httpMetadata: { contentType: plan.masked ? 'image/jpeg' : (obj.httpMetadata?.contentType ?? 'image/jpeg') },
     });
-    if (isFacePhotoKey(plan.key)) stale.push({ prefix: publicPrefixFor(plan.key), keep: plan.to });
+    if (isFacePhotoKey(plan.key)) stale.push({ key: plan.key, keep: plan.to });
     map.set(plan.url, publicUrlFor(plan.to));
   }
   return { map, stale };
@@ -184,27 +184,41 @@ export async function copyPhotosForPublish(
 /**
  * 同じ写真の公開 key のうち、いま置いたもの以外を公開バケットから消す（日記の commit が通った後に呼ぶ）。
  * 一覧は同じかけらの写真（…_<ULID>_1. と _2. など）をまとめて一度だけ引く。残す key しか無ければ消しに行かない。
- * 消せなかった key は次に書き出したときにまた拾われる（前方一致で探し直すので、記録を持たなくてよい）。
+ * 消せなかった key は次に書き出したときにまた拾われる（一覧から探し直すので、記録を持たなくてよい）。
+ * @returns 古い key を消しきれなかった写真の枚数（0 なら全部消せた）。投げない
  */
-export async function dropOldPublicKeys(env: Env, stale: StalePublicKeys[]): Promise<void> {
+export async function dropOldPublicKeys(env: Env, stale: StalePublicKeys[]): Promise<number> {
   // 同じかけらの写真は前方一致の頭（連番の手前まで）が同じ。そこでまとめる
   const groups = new Map<string, StalePublicKeys[]>();
   for (const s of stale) {
-    const head = s.prefix.replace(/_\d+\.$/, '_');
+    const head = publicPrefixFor(s.key).replace(/_\d+\.$/, '_');
     groups.set(head, [...(groups.get(head) ?? []), s]);
   }
+  let failed = 0;
   for (const [head, items] of groups) {
     const keep = new Set(items.map((i) => i.keep));
     const old: string[] = [];
-    let cursor: string | undefined;
-    do {
-      const page = await env.IMAGES.list({ prefix: head, ...(cursor ? { cursor } : {}) });
-      for (const o of page.objects) {
-        if (!keep.has(o.key) && items.some((i) => o.key.startsWith(i.prefix))) old.push(o.key);
-      }
-      cursor = page.truncated ? page.cursor : undefined;
-    } while (cursor);
-    // R2 の delete は一度に 1000 件まで
-    for (let i = 0; i < old.length; i += 1000) await env.IMAGES.delete(old.slice(i, i + 1000));
+    const owners = new Set<StalePublicKeys>();
+    try {
+      let cursor: string | undefined;
+      do {
+        const page = await env.IMAGES.list({ prefix: head, ...(cursor ? { cursor } : {}) });
+        for (const o of page.objects) {
+          if (keep.has(o.key)) continue;
+          const owner = items.find((i) => isPublicKeyOf(i.key, o.key));
+          if (!owner) continue;
+          old.push(o.key);
+          owners.add(owner);
+        }
+        cursor = page.truncated ? page.cursor : undefined;
+      } while (cursor);
+      // R2 の delete は一度に 1000 件まで
+      for (let i = 0; i < old.length; i += 1000) await env.IMAGES.delete(old.slice(i, i + 1000));
+    } catch (e) {
+      console.error('[publish] drop old public keys', head, e instanceof Error ? e.message : e);
+      // 一覧から失敗したときは、どの写真に古い key があったか分からない。まとめた写真を全部数える
+      failed += owners.size || items.length;
+    }
   }
+  return failed;
 }

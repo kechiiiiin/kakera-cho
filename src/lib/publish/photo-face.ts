@@ -120,30 +120,55 @@ export function isFingerprint(s: unknown): s is string {
   return typeof s === 'string' && /^[0-9a-f]{8}$/.test(s);
 }
 
-/** 拡張子を除いた名前（kakera/2026/10/12_1432_<ULID>_1.jpg → 2026/10/12_1432_<ULID>_1）。 */
-function stemOf(key: string): string {
-  return key.replace(/^kakera\//, '').replace(/\.[A-Za-z0-9]+$/, '');
+/** 拡張子を除いた名前と拡張子（kakera/2026/10/12_1432_<ULID>_1.jpg → 2026/10/12_1432_<ULID>_1 と jpg）。 */
+function splitKey(key: string): { stem: string; ext: string } {
+  const rest = key.replace(/^kakera\//, '');
+  const m = /^(.*)\.([A-Za-z0-9]+)$/.exec(rest);
+  return m ? { stem: m[1]!, ext: m[2]! } : { stem: rest, ext: '' };
+}
+
+/**
+ * モザイク済みの版の名前の頭。JPEG の写真は `<名前>`、それ以外は `<名前>.<拡張子>`。
+ * 同じかけらの同じ番号に `_1.png` と `_1.jpg` があっても、版も公開 key も混ざらない（2026-10-12 再レビューで変更）。
+ * JPEG を拡張子なしにしているのは、先に決めた公開 key の形（`diary/<名前>.m-<指紋>.jpg`）を変えないため。
+ */
+function maskedHead(key: string): string {
+  const { stem, ext } = splitKey(key);
+  return ext.toLowerCase() === 'jpg' || ext === '' ? stem : `${stem}.${ext}`;
 }
 
 /** モザイク済みの版の key（非公開バケット）。例: kakera/masked/2026/10/12_1432_<ULID>_1.<指紋>.jpg */
 export function maskedKeyFor(key: string, fp: string): string {
-  return `kakera/masked/${stemOf(key)}.${fp}.jpg`;
+  return `kakera/masked/${maskedHead(key)}.${fp}.jpg`;
 }
 
 /**
- * モザイク済みの版の公開 key。指紋を入れる（例: diary/2026/10/12_1432_<ULID>_1.m-<指紋>.jpg）。
+ * モザイク済みの版の公開 key。指紋を入れる（例: diary/2026/10/12_1432_<ULID>_1.m-<指紋>.jpg・
+ * PNG の写真なら diary/…_1.png.m-<指紋>.jpg）。
  * ⚠️ 同じ key を上書きすると、CDN に素顔の版が残って見え続けるおそれがある。だから枠を直すたびに key を変える。
  */
 export function maskedPublicKeyFor(key: string, fp: string): string {
-  return `diary/${stemOf(key)}.m-${fp}.jpg`;
+  return `diary/${maskedHead(key)}.m-${fp}.jpg`;
 }
 
 /**
- * その写真の公開 key が取りうる前方一致（素顔の版 `<名前>.<拡張子>` もモザイクの版 `<名前>.m-<指紋>.jpg` も拾う）。
- * 末尾の `.` まで含めるので、`_1.` が `_10.` を拾うことはない。
+ * 公開バケットを一覧するときの前方一致（その写真の公開 key を全部含む。別の拡張子の同じ番号も含みうるので、
+ * 一覧の後は isPublicKeyOf で絞る）。末尾の `.` まで含めるので、`_1.` が `_10.` を拾うことはない。
  */
 export function publicPrefixFor(key: string): string {
-  return `diary/${stemOf(key)}.`;
+  return `diary/${splitKey(key).stem}.`;
+}
+
+/**
+ * 公開バケットの key が、その写真の公開 key（素顔の版 `diary/<名前>.<拡張子>`、
+ * またはモザイクの版 `diary/<名前>[.<拡張子>].m-<指紋>.jpg`）か。拡張子が違う別の写真の key は含まない。
+ */
+export function isPublicKeyOf(key: string, publicKey: string): boolean {
+  const { stem, ext } = splitKey(key);
+  if (ext && publicKey === `diary/${stem}.${ext}`) return true;
+  const m = /^\.m-[0-9a-f]{8}\.jpg$/;
+  const head = `diary/${maskedHead(key)}`;
+  return publicKey.startsWith(head) && m.test(publicKey.slice(head.length));
 }
 
 /* ---------------- モザイクの範囲 ---------------- */
@@ -352,7 +377,7 @@ export function looksBlank(samples: Uint8ClampedArray[]): boolean {
 export const FACE_TILE_SIZES = [1024, 384] as const;
 
 /**
- * タイル検出の区画。大きさごとに 2 割重ねて端まで並べる。写真がその大きさ以下なら、その段は作らない
+ * タイル検出の区画。大きさごとに 2 割重ねて端まで並べる（端の 1 枚だけは重なりが 1〜3 割になることがある）。写真がその大きさ以下なら、その段は作らない
  * （写真全体の 1 回で足りる）。重なって二重に拾った枠は mergeDetections が IoU でまとめる。
  */
 export function faceTiles(
@@ -370,7 +395,12 @@ export function faceTiles(
       const step = Math.max(1, Math.floor(size * (1 - overlap)));
       const starts: number[] = [];
       for (let s = 0; s + size < len; s += step) starts.push(s);
-      starts.push(len - size); // 最後は端に揃える
+      // 最後は端に揃える。直前の区画と 9 割以上重なるなら、直前の区画を端に寄せて 1 枚にする（間引き。
+      // 寄せた後も一つ前とは 1 割以上重なり、端まで覆う・2026-10-12 再レビューで追加）
+      const end = len - size;
+      const last = starts[starts.length - 1]!;
+      if (starts.length > 1 && end - last < size * 0.1) starts[starts.length - 1] = end;
+      else starts.push(end);
       return [...new Set(starts)].map((s) => [s, size]);
     };
     for (const [y, h] of along(height)) for (const [x, w] of along(width)) out.push({ x, y, w, h });

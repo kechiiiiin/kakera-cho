@@ -364,10 +364,15 @@ export default function App(): JSX.Element {
             onBack={() => setView({ t: 'read', id: view.id })}
             onPublish={(input) =>
               guard(async () => {
-                await api.publishNikki(view.id, input);
+                const r = await api.publishNikki(view.id, input);
                 await Promise.all([loadDetail(view.id), loadKatachiList()]);
                 setView({ t: 'nikki' });
-                say('日記にしました');
+                // 顔を隠し直した写真の古い公開版（素顔の版など）を消しきれなかったときは、日記はできたうえで知らせる
+                say(
+                  r.stale_left
+                    ? `日記にしました。ただ、古い写真を ${r.stale_left} 枚消せませんでした（もう一度書き出すと消えます）`
+                    : '日記にしました'
+                );
               })
             }
             say={say}

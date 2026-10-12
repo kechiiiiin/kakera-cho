@@ -74,7 +74,7 @@ export async function publishNikki(
   env: Env,
   input: PublishInput,
   gh: BlogWriter = githubWriter
-): Promise<{ path: string }> {
+): Promise<{ path: string; staleLeft: number }> {
   const ref = blogRepo(env);
   const path = diaryPath(input.date);
 
@@ -117,14 +117,13 @@ export async function publishNikki(
   await writeDiary(ref, path, content, message, input.date, gh);
 
   // 同じ写真の古い公開 key（素顔の版・前の指紋の版）は、日記の commit が通ってから消す（顔モザイク設計 §3.4）。
-  // 先に消すと、ビルドが終わるまで公開中の日記の写真が切れ、commit に失敗すると切れたままになる。
-  // 日記はもう書けているので、消せなくても書き出しは失敗にしない（次の書き出しで前方一致から拾い直す）。
-  try {
-    await dropOldPublicKeys(env, stale);
-  } catch (e) {
-    console.error('[publish] drop old public keys', e instanceof Error ? e.message : e);
-  }
-  return { path };
+  // commit の前に消すと、commit に失敗したとき公開中の日記の写真が切れたままになる。
+  // ⚠️ commit の後でも、astro-blog のビルドが終わるまでの間は、公開中の日記がまだ古い key を指していて写真が切れる
+  //    （素顔を残すよりよい。ビルドが終われば新しい key に替わる）。
+  // 日記はもう書けているので、消せなくても書き出しは失敗にしない。消せなかった枚数を返して画面で知らせる
+  // （次の書き出しで一覧から拾い直して消える）。
+  const staleLeft = await dropOldPublicKeys(env, stale);
+  return { path, staleLeft };
 }
 
 /**

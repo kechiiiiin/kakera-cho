@@ -9,7 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { getPlatformProxy } from 'wrangler';
 import { ApiError } from '../http';
 import { FACE_MODEL, faceFingerprint, maskedKeyFor, maskedPublicKeyFor, type PhotoFace } from './photo-face';
-import { faceStates, saveFaces } from './photo-face-db';
+import { faceStates, isScanned, saveFaces } from './photo-face-db';
 import { copyPhotosForPublish, dropOldPublicKeys, publicKeyFor, publicUrlFor } from './photos';
 import { publishNikki, type BlogWriter } from './astro-blog';
 
@@ -176,5 +176,50 @@ describe('顔モザイクの書き出し（ローカル D1・R2）', () => {
     await publishNikki(testEnv, input, ok);
     expect(written[0]).toContain(publicUrlFor(maskedPublicKeyFor(KEY, fp)));
     expect(await publicKeys()).toEqual([publicKeyFor(OTHER), maskedPublicKeyFor(KEY, fp)].sort());
+  });
+
+  it('古い公開 key を消せなかったら、消せなかった枚数を返す（日記の書き出しは失敗にしない）', async () => {
+    const hide = { ...faceA, x: 0.55 };
+    await saveFaces(env.DB, KEY, [hide]);
+    const fp = (await faceFingerprint([hide]))!;
+    await env.PHOTOS.put(maskedKeyFor(KEY, fp), MASKED);
+    const images = env.IMAGES;
+    const broken = {
+      ...env,
+      BLOG_GITHUB_TOKEN: 'test',
+      GITHUB_OWNER: 'o',
+      BLOG_REPO: 'r',
+      IMAGES: {
+        put: images.put.bind(images),
+        get: images.get.bind(images),
+        head: images.head.bind(images),
+        list: images.list.bind(images),
+        delete: async () => {
+          throw new Error('R2 が応えません');
+        },
+      },
+    } as unknown as Env;
+    const ok = {
+      fileExists: async () => true,
+      readFile: async () => null,
+      putText: async () => undefined,
+    } as unknown as BlogWriter;
+    const r = await publishNikki(broken, { date: '2026-10-12', title: 't', bodies: [body(KEY)], alreadyPublished: true }, ok);
+    expect(r.staleLeft).toBe(1);
+    // 古い版は残っている。次の書き出し（消せる状態）で拾われて消える
+    expect((await publicKeys()).length).toBe(3);
+    expect(await dropOldPublicKeys(env, [{ key: KEY, keep: maskedPublicKeyFor(KEY, fp) }])).toBe(0);
+    expect(await publicKeys()).toEqual([publicKeyFor(OTHER), maskedPublicKeyFor(KEY, fp)].sort());
+  });
+
+  it('版の違うモデルで調べた印は、調べていないのと同じ（書き出しが止まり、画面が検出し直す）', async () => {
+    await saveFaces(env.DB, KEY, [faceA], 'mediapipe-tasks-vision@0.0.1/old-model');
+    const [st] = await faceStates(env.DB, env.PHOTOS, [KEY]);
+    expect(st!.scanned).toBe(false);
+    expect(await isScanned(env.DB, KEY)).toBe(false);
+    const msg = await stopped(copyPhotosForPublish(env, [body(KEY)]));
+    expect(msg).toContain('顔の検出が済んでいない写真が 1 枚');
+    await saveFaces(env.DB, KEY, [faceA], FACE_MODEL);
+    expect(await isScanned(env.DB, KEY)).toBe(true);
   });
 });

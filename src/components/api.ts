@@ -125,7 +125,7 @@ export const api = {
 
   /** 本文とタイトルはサーバが D1 の文書から解き直す。送るのは並び・タイトルの入力・選択・版だけ */
   publishNikki: (katachiId: string, input: PublishNikkiInput) =>
-    req<{ ok: true; path: string; slug: string }>(`/api/katachi/${katachiId}/nikki`, {
+    req<{ ok: true; path: string; slug: string; stale_left?: number }>(`/api/katachi/${katachiId}/nikki`, {
       method: 'POST',
       body: JSON.stringify(input),
     }),

@@ -3,6 +3,7 @@
 
 import { nowJst } from '../time';
 import {
+  FACE_MODEL,
   faceFingerprint,
   isFacePhotoKey,
   maskedKeyFor,
@@ -21,7 +22,11 @@ interface FaceRow {
   shown: number;
 }
 
-/** 写真の key → {検出が済んだか, 枠}（並びは face_id 順）。顔モザイクの対象でない key は入れない。 */
+/**
+ * 写真の key → {検出が済んだか, 枠}（並びは face_id 順）。顔モザイクの対象でない key は入れない。
+ * 「済んだ」は**今の FACE_MODEL で**調べた印があるときだけ（2026-10-12 再レビューで変更）。版違いは未検出として扱い、
+ * 画面が検出し直す（自動の枠は見つけ直した顔で入れ替わり、全部「隠す」に戻る。手で足した枠は残す）。
+ */
 export async function loadFaces(db: D1Database, keys: string[]): Promise<Map<string, { scanned: boolean; faces: PhotoFace[] }>> {
   const list = [...new Set(keys.filter(isFacePhotoKey))];
   const out = new Map<string, { scanned: boolean; faces: PhotoFace[] }>();
@@ -30,7 +35,8 @@ export async function loadFaces(db: D1Database, keys: string[]): Promise<Map<str
     const part = list.slice(i, i + 90);
     const marks = part.map(() => '?').join(',');
     const [scans, faces] = await db.batch([
-      db.prepare(`SELECT photo_key FROM photo_face_scan WHERE photo_key IN (${marks})`).bind(...part),
+      // 版の違うモデルで調べた写真は未検出として扱う（画面が今のモデルで検出し直す）
+      db.prepare(`SELECT photo_key FROM photo_face_scan WHERE model = ? AND photo_key IN (${marks})`).bind(FACE_MODEL, ...part),
       db
         .prepare(
           `SELECT photo_key, face_id, x, y, w, h, source, shown FROM photo_face WHERE photo_key IN (${marks}) ORDER BY photo_key, face_id`
@@ -89,7 +95,10 @@ export async function saveFaces(db: D1Database, key: string, faces: PhotoFace[],
   await db.batch(stmts);
 }
 
-/** 検出が済んでいるか。 */
+/** 今の FACE_MODEL で検出が済んでいるか（版違いは済んでいない）。 */
 export async function isScanned(db: D1Database, key: string): Promise<boolean> {
-  return !!(await db.prepare('SELECT 1 AS n FROM photo_face_scan WHERE photo_key = ?').bind(key).first());
+  return !!(await db
+    .prepare('SELECT 1 AS n FROM photo_face_scan WHERE photo_key = ? AND model = ?')
+    .bind(key, FACE_MODEL)
+    .first());
 }

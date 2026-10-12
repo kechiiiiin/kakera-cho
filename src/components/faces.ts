@@ -60,25 +60,31 @@ export async function loadPhotoCanvas(key: string): Promise<HTMLCanvasElement> {
   const res = await fetch(photoUrlFor(key));
   if (!res.ok) throw new Error(`写真を読めませんでした（${res.status}）`);
   const url = URL.createObjectURL(await res.blob());
+  let canvas: HTMLCanvasElement | null = null;
   try {
     const img = new Image();
     img.src = url;
     await img.decode();
     const size = fitCanvasSize(img.naturalWidth, img.naturalHeight);
     if (!size.width || !size.height) throw new Error('写真の大きさが読めません');
-    const canvas = document.createElement('canvas');
+    canvas = document.createElement('canvas');
     canvas.width = size.width;
     canvas.height = size.height;
     const cx = canvas.getContext('2d');
     if (!cx) throw new Error('canvas が使えません');
+    // 白で下地を塗ってから描く（2026-10-12 再レビューで追加）。透明の PNG を「空の canvas」と取り違えず、
+    // JPEG にしたとき透明が黒く抜けることもない。
+    // ⚠️ 上限を越えて壊れた canvas には塗りも効かず透明のままなので、下の空の判定はそのまま効く。
+    cx.fillStyle = '#fff';
+    cx.fillRect(0, 0, size.width, size.height);
     cx.drawImage(img, 0, 0, size.width, size.height);
     const samples = blankProbePoints(size.width, size.height).map((p) => cx.getImageData(p.x, p.y, p.w, p.h).data);
-    if (looksBlank(samples)) {
-      releaseCanvas(canvas);
-      throw new Error('写真を描けませんでした（大きすぎる・読めない形式の可能性）');
-    }
-    return canvas;
+    if (looksBlank(samples)) throw new Error('写真を描けませんでした（大きすぎる・読めない形式の可能性）');
+    const out = canvas;
+    canvas = null; // 呼んだ側へ渡す（ここでは縮めない）
+    return out;
   } finally {
+    if (canvas) releaseCanvas(canvas);
     URL.revokeObjectURL(url);
   }
 }
@@ -89,35 +95,53 @@ function releaseCanvas(c: HTMLCanvasElement): void {
   c.height = 0;
 }
 
-/** 写真の顔を探す。見つけた枠は全部「隠す」で返す（0 件もありうる）。描けなかった写真は投げる（調べ済みにしない）。 */
-export async function detectFaces(key: string): Promise<PhotoFace[]> {
-  const [det, canvas] = await Promise.all([loadDetector(), loadPhotoCanvas(key)]);
-  const W = canvas.width;
-  const H = canvas.height;
-  const found: { x: number; y: number; w: number; h: number; score: number }[] = [];
+/** 手を戻す（区画の検出の合間に、画面の描画とタップを通す）。 */
+const yieldToMain = (): Promise<void> => new Promise((r) => setTimeout(r));
 
-  const run = (src: HTMLCanvasElement, ox: number, oy: number): void => {
-    for (const d of det.detect(src).detections) {
-      const b = d.boundingBox;
-      if (!b) continue;
-      found.push({
-        x: (ox + b.originX) / W,
-        y: (oy + b.originY) / H,
-        w: b.width / W,
-        h: b.height / H,
-        score: d.categories[0]?.score ?? 0,
-      });
-    }
-  };
+/** これだけ区画を調べるごとに手を戻す */
+const YIELD_EVERY = 4;
 
+/**
+ * 写真の顔を探す。見つけた枠は全部「隠す」で返す（0 件もありうる）。描けなかった写真は投げる（調べ済みにしない）。
+ * 区画を数枚調べるごとに手を戻す（メインスレッドを止めない）。onProgress で区画の進み具合を知らせる。
+ */
+export async function detectFaces(key: string, onProgress?: (done: number, total: number) => void): Promise<PhotoFace[]> {
+  const [detR, canvasR] = await Promise.allSettled([loadDetector(), loadPhotoCanvas(key)]);
+  if (canvasR.status === 'rejected') throw canvasR.reason;
+  const canvas = canvasR.value;
+  let tile: HTMLCanvasElement | null = null;
   try {
-    run(canvas, 0, 0);
+    if (detR.status === 'rejected') throw detR.reason;
+    const det = detR.value;
+    const W = canvas.width;
+    const H = canvas.height;
+    const found: { x: number; y: number; w: number; h: number; score: number }[] = [];
+
+    const run = (src: HTMLCanvasElement, ox: number, oy: number): void => {
+      for (const d of det.detect(src).detections) {
+        const b = d.boundingBox;
+        if (!b) continue;
+        found.push({
+          x: (ox + b.originX) / W,
+          y: (oy + b.originY) / H,
+          w: b.width / W,
+          h: b.height / H,
+          score: d.categories[0]?.score ?? 0,
+        });
+      }
+    };
+
     const tiles = faceTiles(W, H);
+    const total = tiles.length + 1;
+    onProgress?.(0, total);
+    run(canvas, 0, 0);
+    onProgress?.(1, total);
     if (tiles.length) {
       // 区画の canvas は 1 枚を使い回す（大きさが変わるときだけ作り直す）
-      const tile = document.createElement('canvas');
+      tile = document.createElement('canvas');
       const tcx = tile.getContext('2d')!;
-      for (const t of tiles) {
+      for (const [i, t] of tiles.entries()) {
+        if (i % YIELD_EVERY === 0) await yieldToMain();
         if (tile.width !== t.w || tile.height !== t.h) {
           tile.width = t.w;
           tile.height = t.h;
@@ -125,13 +149,14 @@ export async function detectFaces(key: string): Promise<PhotoFace[]> {
         tcx.clearRect(0, 0, t.w, t.h);
         tcx.drawImage(canvas, t.x, t.y, t.w, t.h, 0, 0, t.w, t.h);
         run(tile, t.x, t.y);
+        onProgress?.(i + 2, total);
       }
-      releaseCanvas(tile);
     }
+    return mergeDetections(found);
   } finally {
+    if (tile) releaseCanvas(tile);
     releaseCanvas(canvas);
   }
-  return mergeDetections(found);
 }
 
 /**
@@ -142,16 +167,19 @@ export async function makeMaskedJpeg(key: string, faces: PhotoFace[]): Promise<B
   const hidden = hiddenFaces(faces);
   if (!hidden.length) return null;
   const canvas = await loadPhotoCanvas(key);
-  const cx = canvas.getContext('2d')!;
-  for (const f of hidden) {
-    const r = mosaicRect(f, canvas.width, canvas.height);
-    if (!r.w || !r.h) continue;
-    const img = cx.getImageData(r.x, r.y, r.w, r.h);
-    pixelate(img.data, r.w, { x: 0, y: 0, w: r.w, h: r.h, block: r.block });
-    cx.putImageData(img, r.x, r.y);
+  try {
+    const cx = canvas.getContext('2d')!;
+    for (const f of hidden) {
+      const r = mosaicRect(f, canvas.width, canvas.height);
+      if (!r.w || !r.h) continue;
+      const img = cx.getImageData(r.x, r.y, r.w, r.h);
+      pixelate(img.data, r.w, { x: 0, y: 0, w: r.w, h: r.h, block: r.block });
+      cx.putImageData(img, r.x, r.y);
+    }
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.9));
+    if (!blob) throw new Error('モザイクをかけた写真を作れませんでした');
+    return blob;
+  } finally {
+    releaseCanvas(canvas);
   }
-  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.9));
-  releaseCanvas(canvas);
-  if (!blob) throw new Error('モザイクをかけた写真を作れませんでした');
-  return blob;
 }

@@ -16,6 +16,8 @@ export interface FacePhotoProps {
   state: PhotoFaceState | null;
   /** 検出中か */
   scanning: boolean;
+  /** 検出中の区画の進み具合 */
+  progress?: { done: number; total: number } | null;
   /** 検出に失敗した理由 */
   error: string | null;
   onChange: (faces: PhotoFace[]) => void;
@@ -30,7 +32,7 @@ function newManualId(): string {
   return 'm' + Math.random().toString(36).slice(2, 10);
 }
 
-export function FacePhoto({ src, state, scanning, error, onChange, onRetry }: FacePhotoProps): JSX.Element {
+export function FacePhoto({ src, state, scanning, progress, error, onChange, onRetry }: FacePhotoProps): JSX.Element {
   const [drawing, setDrawing] = useState(false);
   const [draft, setDraft] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -60,6 +62,7 @@ export function FacePhoto({ src, state, scanning, error, onChange, onRetry }: Fa
 
   let status: JSX.Element | string;
   if (error) status = <span class="face-err">顔を調べられませんでした（{error}）</span>;
+  else if (scanning && progress && progress.total > 1) status = `顔を探しています（${progress.done}／${progress.total}）`;
   else if (scanning || !state) status = '顔を調べています…';
   else if (!state.scanned) status = '顔はまだ調べていません';
   else if (!faces.length) status = '顔は見つかりませんでした';

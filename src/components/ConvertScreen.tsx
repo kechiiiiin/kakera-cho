@@ -140,6 +140,8 @@ export function ConvertScreen({
   const [faceErrors, setFaceErrors] = useState<Record<string, string>>({});
   /** いま検出している写真の key（1 枚ずつ順に） */
   const [scanning, setScanning] = useState<string | null>(null);
+  /** 検出中の写真の区画の進み具合 */
+  const [scanProgress, setScanProgress] = useState<{ done: number; total: number } | null>(null);
   /** 書き出しの手前でモザイクを作っている間の表示 */
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const facesRef = useRef(faces);
@@ -235,13 +237,19 @@ export function ConvertScreen({
     if (!next) return;
     scanningRef.current = next;
     setScanning(next);
-    detectFaces(next)
-      .then((found) => api.savePhotoFaces({ key: next, faces: found, model: FACE_MODEL }))
+    setScanProgress(null);
+    detectFaces(next, (done, total) => setScanProgress({ done, total }))
+      // 版違いのモデルで調べてあった写真は検出し直す。手で足した枠はそのまま残す（自動の枠は今の検出で入れ替える）
+      .then((found) => {
+        const manual = (facesRef.current[next]?.faces ?? []).filter((f) => f.source === 'manual');
+        return api.savePhotoFaces({ key: next, faces: [...found, ...manual], model: FACE_MODEL });
+      })
       .then((st) => setFaces((f) => ({ ...f, [next]: st })))
       .catch((e: unknown) => setFaceErrors((m) => ({ ...m, [next]: e instanceof Error ? e.message : String(e) })))
       .finally(() => {
         scanningRef.current = null;
         setScanning(null);
+        setScanProgress(null);
       });
   });
 
@@ -562,6 +570,7 @@ export function ConvertScreen({
           src={src}
           state={faces[key] ?? null}
           scanning={scanning === key}
+          progress={scanning === key ? scanProgress : null}
           error={faceErrors[key] ?? null}
           onChange={(next) => changeFaces(key, next)}
           onRetry={() => retryFaces(key)}
@@ -705,7 +714,11 @@ export function ConvertScreen({
               顔 隠す<b>{faceCount.hidden}</b>
               <span class="t-slash">／</span>
               出す<b>{faceCount.shown}</b>
-              {faceCount.pending ? <span class="t-pending">（調べています {faceCount.pending}）</span> : null}
+              {faceCount.pending ? (
+                <span class="t-pending">
+                  （顔を探しています {wantFaces.size - faceCount.pending}／{wantFaces.size} 枚）
+                </span>
+              ) : null}
             </span>
           ) : null}
         </div>

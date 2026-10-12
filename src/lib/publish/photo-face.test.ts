@@ -17,6 +17,7 @@ import {
   mosaicRect,
   parseFaces,
   pixelate,
+  isPublicKeyOf,
   publicPrefixFor,
   type PhotoFace,
 } from './photo-face';
@@ -73,6 +74,32 @@ describe('顔モザイクの決まり', () => {
     expect(publicKeyFor(KEY).startsWith(prefix)).toBe(true);
     // _1 の前方一致が _10 を拾わない
     expect(publicKeyFor(KEY.replace('_1.jpg', '_10.jpg')).startsWith(prefix)).toBe(false);
+  });
+
+  it('key: 拡張子ごとに分かれる。_1.jpg と _1.png の版・公開 key は混ざらない（2026-10-12 再レビュー）', () => {
+    const PNG = KEY.replace('.jpg', '.png');
+    expect(maskedKeyFor(PNG, 'abcd1234')).toBe('kakera/masked/2026/10/12_1432_01JXXXXXXXXXXXXXXXXXXXXXXX_1.png.abcd1234.jpg');
+    expect(maskedPublicKeyFor(PNG, 'abcd1234')).toBe('diary/2026/10/12_1432_01JXXXXXXXXXXXXXXXXXXXXXXX_1.png.m-abcd1234.jpg');
+    expect(maskedKeyFor(PNG, 'abcd1234')).not.toBe(maskedKeyFor(KEY, 'abcd1234'));
+
+    const jpgPlain = publicKeyFor(KEY); // diary/<名前>.jpg
+    const jpgMasked = maskedPublicKeyFor(KEY, 'abcd1234'); // diary/<名前>.m-<指紋>.jpg
+    const pngPlain = publicKeyFor(PNG);
+    const pngMasked = maskedPublicKeyFor(PNG, 'ffff0000');
+    // その写真の公開 key（素顔・モザイクの両方の形）を拾い、拡張子の違う写真の key は拾わない
+    expect(isPublicKeyOf(KEY, jpgPlain)).toBe(true);
+    expect(isPublicKeyOf(KEY, jpgMasked)).toBe(true);
+    expect(isPublicKeyOf(KEY, pngPlain)).toBe(false);
+    expect(isPublicKeyOf(KEY, pngMasked)).toBe(false);
+    expect(isPublicKeyOf(PNG, pngPlain)).toBe(true);
+    expect(isPublicKeyOf(PNG, pngMasked)).toBe(true);
+    expect(isPublicKeyOf(PNG, jpgPlain)).toBe(false);
+    expect(isPublicKeyOf(PNG, jpgMasked)).toBe(false);
+    // 一覧の前方一致には両方が入る（一覧の後で isPublicKeyOf で絞る）
+    for (const k of [jpgPlain, jpgMasked, pngPlain, pngMasked]) expect(k.startsWith(publicPrefixFor(KEY))).toBe(true);
+    // _10 や形の違う key は拾わない
+    expect(isPublicKeyOf(KEY, publicKeyFor(KEY.replace('_1.jpg', '_10.jpg')))).toBe(false);
+    expect(isPublicKeyOf(KEY, jpgMasked.replace('.jpg', '.png'))).toBe(false);
   });
 
   it('届いた枠を検める: 0〜1 に収めて丸める。形が崩れていたら全体を受け付けない', () => {
@@ -164,17 +191,17 @@ describe('検出・モザイクに使う canvas と区画（2026-10-12 レビュ
     expect(blankProbePoints(2, 2).every((p) => p.w === 2 && p.h === 2 && p.x === 0 && p.y === 0)).toBe(true);
   });
 
-  it('区画: 1024px と 384px の二段。写真がその大きさ以下ならその段は作らない。2 割重ねで端まで覆う', () => {
+  it('区画: 1024px と 384px の二段。写真がその大きさ以下ならその段は作らない。重ねて端まで覆う', () => {
     expect(faceTiles(384, 300)).toEqual([]);
     expect(faceTiles(1024, 768).every((t) => t.w === 384)).toBe(true);
     const tiles = faceTiles(4096, 2731);
     const big = tiles.filter((t) => t.w === 1024);
-    // 横: 0, 819, 1638, 2457, 3072（端に揃える）／縦: 0, 819, 1638, 1707
+    // 横: 0, 819, 1638, 2457, 3072（端に揃える）／縦: 0, 819, 1707（1638 と 1707 は 9 割以上重なるので 1 枚に間引く）
     expect(new Set(big.map((t) => t.x))).toEqual(new Set([0, 819, 1638, 2457, 3072]));
-    expect(new Set(big.map((t) => t.y))).toEqual(new Set([0, 819, 1638, 1707]));
-    expect(big).toHaveLength(20);
+    expect(new Set(big.map((t) => t.y))).toEqual(new Set([0, 819, 1707]));
+    expect(big).toHaveLength(15);
     const small = tiles.filter((t) => t.w === 384);
-    expect(small.length).toBe(tiles.length - 20);
+    expect(small.length).toBe(tiles.length - 15);
     for (const size of [1024, 384]) {
       const same = tiles.filter((t) => t.w === size);
       for (const t of same) {
@@ -182,12 +209,23 @@ describe('検出・モザイクに使う canvas と区画（2026-10-12 レビュ
         expect(t.x + t.w).toBeLessThanOrEqual(4096);
         expect(t.y + t.h).toBeLessThanOrEqual(2731);
       }
-      // 端まで覆う・隣り合う区画は 2 割以上重なる
-      const xs = [...new Set(same.map((t) => t.x))].sort((a, b) => a - b);
-      expect(xs[0]).toBe(0);
-      expect(xs[xs.length - 1]! + size).toBe(4096);
-      for (let i = 1; i < xs.length; i++) expect(xs[i - 1]! + size - xs[i]!).toBeGreaterThanOrEqual(Math.floor(size * 0.2));
+      // 端まで覆う・隣り合う区画は 1 割以上（端以外は 2 割）重なり、9 割以上重なる区画は無い
+      for (const [axis, len] of [['x', 4096], ['y', 2731]] as const) {
+        const ps = [...new Set(same.map((t) => t[axis]))].sort((a, b) => a - b);
+        expect(ps[0]).toBe(0);
+        expect(ps[ps.length - 1]! + size).toBe(len);
+        for (let i = 1; i < ps.length; i++) {
+          const ov = ps[i - 1]! + size - ps[i]!;
+          expect(ov).toBeGreaterThanOrEqual(Math.floor(size * 0.1));
+          if (i < ps.length - 1) expect(ov).toBeGreaterThanOrEqual(Math.floor(size * 0.2));
+          expect(ov).toBeLessThan(size * 0.9);
+        }
+      }
     }
+    // 4032×3024（iPhone の写真）
+    const iphone = faceTiles(4032, 3024);
+    expect(iphone.filter((t) => t.w === 1024).length).toBeGreaterThan(0);
+    expect(iphone.length).toBeLessThan(200);
     // 細長い写真は短い辺を 1 区画のまま（1024 の段）
     const thin = faceTiles(3000, 600, [1024]);
     expect(thin.every((t) => t.y === 0 && t.h === 600)).toBe(true);

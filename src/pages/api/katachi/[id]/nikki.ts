@@ -22,6 +22,8 @@ export const prerender = false;
  * ★写真の出す／出さない（photos?[] = 出さない写真 {kakera_id, key}）: 原本か日記用の文に実在する key だけ当てる。
  *   photos を送らない呼び出しは、D1 に覚えてある選択を使う。出さない写真は公開バケットへもコピーしない。
  * ★原本（kakera の行・控え）は触らない。
+ * ★stale_left: 同じ写真の古い公開 key（素顔の版・前の指紋の版）を消しきれなかった写真の枚数（顔モザイク設計 §3.4）。
+ *   日記は書けているので失敗にはしない。次の書き出しで拾い直して消える。
  */
 export const POST: APIRoute = ({ locals, params, request }) =>
   handle(async () => {
@@ -31,11 +33,11 @@ export const POST: APIRoute = ({ locals, params, request }) =>
     const input = await readJson(request);
 
     const prepared = await prepareNikkiExport(env.DB, id, input);
-    const { path } = await publishNikki(env, prepared.publish);
+    const { path, staleLeft } = await publishNikki(env, prepared.publish);
 
     await recordNikki(env.DB, id, prepared.detail.katachi.date, prepared.chosen.map((k) => k.id));
     // 控えのかたちにも「日記 #n」の印を反映する（控えは原本なので実名のまま）
     waitUntil(syncKatachi(env, id));
 
-    return json({ ok: true, path, slug: prepared.detail.katachi.date });
+    return json({ ok: true, path, slug: prepared.detail.katachi.date, stale_left: staleLeft });
   });
