@@ -142,21 +142,31 @@ export async function planPhotoCopies(
   return plans;
 }
 
+/** 書き出しの後で消す、同じ写真の古い公開 key の目印（前方一致と、残す key）。 */
+export interface StalePublicKeys {
+  /** publicPrefixFor の前方一致（素顔の版も前の指紋の版も拾う） */
+  prefix: string;
+  /** いま置いた公開 key（これだけ残す） */
+  keep: string;
+}
+
 /**
- * 本文に出てくる写真を公開バケットへコピーし、「非公開 URL → 公開 URL」の対応表を返す。
+ * 本文に出てくる写真を公開バケットへコピーし、「非公開 URL → 公開 URL」の対応表と、
+ * 後で消す古い公開 key の目印を返す。
  * 公開バケットが無い環境（ローカル）では、コピーできなかったものを対応表に入れない。
  * ⚠️ 渡す本文は、日記に出さない写真を除いた後のもの（出さない写真はコピーしない）。
  * ⚠️ 顔の検出・モザイクが済んでいない写真があれば、何もコピーせずに 409（planPhotoCopies）。
  *
- * 同じ写真の古い公開 key（素顔の版・前の指紋の版）は、新しい版を置いたらすぐ消す（顔モザイク設計 §3.4）。
- * 日記の commit より先に消すので、公開中の日記の写真が少しのあいだ開けなくなることはあるが、素顔が残るよりよい。
+ * 同じ写真の古い公開 key（素顔の版・前の指紋の版）は**ここでは消さない**（2026-10-12 レビューで変更）。
+ * 公開中の日記はまだ古い key を指しているので、日記の commit が通ってから dropOldPublicKeys で消す（astro-blog.ts）。
  */
 export async function copyPhotosForPublish(
   env: Env,
   bodies: string[],
   skipKeys: ReadonlySet<string> = new Set()
-): Promise<Map<string, string>> {
+): Promise<{ map: Map<string, string>; stale: StalePublicKeys[] }> {
   const map = new Map<string, string>();
+  const stale: StalePublicKeys[] = [];
 
   for (const plan of await planPhotoCopies(env, bodies, skipKeys)) {
     const obj = await env.PHOTOS.get(plan.from);
@@ -165,20 +175,36 @@ export async function copyPhotosForPublish(
     await env.IMAGES.put(plan.to, await obj.arrayBuffer(), {
       httpMetadata: { contentType: plan.masked ? 'image/jpeg' : (obj.httpMetadata?.contentType ?? 'image/jpeg') },
     });
-    if (isFacePhotoKey(plan.key)) await dropOldPublicKeys(env, plan.key, plan.to);
+    if (isFacePhotoKey(plan.key)) stale.push({ prefix: publicPrefixFor(plan.key), keep: plan.to });
     map.set(plan.url, publicUrlFor(plan.to));
   }
-  return map;
+  return { map, stale };
 }
 
-/** 同じ写真の公開 key のうち、いま置いたもの以外を公開バケットから消す。 */
-async function dropOldPublicKeys(env: Env, key: string, keep: string): Promise<void> {
-  const prefix = publicPrefixFor(key);
-  let cursor: string | undefined;
-  do {
-    const page = await env.IMAGES.list({ prefix, ...(cursor ? { cursor } : {}) });
-    const old = page.objects.map((o) => o.key).filter((k) => k !== keep);
-    if (old.length) await env.IMAGES.delete(old);
-    cursor = page.truncated ? page.cursor : undefined;
-  } while (cursor);
+/**
+ * 同じ写真の公開 key のうち、いま置いたもの以外を公開バケットから消す（日記の commit が通った後に呼ぶ）。
+ * 一覧は同じかけらの写真（…_<ULID>_1. と _2. など）をまとめて一度だけ引く。残す key しか無ければ消しに行かない。
+ * 消せなかった key は次に書き出したときにまた拾われる（前方一致で探し直すので、記録を持たなくてよい）。
+ */
+export async function dropOldPublicKeys(env: Env, stale: StalePublicKeys[]): Promise<void> {
+  // 同じかけらの写真は前方一致の頭（連番の手前まで）が同じ。そこでまとめる
+  const groups = new Map<string, StalePublicKeys[]>();
+  for (const s of stale) {
+    const head = s.prefix.replace(/_\d+\.$/, '_');
+    groups.set(head, [...(groups.get(head) ?? []), s]);
+  }
+  for (const [head, items] of groups) {
+    const keep = new Set(items.map((i) => i.keep));
+    const old: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await env.IMAGES.list({ prefix: head, ...(cursor ? { cursor } : {}) });
+      for (const o of page.objects) {
+        if (!keep.has(o.key) && items.some((i) => o.key.startsWith(i.prefix))) old.push(o.key);
+      }
+      cursor = page.truncated ? page.cursor : undefined;
+    } while (cursor);
+    // R2 の delete は一度に 1000 件まで
+    for (let i = 0; i < old.length; i += 1000) await env.IMAGES.delete(old.slice(i, i + 1000));
+  }
 }

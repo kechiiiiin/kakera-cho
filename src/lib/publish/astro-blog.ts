@@ -8,7 +8,7 @@ import { ApiError } from '../http';
 import { commitChanges, fileExists, headSha, putText, readFile, readFileAt, type RepoRef } from '../backup/github';
 import { cardsForBodies, getLinkCardRows } from '../kakera/db';
 import { blogCardKeysOf } from '../card/url';
-import { copyPhotosForPublish } from './photos';
+import { copyPhotosForPublish, dropOldPublicKeys } from './photos';
 import { renderDiaryFile } from './diary-file';
 import { composePublishBody } from './blank-lines';
 import { REDIRECTS_PATH, dropRedirectsFrom } from './redirects';
@@ -98,7 +98,7 @@ export async function publishNikki(
   // 原本（D1・控え）の本文は触らない。
   // 公開名変換は画像の URL を触らないので、置き換えた後の本文から写真を拾ってよい。
   // 日記に出さない写真は、呼ぶ側が本文から除いてある＝ここでは拾われず、公開バケットへコピーされない。
-  const urlMap = await copyPhotosForPublish(env, input.bodies, input.hiddenPhotoKeys);
+  const { map: urlMap, stale } = await copyPhotosForPublish(env, input.bodies, input.hiddenPhotoKeys);
   const bodies = input.bodies.map((b) => (urlMap.size ? replacePhotoUrls(b, urlMap) : b));
 
   // 空行を U+00A0 の行に変えて連結する（空行の保持）。名前の置き換え・写真の除去・URL の差し替えの**後**に当てる。
@@ -115,6 +115,15 @@ export async function publishNikki(
   const verb = input.alreadyPublished ? 'update' : 'create';
   const message = `${verb}(diary): ${input.title || input.date}`;
   await writeDiary(ref, path, content, message, input.date, gh);
+
+  // 同じ写真の古い公開 key（素顔の版・前の指紋の版）は、日記の commit が通ってから消す（顔モザイク設計 §3.4）。
+  // 先に消すと、ビルドが終わるまで公開中の日記の写真が切れ、commit に失敗すると切れたままになる。
+  // 日記はもう書けているので、消せなくても書き出しは失敗にしない（次の書き出しで前方一致から拾い直す）。
+  try {
+    await dropOldPublicKeys(env, stale);
+  } catch (e) {
+    console.error('[publish] drop old public keys', e instanceof Error ? e.message : e);
+  }
   return { path };
 }
 

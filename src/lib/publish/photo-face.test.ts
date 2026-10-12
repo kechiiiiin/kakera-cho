@@ -4,7 +4,11 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   FACE_MODEL,
+  blankProbePoints,
   faceFingerprint,
+  faceTiles,
+  fitCanvasSize,
+  looksBlank,
   hasExif,
   isFacePhotoKey,
   maskedKeyFor,
@@ -125,5 +129,84 @@ describe('顔モザイクの決まり', () => {
     expect(hasExif(jfif)).toBe(false);
     const exif = Uint8Array.from([0xff, 0xd8, 0xff, 0xe1, 0x00, 0x0e, ...'Exif\0\0'.split('').map((c) => c.charCodeAt(0)), 0, 0, 0, 0, 0, 0, 0xff, 0xda, 0, 2]);
     expect(hasExif(exif)).toBe(true);
+  });
+});
+
+describe('検出・モザイクに使う canvas と区画（2026-10-12 レビュー）', () => {
+  it('縮小: 長辺 4096px かつ面積 16MP 以下。小さい写真は大きくしない', () => {
+    const big = fitCanvasSize(6000, 4000); // 24MP
+    expect(big.width).toBeLessThanOrEqual(4096);
+    expect(big.width * big.height).toBeLessThanOrEqual(16_000_000);
+    expect(Math.abs(big.width / big.height - 1.5)).toBeLessThan(0.01);
+    const tall = fitCanvasSize(3000, 9000); // 長辺で効く
+    expect(tall.height).toBe(4096);
+    expect(tall.width).toBe(1365);
+    const square = fitCanvasSize(4096, 4096); // 面積で効く
+    expect(square.width * square.height).toBeLessThanOrEqual(16_000_000);
+    expect(square.width).toBe(4000);
+    expect(fitCanvasSize(2048, 1536)).toEqual({ width: 2048, height: 1536, scale: 1 });
+    expect(fitCanvasSize(0, 100).width).toBe(0);
+  });
+
+  it('空の canvas: 見た場所が全部透明なら空。真っ黒でも不透明なら空ではない', () => {
+    const transparent = new Uint8ClampedArray(4 * 16);
+    const black = new Uint8ClampedArray(4 * 16);
+    for (let i = 3; i < black.length; i += 4) black[i] = 255;
+    expect(looksBlank([transparent, transparent])).toBe(true);
+    expect(looksBlank([transparent, black])).toBe(false);
+    expect(looksBlank([])).toBe(true);
+    const pts = blankProbePoints(100, 50);
+    expect(pts).toHaveLength(9);
+    for (const p of pts) {
+      expect(p.x + p.w).toBeLessThanOrEqual(100);
+      expect(p.y + p.h).toBeLessThanOrEqual(50);
+    }
+    expect(blankProbePoints(2, 2).every((p) => p.w === 2 && p.h === 2 && p.x === 0 && p.y === 0)).toBe(true);
+  });
+
+  it('区画: 1024px と 384px の二段。写真がその大きさ以下ならその段は作らない。2 割重ねで端まで覆う', () => {
+    expect(faceTiles(384, 300)).toEqual([]);
+    expect(faceTiles(1024, 768).every((t) => t.w === 384)).toBe(true);
+    const tiles = faceTiles(4096, 2731);
+    const big = tiles.filter((t) => t.w === 1024);
+    // 横: 0, 819, 1638, 2457, 3072（端に揃える）／縦: 0, 819, 1638, 1707
+    expect(new Set(big.map((t) => t.x))).toEqual(new Set([0, 819, 1638, 2457, 3072]));
+    expect(new Set(big.map((t) => t.y))).toEqual(new Set([0, 819, 1638, 1707]));
+    expect(big).toHaveLength(20);
+    const small = tiles.filter((t) => t.w === 384);
+    expect(small.length).toBe(tiles.length - 20);
+    for (const size of [1024, 384]) {
+      const same = tiles.filter((t) => t.w === size);
+      for (const t of same) {
+        expect(t.h).toBe(size);
+        expect(t.x + t.w).toBeLessThanOrEqual(4096);
+        expect(t.y + t.h).toBeLessThanOrEqual(2731);
+      }
+      // 端まで覆う・隣り合う区画は 2 割以上重なる
+      const xs = [...new Set(same.map((t) => t.x))].sort((a, b) => a - b);
+      expect(xs[0]).toBe(0);
+      expect(xs[xs.length - 1]! + size).toBe(4096);
+      for (let i = 1; i < xs.length; i++) expect(xs[i - 1]! + size - xs[i]!).toBeGreaterThanOrEqual(Math.floor(size * 0.2));
+    }
+    // 細長い写真は短い辺を 1 区画のまま（1024 の段）
+    const thin = faceTiles(3000, 600, [1024]);
+    expect(thin.every((t) => t.y === 0 && t.h === 600)).toBe(true);
+  });
+
+  it('区画ごとの検出をまとめる: 区画の重なりで二重に拾った顔は一つになり、離れた小さい顔は全部残る', () => {
+    const W = 4096;
+    const H = 2731;
+    // 同じ顔を全体と 2 つの区画で拾った（座標が少しずれる）＋ 小さい顔 3 つ
+    const px = (x: number, y: number, w: number, h: number, score: number) => ({ x: x / W, y: y / H, w: w / W, h: h / H, score });
+    const merged = mergeDetections([
+      px(900, 500, 120, 140, 0.7),
+      px(902, 503, 118, 138, 0.9),
+      px(898, 498, 121, 141, 0.5),
+      px(200, 2000, 40, 48, 0.45),
+      px(2500, 300, 36, 42, 0.42),
+      px(3900, 2600, 30, 36, 0.41),
+    ]);
+    expect(merged).toHaveLength(4);
+    expect(merged.every((f) => !f.shown && f.source === 'auto')).toBe(true);
   });
 });

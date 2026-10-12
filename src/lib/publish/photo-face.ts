@@ -36,7 +36,7 @@ export interface PhotoFaceState {
 }
 
 /** 検出に使ったモデルの名前（photo_face_scan.model に残す）。変えるときは版を上げる。 */
-export const FACE_MODEL = 'mediapipe-tasks-vision@0.10.35/blaze_face_full_range/float16/1@0.4';
+export const FACE_MODEL = 'mediapipe-tasks-vision@0.10.35/blaze_face_full_range/float16/1@0.4+tile1024,384';
 
 /** 写真 1 枚に持てる枠の数の上限（拾いすぎても困らない程度に大きく）。 */
 export const MAX_FACES = 200;
@@ -148,7 +148,7 @@ export function publicPrefixFor(key: string): string {
 
 /* ---------------- モザイクの範囲 ---------------- */
 
-/** 原寸（px）でモザイクをかける四角とブロックの大きさ（§3.3: 枠を 20% 広げる・ブロックは顔の幅の 1/8、最小 8px）。 */
+/** 描いた canvas の大きさ（px。長辺 4096px・16MP 以下に縮めたもの）でモザイクをかける四角とブロックの大きさ（§3.3: 枠を 20% 広げる・ブロックは顔の幅の 1/8、最小 8px）。 */
 export function mosaicRect(f: { x: number; y: number; w: number; h: number }, width: number, height: number): {
   x: number;
   y: number;
@@ -285,4 +285,95 @@ export function mergeDetections(found: { x: number; y: number; w: number; h: num
     .sort((a, b) => a.box.y - b.box.y || a.box.x - b.box.x)
     .slice(0, MAX_FACES)
     .map((f, i) => ({ id: `a${i + 1}`, ...f.box, source: 'auto' as const, shown: false }));
+}
+
+/* ---------------- 検出・モザイクに使う canvas の大きさと区画（2026-10-12 レビューで追加） ---------------- */
+
+/**
+ * canvas の上限。iOS Safari は面積が大きすぎる canvas を**黙って空のまま**にする（24MP の原寸を描くと真っ黒・透明）。
+ * 空の canvas で検出すると「顔 0 件 → 調べ済み → 素顔の原本が公開」になりうるので、必ずこの内側に縮めて描く。
+ */
+export const CANVAS_LIMIT = { maxEdge: 4096, maxArea: 16_000_000 } as const;
+
+/** 写真を検出・モザイクに使う canvas の大きさ（長辺 4096px かつ面積 16MP 以下。大きくはしない）。 */
+export function fitCanvasSize(
+  width: number,
+  height: number,
+  limit: { maxEdge: number; maxArea: number } = CANVAS_LIMIT
+): { width: number; height: number; scale: number } {
+  if (!(width > 0 && height > 0)) return { width: 0, height: 0, scale: 0 };
+  const scale = Math.min(1, limit.maxEdge / Math.max(width, height), Math.sqrt(limit.maxArea / (width * height)));
+  // 丸めで上限を越えないよう切り捨てる
+  let w = Math.max(1, Math.floor(width * scale));
+  let h = Math.max(1, Math.floor(height * scale));
+  while (w * h > limit.maxArea) {
+    w = Math.max(1, w - 1);
+    h = Math.max(1, Math.floor((w * height) / width));
+  }
+  return { width: w, height: h, scale: w / width };
+}
+
+/** 空の canvas か見る場所（縦横 3×3 の 9 か所・各 4×4px）。 */
+export function blankProbePoints(width: number, height: number): { x: number; y: number; w: number; h: number }[] {
+  const out: { x: number; y: number; w: number; h: number }[] = [];
+  const pw = Math.min(4, width);
+  const ph = Math.min(4, height);
+  for (const fy of [0.2, 0.5, 0.8]) {
+    for (const fx of [0.2, 0.5, 0.8]) {
+      out.push({
+        x: Math.min(width - pw, Math.max(0, Math.floor(width * fx))),
+        y: Math.min(height - ph, Math.max(0, Math.floor(height * fy))),
+        w: pw,
+        h: ph,
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * 見た場所の画素（RGBA）が全部透明（または全部 0）なら、描けていない canvas とみなす。
+ * JPEG を描いた canvas は不透明になるので、写真が真っ黒でもアルファは 255 で、ここには掛からない。
+ */
+export function looksBlank(samples: Uint8ClampedArray[]): boolean {
+  if (!samples.length) return true;
+  return samples.every((d) => {
+    for (let i = 3; i < d.length; i += 4) if (d[i] !== 0) return false;
+    return true;
+  });
+}
+
+/**
+ * タイル検出の区画の大きさ（2026-10-12 レビューで追加）。full range モデルの入力は 192px なので、
+ * 遠景・集合写真の小さい顔は写真全体の 1 回では拾えない。
+ * 1024px の区画だけでは、長辺 4096px の写真で幅 40px 前後の顔をほぼ拾えなかった（dev で 33 人中 1 人）。
+ * 384px の区画を足すと 33 人中 31 人前後まで拾えたので、二段にする（拾いすぎに倒す）。
+ */
+export const FACE_TILE_SIZES = [1024, 384] as const;
+
+/**
+ * タイル検出の区画。大きさごとに 2 割重ねて端まで並べる。写真がその大きさ以下なら、その段は作らない
+ * （写真全体の 1 回で足りる）。重なって二重に拾った枠は mergeDetections が IoU でまとめる。
+ */
+export function faceTiles(
+  width: number,
+  height: number,
+  sizes: readonly number[] = FACE_TILE_SIZES,
+  overlap = 0.2
+): { x: number; y: number; w: number; h: number }[] {
+  const out: { x: number; y: number; w: number; h: number }[] = [];
+  for (const tile of sizes) {
+    if (Math.max(width, height) <= tile) continue;
+    const along = (len: number): [number, number][] => {
+      const size = Math.min(tile, len);
+      if (size >= len) return [[0, len]];
+      const step = Math.max(1, Math.floor(size * (1 - overlap)));
+      const starts: number[] = [];
+      for (let s = 0; s + size < len; s += step) starts.push(s);
+      starts.push(len - size); // 最後は端に揃える
+      return [...new Set(starts)].map((s) => [s, size]);
+    };
+    for (const [y, h] of along(height)) for (const [x, w] of along(width)) out.push({ x, y, w, h });
+  }
+  return out;
 }

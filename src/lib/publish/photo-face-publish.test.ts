@@ -1,5 +1,5 @@
 // 顔モザイクの書き出し（顔モザイク設計 §3.4）を、ローカルの D1・R2（miniflare）で通すテスト。
-// schema.sql と migrations/0011 を一時フォルダの D1 に当ててから動かす（リポジトリの .wrangler は触らない）。
+// schema.sql と migrations（0010 を除く）を一時フォルダの D1 に当ててから動かす（リポジトリの .wrangler は触らない）。
 
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -10,7 +10,8 @@ import { getPlatformProxy } from 'wrangler';
 import { ApiError } from '../http';
 import { FACE_MODEL, faceFingerprint, maskedKeyFor, maskedPublicKeyFor, type PhotoFace } from './photo-face';
 import { faceStates, saveFaces } from './photo-face-db';
-import { copyPhotosForPublish, publicKeyFor, publicUrlFor } from './photos';
+import { copyPhotosForPublish, dropOldPublicKeys, publicKeyFor, publicUrlFor } from './photos';
+import { publishNikki, type BlogWriter } from './astro-blog';
 
 const root = new URL('../../../', import.meta.url).pathname;
 
@@ -27,7 +28,21 @@ const faceA: PhotoFace = { id: 'a1', x: 0.1, y: 0.1, w: 0.2, h: 0.2, source: 'au
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'kakera-cho-face-'));
-  const files = ['schema.sql', 'migrations/0011_photo_face.sql'];
+  const files = [
+    'schema.sql',
+    ...[
+      '0001_fts_trigram_search',
+      '0002_link_card',
+      '0003_name_map',
+      '0004_katachi_kakera',
+      '0005_katachi_written_order',
+      '0006_photo_choice',
+      '0007_nikki_description',
+      '0008_publish_body',
+      '0009_name_doc',
+      '0011_photo_face',
+    ].map((m) => `migrations/${m}.sql`),
+  ];
   writeFileSync(join(dir, 'all.sql'), files.map((f) => readFileSync(join(root, f), 'utf8')).join('\n'));
   execFileSync(
     join(root, 'node_modules/.bin/wrangler'),
@@ -47,6 +62,13 @@ afterAll(async () => {
 
 async function publicKeys(): Promise<string[]> {
   return (await env.IMAGES.list({ prefix: 'diary/' })).objects.map((o) => o.key).sort();
+}
+
+/** 書き出しが通ったときと同じ順: コピー → （日記の commit） → 古い公開 key を消す。 */
+async function publishPhotos(bodies: string[], skip: ReadonlySet<string> = new Set()): Promise<Map<string, string>> {
+  const { map, stale } = await copyPhotosForPublish(env, bodies, skip);
+  await dropOldPublicKeys(env, stale);
+  return map;
 }
 
 async function stopped(p: Promise<unknown>): Promise<string> {
@@ -70,7 +92,7 @@ describe('顔モザイクの書き出し（ローカル D1・R2）', () => {
   it('顔が 0 件なら原本をそのまま出す（今までと同じ key）', async () => {
     await saveFaces(env.DB, KEY, [], FACE_MODEL);
     await saveFaces(env.DB, OTHER, [], FACE_MODEL);
-    const map = await copyPhotosForPublish(env, [body(KEY, OTHER)]);
+    const map = await publishPhotos([body(KEY, OTHER)]);
     expect(map.get(`/api/photo/${KEY}`)).toBe(publicUrlFor(publicKeyFor(KEY)));
     expect(await publicKeys()).toEqual([publicKeyFor(KEY), publicKeyFor(OTHER)].sort());
   });
@@ -87,7 +109,7 @@ describe('顔モザイクの書き出し（ローカル D1・R2）', () => {
     const fp = (await faceFingerprint([faceA]))!;
     await env.PHOTOS.put(maskedKeyFor(KEY, fp), MASKED);
     expect((await faceStates(env.DB, env.PHOTOS, [KEY]))[0]!.masked).toBe(true);
-    const map = await copyPhotosForPublish(env, [body(KEY)]);
+    const map = await publishPhotos([body(KEY)]);
     expect(map.get(`/api/photo/${KEY}`)).toBe(publicUrlFor(maskedPublicKeyFor(KEY, fp)));
     expect(await publicKeys()).toEqual([publicKeyFor(OTHER), maskedPublicKeyFor(KEY, fp)].sort());
     const copied = await env.IMAGES.get(maskedPublicKeyFor(KEY, fp));
@@ -105,19 +127,54 @@ describe('顔モザイクの書き出し（ローカル D1・R2）', () => {
     expect(fp2).not.toBe(fp1);
     await stopped(copyPhotosForPublish(env, [body(KEY)])); // 新しい指紋の版がまだ無い
     await env.PHOTOS.put(maskedKeyFor(KEY, fp2), MASKED);
-    await copyPhotosForPublish(env, [body(KEY)]);
+    await publishPhotos([body(KEY)]);
     expect(await publicKeys()).toEqual([publicKeyFor(OTHER), maskedPublicKeyFor(KEY, fp2)].sort());
   });
 
   it('全部「出す」にすると原本を出し、モザイクの公開 key は消える。出さない写真は検めない', async () => {
     await saveFaces(env.DB, KEY, [{ ...faceA, shown: true }]);
-    const map = await copyPhotosForPublish(env, [body(KEY)]);
+    const map = await publishPhotos([body(KEY)]);
     expect(map.get(`/api/photo/${KEY}`)).toBe(publicUrlFor(publicKeyFor(KEY)));
     expect(await publicKeys()).toEqual([publicKeyFor(KEY), publicKeyFor(OTHER)].sort());
 
     const UNSCANNED = 'kakera/2026/10/12_1500_01JBBBBBBBBBBBBBBBBBBBBBBB_1.jpg';
     await env.PHOTOS.put(UNSCANNED, ORIGINAL);
-    await copyPhotosForPublish(env, [body(KEY, UNSCANNED)], new Set([UNSCANNED]));
+    await publishPhotos([body(KEY, UNSCANNED)], new Set([UNSCANNED]));
     expect(await publicKeys()).not.toContain(publicKeyFor(UNSCANNED));
+  });
+
+  it('古い公開 key は日記の commit が通ってから消す。commit に失敗したら残す（公開中の日記の写真を切らない）', async () => {
+    // いまは素顔の版（publicKeyFor(KEY)）が公開中。隠す枠を足してモザイクの版を用意する
+    const hide = { ...faceA, x: 0.5 };
+    await saveFaces(env.DB, KEY, [hide]);
+    const fp = (await faceFingerprint([hide]))!;
+    await env.PHOTOS.put(maskedKeyFor(KEY, fp), MASKED);
+    const before = await publicKeys();
+    expect(before).toContain(publicKeyFor(KEY));
+
+    const input = { date: '2026-10-12', title: 't', bodies: [body(KEY)], alreadyPublished: true };
+    const testEnv = { ...env, BLOG_GITHUB_TOKEN: 'test', GITHUB_OWNER: 'o', BLOG_REPO: 'r' } as Env;
+    const failing = {
+      fileExists: async () => true,
+      readFile: async () => null,
+      putText: async () => {
+        throw new ApiError(502, 'astro-blog に書けませんでした');
+      },
+    } as unknown as BlogWriter;
+    await expect(publishNikki(testEnv, input, failing)).rejects.toThrow('astro-blog に書けませんでした');
+    // 新しい版は置かれたが、古い素顔の版はまだ残っている（日記はまだ古い URL を指している）
+    expect(await publicKeys()).toEqual([...before, maskedPublicKeyFor(KEY, fp)].sort());
+
+    const written: string[] = [];
+    const ok = {
+      fileExists: async () => true,
+      readFile: async () => null,
+      putText: async (_ref: unknown, _path: string, content: string) => {
+        written.push(content);
+      },
+    } as unknown as BlogWriter;
+    await publishNikki(testEnv, input, ok);
+    expect(written[0]).toContain(publicUrlFor(maskedPublicKeyFor(KEY, fp)));
+    expect(await publicKeys()).toEqual([publicKeyFor(OTHER), maskedPublicKeyFor(KEY, fp)].sort());
   });
 });

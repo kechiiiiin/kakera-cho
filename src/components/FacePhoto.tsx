@@ -8,7 +8,7 @@ import { hiddenFaces, normalizeBox, type PhotoFace, type PhotoFaceState } from '
  *  - 「囲む」で囲むモードに入り、指（またはマウス）のドラッグで四角を描く。描いた枠は「隠す」で始まる
  *  - 手で足した枠は × か長押しで消せる
  * ⚠️ 指の操作は pointer events だけで受ける（iPhone の Safari でも同じ）。囲むモードの間だけ touch-action: none でスクロールを止める。
- * ⚠️ 見た目のモザイクは目安（CSS）。公開されるのは書き出しの前に原寸で作るモザイク（faces.ts）。
+ * ⚠️ 見た目のモザイクは目安（CSS）。公開されるのは書き出しの前に作るモザイク（faces.ts）。
  */
 
 export interface FacePhotoProps {
