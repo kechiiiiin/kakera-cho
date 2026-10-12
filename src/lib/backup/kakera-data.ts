@@ -17,7 +17,10 @@ export function dataRepo(env: Env): RepoRef | null {
   return { owner: env.GITHUB_OWNER, repo: env.DATA_REPO, token: env.DATA_GITHUB_TOKEN };
 }
 
-/** かけらのファイルのパス。written_at から計算する（★だから written_at は不変） */
+/**
+ * かけらのファイルのパス。written_at から計算する。
+ * ★written_at を直すとパスが変わる。流れにいるかけらは relocateKakera で「新しいパスで書いてから旧パスを消す」
+ */
 export function kakeraPath(k: Pick<Kakera, 'id' | 'written_at'>): string {
   const p = partsOfWrittenAt(k.written_at);
   return `kakera/${p.year}/${p.month}/${p.day}_${p.hhmm}_${k.id}.md`;
@@ -70,6 +73,31 @@ export function renderKatachiFile(
 
 export async function backupKakera(ref: RepoRef, k: Kakera, verb: 'create' | 'update'): Promise<void> {
   await putText(ref, kakeraPath(k), renderKakeraFile(k), `${verb}(kakera): ${k.id}`);
+}
+
+/** 控えの読み書き口（テストで差し替える）。 */
+export interface KakeraFileIo {
+  putText: typeof putText;
+  deleteFile: typeof deleteFile;
+}
+
+const githubIo: KakeraFileIo = { putText, deleteFile };
+
+/**
+ * 流れにいるかけらを直したときの控え。書いた日時が変わってパスが変わったら移す。
+ * ⚠️ 新しいパスで書いてから旧パスを消す（syncKatachiRenamed と同じ順）。
+ *    逆にすると、途中で失敗したときに本文がどこにも無い瞬間ができる。
+ */
+export async function relocateKakera(
+  ref: RepoRef,
+  before: Pick<Kakera, 'id' | 'written_at'>,
+  after: Kakera,
+  io: KakeraFileIo = githubIo
+): Promise<void> {
+  const to = kakeraPath(after);
+  await io.putText(ref, to, renderKakeraFile(after), `update(kakera): ${after.id}`);
+  const from = kakeraPath(before);
+  if (from !== to) await io.deleteFile(ref, from, `move(kakera): ${after.id}`);
 }
 
 export async function removeKakera(ref: RepoRef, k: Pick<Kakera, 'id' | 'written_at'>): Promise<void> {

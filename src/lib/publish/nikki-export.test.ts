@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { getPlatformProxy } from 'wrangler';
-import { getKatachiDetail, updateKakeraBody } from '../kakera/db';
+import { getKatachiDetail, updateKakera } from '../kakera/db';
 import { deleteNameEntry, insertNameEntry, listNameMap, pickKakera, updateNameEntry } from '../names/db';
 import { resolveShape } from '../names/doc';
 import {
@@ -171,7 +171,7 @@ describe('書き出しの組み立て（ローカル D1）', () => {
     let page = await openPage();
     await chooseRef(db, K, await listNameMap(db), { ref_id: refIn(page.views, A, 'kakera', '太郎').id, action: 'edit', text: '兄' });
     page = await openPage();
-    await updateKakeraBody(db, A, `太朗が来た！\n\n![花子の写真](/api/photo/${PHOTO})`);
+    await updateKakera(db, A, { body: `太朗が来た！\n\n![花子の写真](/api/photo/${PHOTO})` });
     baseline = await kakeraSnapshot();
     await expect(prepareNikkiExport(db, K, exportInput(page))).rejects.toMatchObject({
       status: 409,

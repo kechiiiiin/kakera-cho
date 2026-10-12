@@ -55,17 +55,30 @@ export async function insertKakera(
   return { ...k, katachi_id: null, updated_at: now };
 }
 
-/** 本文だけを直す。written_at は不変なので絶対に触らない。kakera.updated_at を進めるのはここだけ。 */
-export async function updateKakeraBody(db: D1Database, id: string, body: string): Promise<Kakera> {
+/**
+ * かけらを直す（本文・書いた日時のどちらか、または両方）。kakera.updated_at を進めるのはここだけ。
+ * ★日時を直したときも updated_at を進める（かけら時刻の指定と修正設計・2026-10-12）。
+ * ★id（ULID）と写真の R2 キーは変えない。written_at は呼ぶ側で検査・正規化（+09:00・秒 00）済みのものを渡す。
+ * 控えのパスを移すために、直す前のかけらも返す。
+ */
+export async function updateKakera(
+  db: D1Database,
+  id: string,
+  patch: { body?: string; written_at?: string }
+): Promise<{ kakera: Kakera; before: Kakera }> {
+  const before = await getKakera(db, id);
+  if (!before) throw new ApiError(404, 'そのかけらはありません');
+  const body = patch.body ?? before.body;
+  const writtenAt = patch.written_at ?? before.written_at;
   const now = nowJst();
   const res = await db
-    .prepare('UPDATE kakera SET body = ?, updated_at = ? WHERE id = ?')
-    .bind(body, now, id)
+    .prepare('UPDATE kakera SET body = ?, written_at = ?, updated_at = ? WHERE id = ?')
+    .bind(body, writtenAt, now, id)
     .run();
   if (!res.meta.changes) throw new ApiError(404, 'そのかけらはありません');
   const k = await getKakera(db, id);
   if (!k) throw new ApiError(404, 'そのかけらはありません');
-  return k;
+  return { kakera: k, before };
 }
 
 /**

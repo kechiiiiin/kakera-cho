@@ -8,6 +8,7 @@ import { RichText } from './RichText';
 import type { KEditorInstance } from 'k-editor/preact';
 import { Editor } from './Editor';
 import { KakeraEdit } from './KakeraEdit';
+import { WhenPicker } from './WhenPicker';
 
 /**
  * かけら（トップ）。
@@ -24,6 +25,8 @@ export function WriteScreen({
   loaded,
   draftId,
   draftWrittenAt,
+  draftChosenAt,
+  onDraftChosenAt,
   draft,
   onDraftInput,
   onSave,
@@ -40,11 +43,15 @@ export function WriteScreen({
   cards: LinkCards;
   loaded: boolean;
   draftId: string;
+  /** 書き始めた時刻（写真の R2 キーに使う。日時を指定してもこちらは変えない） */
   draftWrittenAt: string;
+  /** 書く欄で指定した日時（null = 指定していない＝書き始めた時刻で保存する） */
+  draftChosenAt: string | null;
+  onDraftChosenAt: (v: string | null) => void;
   draft: string;
   onDraftInput: (v: string) => void;
   onSave: () => Promise<void>;
-  onEdit: (id: string, body: string) => Promise<void>;
+  onEdit: (id: string, body: string, writtenAt?: string) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
   onGoCompose: () => void;
   /** 「かたちに入れる」の行き先（新しい順） */
@@ -86,6 +93,17 @@ export function WriteScreen({
           placeholder="いま、何が浮かびましたか"
           editorRef={editorRef}
           cards={cards}
+          // 書いた日時（案A）。変えていないときは書き始めた時刻を出す。保存したら次の下書きは「いま」に戻る
+          inlineLeft={
+            <WhenPicker
+              value={draftChosenAt ?? draftWrittenAt}
+              changed={draftChosenAt !== null}
+              resetLabel="いまに戻す"
+              disabled={saving}
+              onChange={onDraftChosenAt}
+              onReset={() => onDraftChosenAt(null)}
+            />
+          }
           inlineAction={
             <button type="button" class="btn-primary" disabled={!draft.trim() || saving} onClick={save}>
               保存
@@ -139,8 +157,8 @@ export function WriteScreen({
                     <KakeraEdit
                       kakera={k}
                       cards={cards}
-                      onSave={async (body) => {
-                        await onEdit(k.id, body);
+                      onSave={async (body, writtenAt) => {
+                        await onEdit(k.id, body, writtenAt);
                         setOpenId(null);
                       }}
                       onCancel={() => setOpenId(null)}

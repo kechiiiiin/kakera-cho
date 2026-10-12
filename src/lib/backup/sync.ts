@@ -8,6 +8,7 @@ import {
   backupKakera,
   backupKatachi,
   dataRepo,
+  relocateKakera,
   removeKakera,
   removeKatachi,
 } from './kakera-data';
@@ -32,12 +33,17 @@ export async function syncKatachiRenamed(env: Env, katachiId: string, oldDate: s
   if (oldDate !== detail.katachi.date) await removeKatachi(ref, oldDate);
 }
 
-/** かけら1枚が変わったとき。流れにいるなら kakera/、かたちの中なら katachi/ を書き直す。 */
-export async function syncKakera(env: Env, k: Kakera): Promise<void> {
+/**
+ * かけら1枚が変わったとき（本文・書いた日時）。
+ *  - かたちの中なら katachi/ を D1 の今の中身で書き直す（並びも新しい日時の順になる）
+ *  - 流れにいるなら kakera/ を書く。日時が変わってパスが変わったら、新しいパスで書いてから旧パスを消す
+ * before は直す前のかけら（旧パスを知るため）。
+ */
+export async function syncKakera(env: Env, k: Kakera, before?: Pick<Kakera, 'id' | 'written_at'>): Promise<void> {
   const ref = dataRepo(env);
   if (!ref) return;
   if (k.katachi_id) await syncKatachi(env, k.katachi_id);
-  else await backupKakera(ref, k, 'update');
+  else await relocateKakera(ref, before ?? k, k);
 }
 
 /** かけらを消したとき。 */

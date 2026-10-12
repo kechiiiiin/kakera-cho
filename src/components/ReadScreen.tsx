@@ -36,7 +36,7 @@ export function ReadScreen({
   detail: KatachiDetail;
   onBack: () => void;
   onGoAssemble: () => void;
-  onEdit: (id: string, body: string) => Promise<void>;
+  onEdit: (id: string, body: string, writtenAt?: string) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
   onDetach: (id: string) => Promise<void>;
   onDissolve: () => Promise<void>;
@@ -172,8 +172,8 @@ export function ReadScreen({
               <KakeraEdit
                 kakera={k}
                 cards={detail.cards}
-                onSave={async (body) => {
-                  await onEdit(k.id, body);
+                onSave={async (body, writtenAt) => {
+                  await onEdit(k.id, body, writtenAt);
                   setOpenId(null);
                 }}
                 onCancel={() => setOpenId(null)}

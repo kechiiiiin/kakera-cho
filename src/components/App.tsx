@@ -53,6 +53,8 @@ export default function App(): JSX.Element {
   // 写真の置き場所（kakera/YYYY/MM/DD_hhmm_<ULID>_n）がこの二つから決まるため。
   const [draft, setDraft] = useState('');
   const draftMeta = useRef<{ id: string; writtenAt: string }>({ id: ulid(), writtenAt: nowJst() });
+  // 書く欄で指定した日時（null = 指定なし）。写真のキーは draftMeta.writtenAt のまま変えない
+  const [draftChosenAt, setDraftChosenAt] = useState<string | null>(null);
 
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<number | undefined>(undefined);
@@ -192,22 +194,27 @@ export default function App(): JSX.Element {
             draft={draft}
             draftId={draftMeta.current.id}
             draftWrittenAt={draftMeta.current.writtenAt}
+            draftChosenAt={draftChosenAt}
+            onDraftChosenAt={setDraftChosenAt}
             onDraftInput={setDraft}
             onSave={() =>
               guard(async () => {
                 await api.createKakera({
                   id: draftMeta.current.id,
                   body: draft.trim(),
-                  written_at: draftMeta.current.writtenAt,
+                  written_at: draftChosenAt ?? draftMeta.current.writtenAt,
                 });
                 setDraft('');
+                // 次の下書きは「いま」に戻す（指定した日時を持ち越さない）
+                setDraftChosenAt(null);
                 draftMeta.current = { id: ulid(), writtenAt: nowJst() };
                 await loadNagare();
               })
             }
-            onEdit={(id, body) =>
+            onEdit={(id, body, writtenAt) =>
               guard(async () => {
-                await api.updateKakera(id, body);
+                await api.updateKakera(id, writtenAt ? { body, written_at: writtenAt } : { body });
+                // 日時を直したら、流れの日の見出しの下へ並び直る（並びはサーバが written_at の新しい順で返す）
                 await loadNagare();
                 say('直しました');
               })
@@ -286,10 +293,11 @@ export default function App(): JSX.Element {
             detail={detail}
             onBack={() => setView({ t: 'katachi' })}
             onGoAssemble={() => setView({ t: 'assemble', id: view.id })}
-            onEdit={(id, body) =>
+            onEdit={(id, body, writtenAt) =>
               guard(async () => {
-                await api.updateKakera(id, body);
-                await loadDetail(view.id);
+                await api.updateKakera(id, writtenAt ? { body, written_at: writtenAt } : { body });
+                // かたちの中は書いた順（written_at）。日時を直したら並び直る。一覧の冒頭（lead）も変わりうる
+                await Promise.all([loadDetail(view.id), writtenAt ? loadKatachiList() : Promise.resolve()]);
                 say('直しました');
               })
             }

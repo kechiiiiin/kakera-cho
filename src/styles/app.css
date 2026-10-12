@@ -801,3 +801,26 @@ pre.conv-md {
 }
 .read-title-edit button { white-space: nowrap; }
 .read-date-note { margin: 10px 0 18px; font-size: 12px; color: var(--muted); }
+
+/* ---- かけらの日時（案A・かけら時刻の指定と修正設計 2026-10-12） ----
+   保存の左に、灰色・等幅・点線の下線で日時。変えたら朱。差し色は朱ひとつだけ（§9）。 */
+.when-cluster { display: flex; align-items: center; gap: 2px; min-width: 0; flex-wrap: wrap; }
+.when {
+  position: relative; display: inline-flex; align-items: center;
+  font-family: var(--mono); font-size: 12px; color: var(--muted);
+  min-height: 38px; padding: 0 2px; cursor: pointer;
+}
+.when-text { border-bottom: 1px dotted var(--muted); white-space: nowrap; }
+.when.changed { color: var(--accent); }
+.when.changed .when-text { border-bottom-color: var(--accent); }
+/* 本物の input を文字の上に透明で重ねる（押すと iPhone の日時ホイールが出る）。16px で iOS の拡大を防ぐ */
+.when input {
+  position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%;
+  cursor: pointer; font-size: 16px; border: none; padding: 0; margin: 0;
+}
+.when-reset {
+  border: none; background: none; color: var(--muted); font-size: 11.5px;
+  padding: 8px 4px; cursor: pointer; text-decoration: underline; text-underline-offset: 2px;
+}
+.when-reset:disabled { opacity: .4; cursor: default; }
+.composer-actions { gap: 10px; }
