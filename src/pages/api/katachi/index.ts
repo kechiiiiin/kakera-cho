@@ -15,7 +15,7 @@ export const GET: APIRoute = ({ locals }) =>
     return json({ katachi: await listKatachi(env.DB) });
   });
 
-/** POST /api/katachi — {id, date, title, kakera_ids[]} */
+/** POST /api/katachi — {id, date, title, kakera_ids[], show_time_ids?[]} */
 export const POST: APIRoute = ({ locals, request }) =>
   handle(async () => {
     const { env, waitUntil } = ctxOf(locals);
@@ -28,12 +28,18 @@ export const POST: APIRoute = ({ locals, request }) =>
     if (!Array.isArray(ids) || !ids.length || !ids.every((x) => typeof x === 'string')) {
       throw new ApiError(400, 'kakera_ids が空です');
     }
+    // 時刻を出すかけら（任意・既定はオフ）。かけら時刻表示設計・2026-10-12
+    const showTimeIds = input.show_time_ids;
+    if (showTimeIds !== undefined && (!Array.isArray(showTimeIds) || !showTimeIds.every((x) => typeof x === 'string'))) {
+      throw new ApiError(400, 'show_time_ids はかけらの id の配列で送ってください');
+    }
 
     const detail = await createKatachi(env.DB, {
       id: input.id,
       date: input.date,
       title,
       kakera_ids: ids as string[],
+      show_time_ids: (showTimeIds as string[] | undefined) ?? [],
     });
     waitUntil(syncKatachiCreated(env, detail.katachi.id));
     return json(await withCards(env.DB, detail), 201);

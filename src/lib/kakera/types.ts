@@ -11,6 +11,11 @@ export interface Kakera {
   katachi_id: string | null;
   /** 本文か書いた日時を直したときだけ進む（公開名変換の選択の basis） */
   updated_at: string;
+  /**
+   * このかたちの中で時刻を出すか（katachi_kakera.show_time・migrations/0012・既定はオフ）。
+   * かたちの中身（kakeraOfKatachi）でだけ入る。かけらたち（未かたち）には無い。kakera の列ではない
+   */
+  show_time?: boolean;
 }
 
 export interface Katachi {

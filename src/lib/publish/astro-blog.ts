@@ -11,6 +11,7 @@ import { blogCardKeysOf } from '../card/url';
 import { copyPhotosForPublish, dropOldPublicKeys } from './photos';
 import { renderDiaryFile } from './diary-file';
 import { composePublishBody } from './blank-lines';
+import type { KakeraTimeHead } from '../kakera/time-label';
 import { REDIRECTS_PATH, dropRedirectsFrom } from './redirects';
 import { LINK_CARDS_PATH, LinkCardsJsonError, buildCardEntries, mergeCardsJson } from './link-cards';
 
@@ -57,6 +58,11 @@ export interface PublishInput {
    * 除き漏れがあっても公開バケットへはコピーしない（二重の備え）。
    */
   hiddenPhotoKeys?: ReadonlySet<string>;
+  /**
+   * かけらごとの時刻の小見出し（bodies と同じ並び・出さないかけらは null）。かけら時刻表示設計・2026-10-12。
+   * 無ければ（どれもチェックしていなければ）今までと同じ本文になる
+   */
+  timeHeads?: (KakeraTimeHead | null)[];
   /** その日付のかたちが既に日記になっているか（nikki に行があるか） */
   alreadyPublished: boolean;
 }
@@ -104,7 +110,8 @@ export async function publishNikki(
   // 空行を U+00A0 の行に変えて連結する（空行の保持）。名前の置き換え・写真の除去・URL の差し替えの**後**に当てる。
   // カードになる行の前後の空行は変えない（かけら帳の画面で隙間に見えないため）ので、画面と同じカードの有無を引く。
   const cards = await cardsForBodies(env.DB, bodies);
-  const body = composePublishBody(bodies, (key) => Object.prototype.hasOwnProperty.call(cards, key));
+  // 時刻の小見出しは空行の変換の後に、かけらの頭へ足す（publish/time-head.ts）
+  const body = composePublishBody(bodies, (key) => Object.prototype.hasOwnProperty.call(cards, key), input.timeHeads);
 
   // ⚠️ リンクカードの JSON を**日記の .md より先に** commit する（リンクカード設計 §6.3）。
   // 逆順だと、日記の commit で走るビルドに JSON がまだ無く、カードの無い日記が公開される時間ができる。

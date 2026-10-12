@@ -126,18 +126,52 @@ export async function getNikkiRow(db: D1Database, katachiId: string): Promise<Ni
   return await db.prepare('SELECT * FROM nikki WHERE katachi_id = ?').bind(katachiId).first<Nikki>();
 }
 
-/** かたちの中のかけら（書いた順）。 */
+/** かたちの中のかけら（書いた順）。時刻を出すか（show_time）も添える（migrations/0012）。 */
 export async function kakeraOfKatachi(db: D1Database, katachiId: string): Promise<Kakera[]> {
   const { results } = await db
     .prepare(
-      `SELECT k.id, k.body, k.written_at, kk.katachi_id, k.updated_at
+      `SELECT k.id, k.body, k.written_at, kk.katachi_id, k.updated_at, kk.show_time
          FROM katachi_kakera kk JOIN kakera k ON k.id = kk.kakera_id
         WHERE kk.katachi_id = ?
         ORDER BY ${WRITTEN_ORDER}`
     )
     .bind(katachiId)
-    .all<Kakera>();
-  return results ?? [];
+    .all<Omit<Kakera, 'show_time'> & { show_time: number | null }>();
+  return (results ?? []).map((r) => ({ ...r, show_time: r.show_time === 1 }));
+}
+
+/**
+ * かたちの中のかけらに「時刻を出す」を付ける／外す（かけら時刻表示設計・2026-10-12）。
+ *  - ★katachi_kakera.show_time だけを書く。kakera・katachi の行（updated_at）には触らない
+ *  - 公開中の日記は即座に書き直さない（次に書き出したときに反映する）。nikki_kakera にも触らない
+ *  - このかたちに無いかけらの id が混ざっていたら 404（黙って飛ばさない）
+ */
+export async function setShowTime(
+  db: D1Database,
+  katachiId: string,
+  kakeraIds: string[],
+  show: boolean
+): Promise<void> {
+  const katachi = await getKatachiRow(db, katachiId);
+  if (!katachi) throw new ApiError(404, 'そのかたちはありません');
+  const ids = [...new Set(kakeraIds)];
+  if (!ids.length) return;
+  const stmts: D1PreparedStatement[] = [];
+  for (let i = 0; i < ids.length; i += IN_CHUNK) {
+    const part = ids.slice(i, i + IN_CHUNK);
+    stmts.push(
+      db
+        .prepare(
+          `UPDATE katachi_kakera SET show_time = ? WHERE katachi_id = ? AND kakera_id IN (${part.map(() => '?').join(',')})`
+        )
+        .bind(show ? 1 : 0, katachiId, ...part)
+    );
+  }
+  // 数を確かめてから書く（一部だけ書いて 404 にしない）
+  const inside = new Set((await kakeraOfKatachi(db, katachiId)).map((k) => k.id));
+  const missing = ids.filter((id) => !inside.has(id));
+  if (missing.length) throw new ApiError(404, `そのかたちに無いかけらがあります（${missing.join(', ')}）`);
+  await db.batch(stmts);
 }
 
 export async function getKatachiDetail(db: D1Database, id: string): Promise<KatachiDetail> {
@@ -163,7 +197,7 @@ export async function getKatachiDetail(db: D1Database, id: string): Promise<Kata
 /** かたちを作る。1日1かたちなので、同じ日付が既にあれば 409。 */
 export async function createKatachi(
   db: D1Database,
-  input: { id: string; date: string; title: string; kakera_ids: string[] }
+  input: { id: string; date: string; title: string; kakera_ids: string[]; show_time_ids?: string[] }
 ): Promise<KatachiDetail> {
   const now = nowJst();
   const dup = await db.prepare('SELECT id FROM katachi WHERE date = ?').bind(input.date).first<{ id: string }>();
@@ -174,6 +208,8 @@ export async function createKatachi(
       .prepare('INSERT INTO katachi (id, date, title, updated_at) VALUES (?, ?, ?, ?)')
       .bind(input.id, input.date, input.title, now),
   ];
+  // 時刻を出すかけら（かたちにする画面でチェックしたもの・既定はオフ）。入れるかけらに無い id は効かない
+  const showTime = new Set(input.show_time_ids ?? []);
   for (const kid of new Set(input.kakera_ids)) {
     // かけらたちにいるものだけを取り込む（二重取り込みの防止）。無い id・他のかたちにいる id は黙って飛ばす。
     // 並びは送られた順ではなく書いた順（読むときに ORDER BY で決まる）。
@@ -181,11 +217,11 @@ export async function createKatachi(
     stmts.push(
       db
         .prepare(
-          `INSERT INTO katachi_kakera (katachi_id, kakera_id)
-           SELECT ?, k.id FROM kakera k
+          `INSERT INTO katachi_kakera (katachi_id, kakera_id, show_time)
+           SELECT ?, k.id, ? FROM kakera k
             WHERE k.id = ? AND NOT EXISTS (SELECT 1 FROM katachi_kakera kk WHERE kk.kakera_id = k.id)`
         )
-        .bind(input.id, kid)
+        .bind(input.id, showTime.has(kid) ? 1 : 0, kid)
     );
   }
   await db.batch(stmts);

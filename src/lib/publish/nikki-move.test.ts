@@ -145,6 +145,7 @@ const MIGRATIONS = [
   '0007_nikki_description',
   '0008_publish_body',
   '0009_name_doc',
+  '0012_show_time',
 ];
 
 let dir = '';

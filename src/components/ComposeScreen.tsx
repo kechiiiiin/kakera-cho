@@ -5,6 +5,7 @@ import type { LinkCards } from '../lib/card/types';
 import { textForPick } from '../lib/card/pick';
 import { dateHeading, dateOf, timeOf } from './format';
 import { RowThumb } from './RichText';
+import { TimeBulkBar, TimeToggle } from './TimeToggle';
 
 /** 書いた順（古い順・同時刻は id 順）。サーバの並び（db.ts の WRITTEN_ORDER）と揃える。 */
 function byWrittenOrder(a: Kakera, b: Kakera): number {
@@ -30,9 +31,11 @@ export function ComposeScreen({
   /** URL をタイトルに畳むためだけに使う（ここのために取りに行かない） */
   cards: LinkCards;
   onBack: () => void;
-  onCreate: (input: { date: string; title: string; kakera_ids: string[] }) => Promise<void>;
+  onCreate: (input: { date: string; title: string; kakera_ids: string[]; show_time_ids: string[] }) => Promise<void>;
 }): JSX.Element {
   const [picked, setPicked] = useState<string[]>([]);
+  // 時刻を出すかけら（かけら時刻表示設計・2026-10-12）。既定はオフ。選びから外したら一緒に外す
+  const [showTime, setShowTime] = useState<string[]>([]);
   const [date, setDate] = useState('');
   const [dateAuto, setDateAuto] = useState(true);
   const [title, setTitle] = useState('');
@@ -57,6 +60,7 @@ export function ComposeScreen({
   function toggle(id: string): void {
     const next = picked.includes(id) ? picked.filter((x) => x !== id) : [...picked, id];
     setPicked(next);
+    if (!next.includes(id)) setShowTime((s) => s.filter((x) => x !== id));
     if (dateAuto) setDate(recomputeDate(next));
   }
 
@@ -68,6 +72,7 @@ export function ComposeScreen({
         date: date || recomputeDate(picked),
         title: title.trim(),
         kakera_ids: chosen.map((k) => k.id),
+        show_time_ids: chosen.filter((k) => showTime.includes(k.id)).map((k) => k.id),
       });
     } finally {
       setBusy(false);
@@ -138,16 +143,29 @@ export function ComposeScreen({
       {!chosen.length ? (
         <p class="empty-note">まだ選ばれていません</p>
       ) : (
-        <div class="assembled">
-          {chosen.map((k) => (
-            <div class="assembled-item" key={k.id}>
-              <span class="assembled-num assembled-time">{timeOf(k.written_at)}</span>
-              <div class="assembled-text">
-                <span class="pick-excerpt">{textForPick(k.body, cards)}</span>
+        <>
+          <TimeBulkBar
+            shown={chosen.filter((k) => showTime.includes(k.id)).length}
+            total={chosen.length}
+            onAll={(show) => setShowTime(show ? chosen.map((k) => k.id) : [])}
+          />
+          <div class="assembled">
+            {chosen.map((k) => (
+              <div class="assembled-item" key={k.id}>
+                <span class="assembled-num assembled-time">{timeOf(k.written_at)}</span>
+                <div class="assembled-text">
+                  <span class="pick-excerpt">{textForPick(k.body, cards)}</span>
+                </div>
+                <TimeToggle
+                  checked={showTime.includes(k.id)}
+                  onChange={(on) =>
+                    setShowTime((s) => (on ? [...s.filter((x) => x !== k.id), k.id] : s.filter((x) => x !== k.id)))
+                  }
+                />
               </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        </>
       )}
 
       <div style="margin-top:22px;">

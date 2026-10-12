@@ -25,6 +25,7 @@ import { api, type PublishNikkiInput, type RefChoiceInput } from './api';
 import { detectFaces, makeMaskedJpeg } from './faces';
 import { FacePhoto } from './FacePhoto';
 import { timeOf } from './format';
+import { timeHeadOf } from '../lib/kakera/time-label';
 import { RichText } from './RichText';
 import { MarkedBody, renderSpan, type MarkRender, type PhotoToggle } from './NameMarks';
 
@@ -113,6 +114,11 @@ export function ConvertScreen({
   say: (msg: string) => void;
 }): JSX.Element {
   const katachiId = detail.katachi.id;
+  /** かけら（seg = かけらの id）の時刻の小見出し。出さないかけらは null（かけら時刻表示設計・2026-10-12） */
+  const timeHeadOfSeg = (seg: string) => {
+    const k = detail.kakera.find((x) => x.id === seg);
+    return k ? timeHeadOf(k, detail.katachi.date) : null;
+  };
   const [entries, setEntries] = useState<NameEntry[] | null>(null);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -737,7 +743,9 @@ export function ConvertScreen({
                 // 書き出し（astro-blog.ts）と同じ組み方（空行を U+00A0 の行に変える）
                 composePublishBody(
                   assembled.bodies.map((b) => b.text),
-                  (key) => !!cards[key]
+                  (key) => !!cards[key],
+                  // 時刻の小見出し（かたちの中で「時刻を出す」にしたかけらだけ・書き出しと同じ規則）
+                  assembled.bodies.map((b) => timeHeadOfSeg(b.seg))
                 ),
                 descOut
               )}
@@ -759,6 +767,11 @@ export function ConvertScreen({
                 .map((b) => (
                   <div class="conv-block" key={b.seg}>
                     <hr class="conv-sep" />
+                    {timeHeadOfSeg(b.seg) ? (
+                      <time class="read-time" dateTime={timeHeadOfSeg(b.seg)!.datetime}>
+                        {timeHeadOfSeg(b.seg)!.label}
+                      </time>
+                    ) : null}
                     <RichText text={b.text} imgClass="assembled-photo" cards={cards} />
                   </div>
                 ))}

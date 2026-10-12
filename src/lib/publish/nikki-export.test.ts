@@ -1,6 +1,6 @@
 // 書き出しの組み立てを、ローカルの D1（miniflare）で通すテスト（公開名変換設計・記号方式の移行とテスト §6 の 15・19・22 ほか）。
 // ⚠️ 仮名の辞書だけで書く。家族の実名を書かない（このリポジトリは public）。
-// schema.sql と migrations/0001〜0009 を一時フォルダの D1 に当ててから動かす（リポジトリの .wrangler は触らない）。
+// schema.sql と migrations/0001〜0009・0012 を一時フォルダの D1 に当ててから動かす（リポジトリの .wrangler は触らない）。
 
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { getPlatformProxy } from 'wrangler';
-import { getKatachiDetail, updateKakera } from '../kakera/db';
+import { createKatachi, getKatachiDetail, setShowTime, updateKakera } from '../kakera/db';
 import { deleteNameEntry, insertNameEntry, listNameMap, pickKakera, updateNameEntry } from '../names/db';
 import { resolveShape } from '../names/doc';
 import {
@@ -35,6 +35,7 @@ const MIGRATIONS = [
   '0007_nikki_description',
   '0008_publish_body',
   '0009_name_doc',
+  '0012_show_time',
 ];
 
 let dir = '';
@@ -294,5 +295,96 @@ describe('書き出しの組み立て（ローカル D1）', () => {
     );
     expect(written[0]!.content).not.toContain(PHOTO);
     expect(await kakeraSnapshot()).toBe(baseline);
+  });
+
+  // ---- かけらごとに時刻を出す（かけら時刻表示設計・2026-10-12） ----
+
+  async function writeDiary(): Promise<string> {
+    const page = await openPage();
+    const p = await prepareNikkiExport(db, K, exportInput(page, { confirm_real_names: true, photos: [{ kakera_id: A, key: PHOTO }] }));
+    const written: string[] = [];
+    const gh = {
+      fileExists: async () => false,
+      readFile: async () => null,
+      putText: async (_ref: unknown, _path: string, content: string) => {
+        written.push(content);
+      },
+    } as unknown as BlogWriter;
+    const env = { ...proxy.env, BLOG_GITHUB_TOKEN: 'test', GITHUB_OWNER: 'o', BLOG_REPO: 'r' } as Env;
+    await publishNikki(env, p.publish, gh);
+    return written[0]!;
+  }
+
+  const BODY_ONLY = ['太朗が来た！', '', '---', '', '妻と次男の日。'].join('\n');
+
+  it('時刻: 既定はオフで、書き出しは今と同じ（小見出しが入らない）', async () => {
+    const detail = await getKatachiDetail(db, K);
+    expect(detail.kakera.map((k) => k.show_time)).toEqual([false, false]);
+    const content = await writeDiary();
+    expect(content).toContain(`---\n\n${BODY_ONLY}\n`);
+    expect(content).not.toContain('kakera-time');
+  });
+
+  it('時刻: チェックしたかけらの上にだけ小見出し。違う日のかけらは日付を添える。名前の置き換え・写真の除去はそのまま', async () => {
+    const katachiBefore = await db.prepare('SELECT updated_at FROM katachi WHERE id = ?').bind(K).first<{ updated_at: string }>();
+    const kakeraBefore = await kakeraSnapshot();
+    await setShowTime(db, K, [B], true);
+    // チェックは kakera・katachi の行に触らない
+    expect(await kakeraSnapshot()).toBe(kakeraBefore);
+    expect(await db.prepare('SELECT updated_at FROM katachi WHERE id = ?').bind(K).first()).toEqual(katachiBefore);
+    expect((await getKatachiDetail(db, K)).kakera.map((k) => k.show_time)).toEqual([false, true]);
+
+    // B を翌日の深夜に書いたことにする（日時の修正と同じく、表示は今の written_at に従う）
+    await db.prepare('UPDATE kakera SET written_at = ? WHERE id = ?').bind('2026-09-15T01:30:00+09:00', B).run();
+    let content = await writeDiary();
+    expect(content).toContain(
+      [
+        '太朗が来た！',
+        '',
+        '---',
+        '',
+        '<p class="kakera-time"><time datetime="2026-09-15T01:30:00+09:00">09-15 01:30</time></p>',
+        '',
+        '妻と次男の日。',
+      ].join('\n')
+    );
+    expect(content).not.toContain(PHOTO);
+
+    // 両方に付ける（写真を出さないかけら A も、残った本文の上に同じ日の時刻だけ）
+    await setShowTime(db, K, [A, B], true);
+    content = await writeDiary();
+    expect(content).toContain(
+      '<p class="kakera-time"><time datetime="2026-09-14T09:00:00+09:00">09:00</time></p>\n\n太朗が来た！\n\n---'
+    );
+    expect(content.match(/kakera-time/g)?.length).toBe(2);
+
+    // 全部外すと、元の出力に戻る
+    await setShowTime(db, K, [A, B], false);
+    content = await writeDiary();
+    expect(content).toContain(`---\n\n${BODY_ONLY}\n`);
+    expect(content).not.toContain('kakera-time');
+    await db.prepare('UPDATE kakera SET written_at = ? WHERE id = ?').bind('2026-09-14T10:00:00+09:00', B).run();
+  });
+
+  it('時刻: このかたちに無いかけらは 404（一部だけ書かない）', async () => {
+    await expect(setShowTime(db, K, [A, ulid()], true)).rejects.toMatchObject({ status: 404 });
+    expect((await getKatachiDetail(db, K)).kakera.map((k) => k.show_time)).toEqual([false, false]);
+  });
+
+  it('時刻: かたちにするときに付けたものだけ show_time になる', async () => {
+    const C = ulid();
+    const D = ulid();
+    const at = '2026-09-20T08:00:00+09:00';
+    await db.batch([
+      db.prepare('INSERT INTO kakera (id, body, written_at, updated_at) VALUES (?, ?, ?, ?)').bind(C, 'し', at, at),
+      db.prepare('INSERT INTO kakera (id, body, written_at, updated_at) VALUES (?, ?, ?, ?)').bind(D, 'て', '2026-09-20T09:00:00+09:00', at),
+    ]);
+    const detail = await createKatachi(db, { id: ulid(), date: '2026-09-20', title: '', kakera_ids: [C, D], show_time_ids: [D, A] });
+    expect(detail.kakera.map((k) => [k.id, k.show_time])).toEqual([
+      [C, false],
+      [D, true],
+    ]);
+    // 他のかたちにいるかけら（A）の印は動かない
+    expect((await getKatachiDetail(db, K)).kakera.map((k) => k.show_time)).toEqual([false, false]);
   });
 });
