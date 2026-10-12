@@ -5,11 +5,11 @@ import type { LinkCards } from '../card/types';
 export interface Kakera {
   id: string;
   body: string;
-  /** ISO8601(JST・+09:00 付き)。書いた日時。★不変 */
+  /** ISO8601(JST・+09:00 付き)。書いた日時。後から直せる（直すと控えのファイル名も移る） */
   written_at: string;
   /** 置き場所（katachi_kakera から導出。NULL = かけらたち＝未かたち）。kakera の列ではない */
   katachi_id: string | null;
-  /** 本文を直したときだけ進む（公開名変換の選択の basis） */
+  /** 本文か書いた日時を直したときだけ進む（公開名変換の選択の basis） */
   updated_at: string;
 }
 

@@ -1,6 +1,7 @@
 // JST 固定の時刻まわり。
 // ⚠️ written_at は必ず +09:00 付きで保存する（設計 §4）。
 // オフセットが揺れると控えのファイル名の DD_hhmm がずれ、削除時にどのファイルを消すか分からなくなる。
+// written_at は後から直せる（かけら時刻の指定と修正設計・2026-10-12）。直したときは控えを新しいパスへ移す。
 
 const JST_OFFSET_MS = 9 * 60 * 60 * 1000;
 
@@ -66,4 +67,23 @@ export function isWrittenAt(s: unknown): s is string {
 /** どんなオフセットで来ても +09:00 表記に正規化する（秒まで揃える）。 */
 export function normalizeToJst(iso: string): string {
   return toJstIso(new Date(iso));
+}
+
+/** 端末とサーバの時計のずれとして許す、未来側の幅。 */
+export const FUTURE_TOLERANCE_MS = 5 * 60 * 1000;
+
+/**
+ * 直す（PATCH）で受け取った written_at を検査して、保存する形（+09:00・秒は 00）にする。
+ * 形が違う・未来（ずれの幅を超える）なら error を返す。
+ */
+export function writtenAtFromInput(
+  s: unknown,
+  nowMs: number = Date.now()
+): { ok: true; value: string } | { ok: false; error: string } {
+  if (!isWrittenAt(s)) return { ok: false, error: 'written_at はオフセット付きの ISO8601 で送ってください' };
+  const t = new Date(s).getTime();
+  if (Number.isNaN(t)) return { ok: false, error: 'written_at が日時として読めません' };
+  if (t > nowMs + FUTURE_TOLERANCE_MS) return { ok: false, error: '未来の日時にはできません' };
+  const jst = normalizeToJst(s);
+  return { ok: true, value: jst.slice(0, 17) + '00+09:00' };
 }

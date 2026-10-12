@@ -92,8 +92,9 @@ export const api = {
   createKakera: (input: { id: string; body: string; written_at: string }) =>
     req<{ kakera: Kakera }>('/api/kakera', { method: 'POST', body: JSON.stringify(input) }).then((r) => r.kakera),
 
-  updateKakera: (id: string, body: string) =>
-    req<{ kakera: Kakera }>(`/api/kakera/${id}`, { method: 'PATCH', body: JSON.stringify({ body }) }).then(
+  /** body・written_at のどちらか、または両方を直す */
+  updateKakera: (id: string, patch: { body?: string; written_at?: string }) =>
+    req<{ kakera: Kakera }>(`/api/kakera/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }).then(
       (r) => r.kakera
     ),
 

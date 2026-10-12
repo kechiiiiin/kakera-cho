@@ -37,11 +37,13 @@ export function Editor({
   editorRef,
   cards,
   inlineAction,
+  inlineLeft,
   belowAction,
 }: {
   value: string;
   onInput: (v: string) => void;
   kakeraId: string;
+  /** 写真の R2 キーに使う日時。★書き始めた時刻（直す前の written_at）のまま。日時を直してもキーは変えない */
   writtenAt: string;
   placeholder?: string;
   /** フォーカスを戻す等のための操作口 */
@@ -50,6 +52,8 @@ export function Editor({
   cards?: LinkCards;
   /** 本文の下の行の右に置くもの（「保存」） */
   inlineAction?: JSX.Element;
+  /** その行の左に置くもの（書いた日時・WhenPicker） */
+  inlineLeft?: JSX.Element;
   /** その下に置くもの（その場編集の 取消／削除） */
   belowAction?: JSX.Element;
 }): JSX.Element {
@@ -105,7 +109,7 @@ export function Editor({
       />
       {inlineAction ? (
         <div class="composer-actions">
-          <span />
+          {inlineLeft ?? <span />}
           {inlineAction}
         </div>
       ) : null}

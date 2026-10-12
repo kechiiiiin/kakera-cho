@@ -8,7 +8,7 @@
 CREATE TABLE IF NOT EXISTS kakera (
   id          TEXT PRIMARY KEY,   -- ULID。端末で採番（オフラインでも作れる）
   body        TEXT NOT NULL,      -- Markdown。写真は ![](url) で本文中に
-  written_at  TEXT NOT NULL,      -- ISO8601(JST)。書いた日時。★不変（書き換えない）
+  written_at  TEXT NOT NULL,      -- ISO8601(JST・+09:00)。書いた日時。書くときに指定・後から修正できる（直すと控えのパスが移る）
   katachi_id  TEXT,               -- NULL = まだかたちになっていない
   sort_order  REAL,               -- かたちの中での並び（小数で間に挿せる）
   updated_at  TEXT NOT NULL
