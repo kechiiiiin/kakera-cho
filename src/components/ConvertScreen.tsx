@@ -36,9 +36,11 @@ import { MarkedBody, renderSpan, type MarkRender, type PhotoToggle } from './Nam
  *  選択は記号ごとに D1 へ覚える（押すたびにその記号だけ保存）。拒否が残ったまま書き出すときは念押しを出す。
  *  原本・タイトル・説明を直しても白紙に戻らない。直した場所の名前だけ辞書どおりに戻り、どの名前かを知らせる。
  *  写真: 写真ごとに「日記に出す／出さない」。選択は写真の key に紐づけて D1 へ覚える。
- *  顔（顔モザイク設計）: 日記に出す写真ごとに顔を検出し（1 枚 1 回・結果は D1）、見つけた顔は全部「隠す」で始める。
- *  枠をタップで隠す／出す、「囲む」で枠を足す。書き出す前に、隠す枠のある写真のモザイク済みの版を作って置く（長辺 4096px・16MP 以下に縮めた大きさ）。
- *  検出モデルは faces.ts が初めて呼ばれたときに読み込む（他の画面は重くならない）。
+ *  顔（顔モザイク設計）: 開いても顔は探さない（2026-10-12 §2.1 で変更）。日記に出す写真ごとの「顔を探す」を押したときだけ、
+ *  その写真を検出する（結果は D1）。見つけた顔は全部「隠す」で始める。押し直すと検出し直す（自動の枠は入れ替え・手で足した枠は残す）。
+ *  枠をタップで隠す／出す、「囲む」で枠を足す（検出していない写真でも使える）。書き出す前に、隠す枠のある写真のモザイク済みの版を作って置く
+ *  （面積 16MP・長辺 4096px 以下に縮めた大きさ）。検出していない写真で隠す枠が無ければ、原本がそのまま出る。
+ *  検出モデルは「顔を探す」を初めて押したときに読み込む（開いただけでは読み込まない。他の画面も重くならない）。
  *  日記用に直す: かけらごとに、日記に出す文だけを書き換えられる（原本は触らない）。欄は置き換え済みの文で開き、
  *  保存すると差分で名前を記号に戻す（触らなかった名前の選択は残る）。原本が変わったら「原本が変わっています」。
  *
@@ -144,7 +146,7 @@ export function ConvertScreen({
   const [faces, setFaces] = useState<Record<string, PhotoFaceState>>({});
   /** 検出に失敗した写真の key → 理由 */
   const [faceErrors, setFaceErrors] = useState<Record<string, string>>({});
-  /** いま検出している写真の key（1 枚ずつ順に） */
+  /** いま検出している写真の key（1 枚ずつ。「顔を探す」を押した写真） */
   const [scanning, setScanning] = useState<string | null>(null);
   /** 検出中の写真の区画の進み具合 */
   const [scanProgress, setScanProgress] = useState<{ done: number; total: number } | null>(null);
@@ -152,10 +154,8 @@ export function ConvertScreen({
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const facesRef = useRef(faces);
   facesRef.current = faces;
-  const faceErrorsRef = useRef(faceErrors);
-  faceErrorsRef.current = faceErrors;
   const scanningRef = useRef<string | null>(null);
-  /** 顔を調べる写真（描くたびに描画の中で決め直す。下の pumpFaces が読む） */
+  /** 日記に出す、顔の枠を持てる写真（描くたびに描画の中で決め直す。下の枠の読み込みと書き出しの手前が読む） */
   const wantFacesRef = useRef<string[]>([]);
   /** サーバへ枠を読みに行った写真 */
   const requestedFaces = useRef(new Set<string>());
@@ -221,41 +221,17 @@ export function ConvertScreen({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sheet?.type === 'mark' && sheet.editing]);
 
-  // 日記に出す写真の顔の枠を読み、まだ調べていない写真を 1 枚ずつ検出する（描くたびに続きを進める）
+  // 日記に出す写真の顔の枠を読む（描くたびに、まだ読んでいない写真だけ）。検出はしない（「顔を探す」を押したときだけ）
   useEffect(() => {
-    const want = wantFacesRef.current;
-    const unknown = want.filter((k) => !requestedFaces.current.has(k));
-    if (unknown.length) {
-      unknown.forEach((k) => requestedFaces.current.add(k));
-      api
-        .loadPhotoFaces(unknown)
-        .then((list) => setFaces((f) => ({ ...f, ...Object.fromEntries(list.map((st) => [st.key, st])) })))
-        .catch((e: unknown) => {
-          const msg = e instanceof Error ? e.message : String(e);
-          setFaceErrors((m) => ({ ...m, ...Object.fromEntries(unknown.map((k) => [k, msg])) }));
-        });
-    }
-    if (scanningRef.current) return;
-    const next = want.find((k) => {
-      const st = facesRef.current[k];
-      return st && !st.scanned && !faceErrorsRef.current[k];
-    });
-    if (!next) return;
-    scanningRef.current = next;
-    setScanning(next);
-    setScanProgress(null);
-    detectFaces(next, (done, total) => setScanProgress({ done, total }))
-      // 版違いのモデルで調べてあった写真は検出し直す。手で足した枠はそのまま残す（自動の枠は今の検出で入れ替える）
-      .then((found) => {
-        const manual = (facesRef.current[next]?.faces ?? []).filter((f) => f.source === 'manual');
-        return api.savePhotoFaces({ key: next, faces: [...found, ...manual], model: FACE_MODEL });
-      })
-      .then((st) => setFaces((f) => ({ ...f, [next]: st })))
-      .catch((e: unknown) => setFaceErrors((m) => ({ ...m, [next]: e instanceof Error ? e.message : String(e) })))
-      .finally(() => {
-        scanningRef.current = null;
-        setScanning(null);
-        setScanProgress(null);
+    const unknown = wantFacesRef.current.filter((k) => !requestedFaces.current.has(k));
+    if (!unknown.length) return;
+    unknown.forEach((k) => requestedFaces.current.add(k));
+    api
+      .loadPhotoFaces(unknown)
+      .then((list) => setFaces((f) => ({ ...f, ...Object.fromEntries(list.map((st) => [st.key, st])) })))
+      .catch((e: unknown) => {
+        const msg = e instanceof Error ? e.message : String(e);
+        setFaceErrors((m) => ({ ...m, ...Object.fromEntries(unknown.map((k) => [k, msg])) }));
       });
   });
 
@@ -370,15 +346,13 @@ export function ConvertScreen({
     }
   }
   wantFacesRef.current = [...wantFaces];
-  const faceCount = { hidden: 0, shown: 0, pending: 0 };
+  const faceCount = { hidden: 0, shown: 0 };
   for (const key of wantFaces) {
     const st = faces[key];
-    if (!st?.scanned) faceCount.pending++;
-    else {
-      const h = hiddenFaces(st.faces).length;
-      faceCount.hidden += h;
-      faceCount.shown += st.faces.length - h;
-    }
+    if (!st) continue;
+    const h = hiddenFaces(st.faces).length;
+    faceCount.hidden += h;
+    faceCount.shown += st.faces.length - h;
   }
 
   const counts = { dict: 0, edit: 0, reject: 0, exc: 0 };
@@ -430,24 +404,61 @@ export function ConvertScreen({
       .catch(sayError('顔の枠を保存できませんでした: '));
   }
 
-  function retryFaces(key: string): void {
-    if (!facesRef.current[key]) requestedFaces.current.delete(key);
+  function clearFaceError(key: string): void {
     setFaceErrors((m) => {
       const { [key]: _drop, ...rest } = m;
       return rest;
     });
   }
 
+  /** 枠を読めなかった写真を読み直す。 */
+  function reloadFaces(key: string): void {
+    requestedFaces.current.delete(key);
+    clearFaceError(key);
+  }
+
   /**
-   * 書き出しの手前: 日記に出す写真の顔の検出が済んでいるか確かめ、隠す枠のある写真のモザイク済みの版を作って置く。
-   * サーバも同じことを検めて止める（ここは早めに知らせて、版を用意するため）。
+   * 「顔を探す」: その写真だけ検出して、自動の枠を入れ替える（手で足した枠は残す）。見つけた顔は全部「隠す」で始まる。
+   * 検出モデルはここで初めて読み込む（faces.ts）。一度に 1 枚だけ。
+   */
+  async function scanFaces(key: string): Promise<void> {
+    if (scanningRef.current || !facesRef.current[key]) return;
+    scanningRef.current = key;
+    setScanning(key);
+    setScanProgress(null);
+    clearFaceError(key);
+    try {
+      const found = await detectFaces(key, (done, total) => setScanProgress({ done, total }));
+      // 枠の保存が残っていれば先に終える（検出中は枠を直せないので、ここで読む手の枠が最新）
+      await faceChain.current;
+      const manual = (facesRef.current[key]?.faces ?? []).filter((f) => f.source === 'manual');
+      const ver = (faceVer.current.get(key) ?? 0) + 1;
+      faceVer.current.set(key, ver);
+      const st = await api.savePhotoFaces({ key, faces: [...found, ...manual], model: FACE_MODEL });
+      if (faceVer.current.get(key) === ver) setFaces((f) => ({ ...f, [key]: st }));
+    } catch (e) {
+      setFaceErrors((m) => ({ ...m, [key]: e instanceof Error ? e.message : String(e) }));
+    } finally {
+      scanningRef.current = null;
+      setScanning(null);
+      setScanProgress(null);
+    }
+  }
+
+  /**
+   * 書き出しの手前: 隠す枠のある写真のモザイク済みの版を作って置く。検出していない写真も止めない（2026-10-12 §2.1 で変更。
+   * 隠す枠が無ければ原本がそのまま出る）。隠す枠があるのに版が無ければ、サーバが止める（素顔のまま出さない）。
    */
   async function prepareMasks(): Promise<boolean> {
+    if (scanningRef.current) {
+      say('顔を探している途中です。終わってから書き出してください。');
+      return false;
+    }
     await faceChain.current;
     const want = wantFacesRef.current;
-    const pending = want.filter((k) => !facesRef.current[k]?.scanned);
-    if (pending.length) {
-      say(`顔を調べ終わっていない写真が ${pending.length} 枚あります。終わってから書き出してください。`);
+    const unread = want.filter((k) => !facesRef.current[k]);
+    if (unread.length) {
+      say(`顔の枠を読み込めていない写真が ${unread.length} 枚あります。読み込めてから書き出してください。`);
       return false;
     }
     const todo: { key: string; faces: PhotoFace[]; fp: string }[] = [];
@@ -576,10 +587,12 @@ export function ConvertScreen({
           src={src}
           state={faces[key] ?? null}
           scanning={scanning === key}
+          busyElsewhere={!!scanning && scanning !== key}
           progress={scanning === key ? scanProgress : null}
           error={faceErrors[key] ?? null}
           onChange={(next) => changeFaces(key, next)}
-          onRetry={() => retryFaces(key)}
+          onScan={() => void scanFaces(key)}
+          onReload={() => reloadFaces(key)}
         />
       ) : (
         <img src={src} alt="" loading="lazy" />
@@ -720,14 +733,14 @@ export function ConvertScreen({
               顔 隠す<b>{faceCount.hidden}</b>
               <span class="t-slash">／</span>
               出す<b>{faceCount.shown}</b>
-              {faceCount.pending ? (
-                <span class="t-pending">
-                  （顔を探しています {wantFaces.size - faceCount.pending}／{wantFaces.size} 枚）
-                </span>
-              ) : null}
             </span>
           ) : null}
         </div>
+      ) : null}
+      {view === 'marks' && wantFaces.size ? (
+        <p class="plain-note face-note">
+          顔は自動では探しません。隠したい顔がある写真は、写真の下の「顔を探す」か「囲む」を使ってください。
+        </p>
       ) : null}
 
       {view === 'md' ? (

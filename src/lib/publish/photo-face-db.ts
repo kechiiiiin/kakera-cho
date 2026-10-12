@@ -24,8 +24,9 @@ interface FaceRow {
 
 /**
  * 写真の key → {検出が済んだか, 枠}（並びは face_id 順）。顔モザイクの対象でない key は入れない。
- * 「済んだ」は**今の FACE_MODEL で**調べた印があるときだけ（2026-10-12 再レビューで変更）。版違いは未検出として扱い、
- * 画面が検出し直す（自動の枠は見つけ直した顔で入れ替わり、全部「隠す」に戻る。手で足した枠は残す）。
+ * 「済んだ」は**今の FACE_MODEL で**調べた印があるときだけ（2026-10-12 再レビューで変更）。版違いは未検出として扱う。
+ * 検出は画面で「顔を探す」を押したときだけ（2026-10-12 §2.1 で変更。自動の枠は見つけ直した顔で入れ替わり、手で足した枠は残す）。
+ * 「済んだ」は記録として持つだけで、書き出しの条件には使わない（版違いで残っている枠も、隠す枠ならそのまま効く）。
  */
 export async function loadFaces(db: D1Database, keys: string[]): Promise<Map<string, { scanned: boolean; faces: PhotoFace[] }>> {
   const list = [...new Set(keys.filter(isFacePhotoKey))];
@@ -35,7 +36,7 @@ export async function loadFaces(db: D1Database, keys: string[]): Promise<Map<str
     const part = list.slice(i, i + 90);
     const marks = part.map(() => '?').join(',');
     const [scans, faces] = await db.batch([
-      // 版の違うモデルで調べた写真は未検出として扱う（画面が今のモデルで検出し直す）
+      // 版の違うモデルで調べた写真は未検出として扱う
       db.prepare(`SELECT photo_key FROM photo_face_scan WHERE model = ? AND photo_key IN (${marks})`).bind(FACE_MODEL, ...part),
       db
         .prepare(

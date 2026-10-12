@@ -83,8 +83,9 @@ export interface PhotoCopyPlan {
  * 公開バケットへのコピーを決める（顔モザイク設計 §3.4）。**何もコピーしないうちに**全部を検める。
  *
  * - 隠す枠がある写真は、原本ではなく**モザイク済みの版**をコピーする。公開 key に指紋を入れる
- * - 次の場合は 409 で止めて理由を出す（素顔のまま外へ出さない）:
- *   顔の検出が済んでいない写真がある／隠す枠があるのに、いまの指紋に合うモザイク済みの版が無い
+ * - 隠す枠があるのに、いまの指紋に合うモザイク済みの版が無ければ 409 で止めて理由を出す（素顔のまま外へ出さない）
+ * - 顔の検出が済んでいるかは見ない（2026-10-12 §2.1 で変更。検出は「顔を探す」を押したときだけ）。
+ *   検出していない写真でも、手で囲んだ隠す枠があればモザイク済みの版を出し、隠す枠が無ければ原本をそのまま出す
  * - 原本が非公開バケットに無い写真（ローカル）は、今までどおり対応表に入れない（公開側では開けない＝外に出ない）
  * - リンクカードの画像（kakera/cards/…）は対象外（原本をそのまま）
  */
@@ -104,17 +105,12 @@ export async function planPhotoCopies(
   );
 
   const plans: PhotoCopyPlan[] = [];
-  const unscanned: string[] = [];
   const unmasked: string[] = [];
   for (const { url, key } of targets) {
     if (!(await env.PHOTOS.head(key))) continue;
     const f = faces.get(key);
     if (!f) {
       plans.push({ url, key, from: key, to: publicKeyFor(key), masked: false });
-      continue;
-    }
-    if (!f.scanned) {
-      unscanned.push(key);
       continue;
     }
     const fp = await faceFingerprint(f.faces);
@@ -130,13 +126,10 @@ export async function planPhotoCopies(
     plans.push({ url, key, from, to: maskedPublicKeyFor(key, fp), masked: true });
   }
 
-  const why: string[] = [];
-  if (unscanned.length) why.push(`顔の検出が済んでいない写真が ${unscanned.length} 枚あります`);
-  if (unmasked.length) why.push(`顔を隠す写真のうち ${unmasked.length} 枚は、モザイクをかけた版がまだできていません`);
-  if (why.length) {
+  if (unmasked.length) {
     throw new ApiError(
       409,
-      `${why.join('。')}。素顔のまま出さないよう、書き出していません。変換の画面を開き直して、顔の検出とモザイクが済んでから書き出してください。`
+      `顔を隠す写真のうち ${unmasked.length} 枚は、モザイクをかけた版がまだできていません。素顔のまま出さないよう、書き出していません。変換の画面を開き直してから書き出してください。`
     );
   }
   return plans;
@@ -155,7 +148,7 @@ export interface StalePublicKeys {
  * 後で消す古い公開 key の目印を返す。
  * 公開バケットが無い環境（ローカル）では、コピーできなかったものを対応表に入れない。
  * ⚠️ 渡す本文は、日記に出さない写真を除いた後のもの（出さない写真はコピーしない）。
- * ⚠️ 顔の検出・モザイクが済んでいない写真があれば、何もコピーせずに 409（planPhotoCopies）。
+ * ⚠️ 隠す枠があるのにモザイク済みの版が無い写真があれば、何もコピーせずに 409（planPhotoCopies）。
  *
  * 同じ写真の古い公開 key（素顔の版・前の指紋の版）は**ここでは消さない**（2026-10-12 レビューで変更）。
  * 公開中の日記はまだ古い key を指しているので、日記の commit が通ってから dropOldPublicKeys で消す（astro-blog.ts）。

@@ -83,10 +83,14 @@ async function stopped(p: Promise<unknown>): Promise<string> {
 }
 
 describe('顔モザイクの書き出し（ローカル D1・R2）', () => {
-  it('検出が済んでいない写真があると、何もコピーせずに止まる', async () => {
-    const msg = await stopped(copyPhotosForPublish(env, [body(KEY)]));
-    expect(msg).toContain('顔の検出が済んでいない写真が 1 枚');
-    expect(await publicKeys()).toEqual([]);
+  it('検出していない写真でも、隠す枠が無ければ原本をそのまま出す（2026-10-12 §2.1 で変更）', async () => {
+    const [st] = await faceStates(env.DB, env.PHOTOS, [KEY]);
+    expect(st).toMatchObject({ scanned: false, faces: [], fp: null });
+    const map = await publishPhotos([body(KEY)]);
+    expect(map.get(`/api/photo/${KEY}`)).toBe(publicUrlFor(publicKeyFor(KEY)));
+    expect(await publicKeys()).toEqual([publicKeyFor(KEY)]);
+    const copied = await env.IMAGES.get(publicKeyFor(KEY));
+    expect(new Uint8Array(await copied!.arrayBuffer())).toEqual(ORIGINAL);
   });
 
   it('顔が 0 件なら原本をそのまま出す（今までと同じ key）', async () => {
@@ -212,14 +216,44 @@ describe('顔モザイクの書き出し（ローカル D1・R2）', () => {
     expect(await publicKeys()).toEqual([publicKeyFor(OTHER), maskedPublicKeyFor(KEY, fp)].sort());
   });
 
-  it('版の違うモデルで調べた印は、調べていないのと同じ（書き出しが止まり、画面が検出し直す）', async () => {
-    await saveFaces(env.DB, KEY, [faceA], 'mediapipe-tasks-vision@0.0.1/old-model');
+  it('版の違うモデルで調べた印は未検出の扱い。それでも残っている隠す枠は効く（版が無ければ止まる）', async () => {
+    const old = { ...faceA, x: 0.65 };
+    await saveFaces(env.DB, KEY, [old], 'mediapipe-tasks-vision@0.0.1/old-model');
     const [st] = await faceStates(env.DB, env.PHOTOS, [KEY]);
     expect(st!.scanned).toBe(false);
     expect(await isScanned(env.DB, KEY)).toBe(false);
     const msg = await stopped(copyPhotosForPublish(env, [body(KEY)]));
-    expect(msg).toContain('顔の検出が済んでいない写真が 1 枚');
-    await saveFaces(env.DB, KEY, [faceA], FACE_MODEL);
+    expect(msg).toContain('モザイクをかけた版がまだできていません');
+    await saveFaces(env.DB, KEY, [old], FACE_MODEL);
     expect(await isScanned(env.DB, KEY)).toBe(true);
+  });
+
+  describe('検出していない写真（2026-10-12 §2.1）', () => {
+    const NEW = 'kakera/2026/10/12_1600_01JCCCCCCCCCCCCCCCCCCCCCCC_1.jpg';
+    const drawn: PhotoFace = { id: 'mdrawn', x: 0.4, y: 0.2, w: 0.15, h: 0.15, source: 'manual', shown: false };
+
+    it('手で囲んだ隠す枠があるのにモザイク済みの版が無ければ、何もコピーせずに止まる', async () => {
+      await env.PHOTOS.put(NEW, ORIGINAL, { httpMetadata: { contentType: 'image/jpeg' } });
+      await saveFaces(env.DB, NEW, [drawn]); // model なし＝検出はしていない
+      const [st] = await faceStates(env.DB, env.PHOTOS, [NEW]);
+      expect(st).toMatchObject({ scanned: false, masked: false, fp: await faceFingerprint([drawn]) });
+      const before = await publicKeys();
+      const msg = await stopped(copyPhotosForPublish(env, [body(NEW)]));
+      expect(msg).toContain('モザイクをかけた版がまだできていません');
+      expect(await publicKeys()).toEqual(before);
+    });
+
+    it('手で囲んだだけ（検出なし）でも、モザイク済みの版があればそれを出す（原本は出ない）', async () => {
+      const fp = (await faceFingerprint([drawn]))!;
+      await env.PHOTOS.put(maskedKeyFor(NEW, fp), MASKED);
+      expect((await faceStates(env.DB, env.PHOTOS, [NEW]))[0]).toMatchObject({ scanned: false, masked: true });
+      const map = await publishPhotos([body(NEW)]);
+      expect(map.get(`/api/photo/${NEW}`)).toBe(publicUrlFor(maskedPublicKeyFor(NEW, fp)));
+      const keys = await publicKeys();
+      expect(keys).toContain(maskedPublicKeyFor(NEW, fp));
+      expect(keys).not.toContain(publicKeyFor(NEW));
+      const copied = await env.IMAGES.get(maskedPublicKeyFor(NEW, fp));
+      expect(new Uint8Array(await copied!.arrayBuffer())).toEqual(MASKED);
+    });
   });
 });

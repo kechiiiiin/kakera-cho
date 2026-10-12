@@ -33,8 +33,8 @@ export const POST: APIRoute = ({ locals, request }) =>
     if (file.size > MAX_BYTES) throw new ApiError(413, '写真が大きすぎます（20MB まで）');
 
     const [state] = await faceStates(env.DB, env.PHOTOS, [key]);
-    if (!state?.scanned) throw new ApiError(409, 'この写真はまだ顔の検出が済んでいません。開き直してください。');
-    if (state.fp !== fp) throw new ApiError(409, '顔の枠が変わりました。開き直してください。');
+    // 検出していない写真でも、手で囲んだ枠のモザイクは置ける（2026-10-12 §2.1 で変更）
+    if (!state || state.fp !== fp) throw new ApiError(409, '顔の枠が変わりました。開き直してください。');
 
     const bytes = new Uint8Array(await file.arrayBuffer());
     if (!isJpeg(bytes)) throw new ApiError(400, 'JPEG で送ってください');

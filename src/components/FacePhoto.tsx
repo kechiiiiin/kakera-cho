@@ -7,6 +7,8 @@ import { hiddenFaces, normalizeBox, type PhotoFace, type PhotoFaceState } from '
  *  - 隠す枠はモザイクの見た目、出す枠は細い線だけ。枠をタップで切り替え
  *  - 「囲む」で囲むモードに入り、指（またはマウス）のドラッグで四角を描く。描いた枠は「隠す」で始まる
  *  - 手で足した枠は × か長押しで消せる
+ *  - 顔は自動では探さない（2026-10-12 §2.1 で変更）。「顔を探す」を押したときだけ、この写真を検出する（押し直すと検出し直す）
+ *  - 「囲む」は検出していない写真でも使える
  * ⚠️ 指の操作は pointer events だけで受ける（iPhone の Safari でも同じ）。囲むモードの間だけ touch-action: none でスクロールを止める。
  * ⚠️ 見た目のモザイクは目安（CSS）。公開されるのは書き出しの前に作るモザイク（faces.ts）。
  */
@@ -14,14 +16,19 @@ import { hiddenFaces, normalizeBox, type PhotoFace, type PhotoFaceState } from '
 export interface FacePhotoProps {
   src: string;
   state: PhotoFaceState | null;
-  /** 検出中か */
+  /** この写真を検出中か */
   scanning: boolean;
+  /** 別の写真を検出中か（検出は一度に 1 枚） */
+  busyElsewhere?: boolean;
   /** 検出中の区画の進み具合 */
   progress?: { done: number; total: number } | null;
-  /** 検出に失敗した理由 */
+  /** 枠の読み込みか検出に失敗した理由 */
   error: string | null;
   onChange: (faces: PhotoFace[]) => void;
-  onRetry: () => void;
+  /** 「顔を探す」（この写真だけ検出する） */
+  onScan: () => void;
+  /** 枠を読めなかったときの読み直し */
+  onReload: () => void;
 }
 
 const LONG_PRESS_MS = 600;
@@ -32,7 +39,17 @@ function newManualId(): string {
   return 'm' + Math.random().toString(36).slice(2, 10);
 }
 
-export function FacePhoto({ src, state, scanning, progress, error, onChange, onRetry }: FacePhotoProps): JSX.Element {
+export function FacePhoto({
+  src,
+  state,
+  scanning,
+  busyElsewhere = false,
+  progress,
+  error,
+  onChange,
+  onScan,
+  onReload,
+}: FacePhotoProps): JSX.Element {
   const [drawing, setDrawing] = useState(false);
   const [draft, setDraft] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -61,19 +78,22 @@ export function FacePhoto({ src, state, scanning, progress, error, onChange, onR
   };
 
   let status: JSX.Element | string;
-  if (error) status = <span class="face-err">顔を調べられませんでした（{error}）</span>;
-  else if (scanning && progress && progress.total > 1) status = `顔を探しています（${progress.done}／${progress.total}）`;
-  else if (scanning || !state) status = '顔を調べています…';
-  else if (!state.scanned) status = '顔はまだ調べていません';
-  else if (!faces.length) status = '顔は見つかりませんでした';
-  else
+  if (scanning && progress && progress.total > 1) status = `顔を探しています（${progress.done}／${progress.total}）`;
+  else if (scanning) status = '顔を探しています…';
+  else if (error)
+    status = <span class="face-err">{state ? '顔を探せませんでした' : '顔の枠を読めませんでした'}（{error}）</span>;
+  else if (!state) status = '読み込んでいます…';
+  else if (faces.length)
     status = (
       <>
         顔 隠す<b>{hiddenN}</b>／出す<b>{shownN}</b>
       </>
     );
+  else if (state.scanned) status = '顔は見つかりませんでした';
+  else status = '顔は探していません';
 
-  const canEdit = !!state?.scanned && !scanning;
+  // 「囲む」・枠の切り替えは検出していなくても使える（枠を読めていれば）
+  const canEdit = !!state && !scanning;
 
   return (
     <div class="face-photo">
@@ -177,9 +197,19 @@ export function FacePhoto({ src, state, scanning, progress, error, onChange, onR
       </div>
       <div class="face-bar">
         <span class="face-status">{status}</span>
-        {error ? (
-          <button type="button" class="face-btn" onClick={onRetry}>
-            もう一度調べる
+        {!state && error ? (
+          <button type="button" class="face-btn" onClick={onReload}>
+            読み直す
+          </button>
+        ) : null}
+        {state ? (
+          <button
+            type="button"
+            class="face-btn"
+            disabled={scanning || busyElsewhere || drawing}
+            onClick={onScan}
+          >
+            {state.scanned ? '顔を探し直す' : '顔を探す'}
           </button>
         ) : null}
         <button
