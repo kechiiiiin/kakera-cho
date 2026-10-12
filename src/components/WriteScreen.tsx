@@ -148,7 +148,7 @@ export function WriteScreen({
                       }}
                     >
                       <div class="frag-text frag-rich">
-                        <RichText text={k.body} imgClass="assembled-photo" cards={cards} />
+                        <RichText text={k.body} imgClass="assembled-photo" clipTall cards={cards} />
                       </div>
                       <span class="frag-time">{timeOf(k.written_at)}</span>
                     </div>

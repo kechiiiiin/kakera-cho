@@ -219,7 +219,7 @@ export function ReadScreen({
                     {kakeraTimeLabel(k.written_at, katachi.date)}
                   </time>
                 ) : null}
-                <RichText text={k.body} imgClass="read-photo" cards={detail.cards} />
+                <RichText text={k.body} imgClass="read-photo" clipTall cards={detail.cards} />
                 {editing ? (
                 <div class="read-frag-tools">
                   <button type="button" class="btn-ghost" onClick={() => setOpenId(k.id)}>

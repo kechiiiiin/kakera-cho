@@ -264,6 +264,11 @@ ol.rich-text-list { list-style: decimal; }
 .read-photo:first-child { margin-top: .4em; }
 .read-photo:last-child { margin-bottom: .4em; }
 .assembled-photo img, .read-photo img { width: 100%; height: auto; display: block; }
+.tall-img { position: relative; overflow: hidden; aspect-ratio: 1 / 1; }
+.tall-img img { width: 100%; height: auto; display: block; }
+.tall-img::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 30%; background: linear-gradient(to bottom, transparent, var(--bg)); pointer-events: none; }
+a.tall-img-more { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); z-index: 1; font-family: var(--mono); font-size: 12.5px; letter-spacing: .06em; text-decoration: none; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 2px; padding: 6px 14px; white-space: nowrap; }
+a.tall-img-more:hover { border-color: var(--muted); }
 
 /* ---- 埋め込み（X / YouTube / Spotify）----
    公開後の見え方のプレビュー。将来のリンクカード（枠と余白と文字のある箱）と見分けが付くよう、
