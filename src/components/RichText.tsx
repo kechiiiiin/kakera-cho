@@ -386,6 +386,39 @@ function slotsOf(text: string, cards: LinkCards | undefined): Slot[] {
   return slots.sort((a, b) => a.start - b.start);
 }
 
+/** 縦長判定のしきい値（高さ÷幅）。日記側 DiaryPost.astro の clipTall と同じ。 */
+const TALL_RATIO = 2;
+
+/**
+ * 写真 1 枚。読み込み後の実寸で縦長（高さ÷幅 > 2）と分かったら、横幅と同じ高さで切り、
+ * 下を薄くして「全体を見る」（画像 URL を新しいタブで開く）を出す。普通の写真は素の <img> のまま。
+ */
+function TallClip({ url }: { url: string }): JSX.Element {
+  const [tall, setTall] = useState(false);
+  const judge = (img: HTMLImageElement) => {
+    const w = img.naturalWidth;
+    const h = img.naturalHeight;
+    if (w && h) setTall(h / w > TALL_RATIO);
+  };
+  const ref = useRef<HTMLImageElement>(null);
+  useEffect(() => {
+    // 読み込み済み（キャッシュ）だと onLoad が先に過ぎていることがある
+    if (ref.current?.complete) judge(ref.current);
+  }, [url]);
+  const img = (
+    <img ref={ref} src={url} alt="" loading="lazy" onLoad={(e) => judge(e.currentTarget)} />
+  );
+  if (!tall) return img;
+  return (
+    <div class="tall-img">
+      {img}
+      <a class="tall-img-more" href={url} target="_blank" rel="noopener">
+        全体を見る
+      </a>
+    </div>
+  );
+}
+
 /**
  * かけらの本文を読めるように描く。
  * 画像記法を実際の写真に開き、**行として独立した X / YouTube の URL**と**段落がそれだけの Spotify の URL**を埋め込みに、
@@ -398,9 +431,12 @@ export function RichText({
   text,
   imgClass,
   cards,
+  clipTall,
 }: {
   text: string;
   imgClass: string;
+  /** 縦に長い写真（高さ÷幅 > 2）を途中で切り「全体を見る」を出す。読む画面と流れだけで true（2026-10-12） */
+  clipTall?: boolean;
   /** 正規化 URL → カード。無ければ全部素のリンク */
   cards?: LinkCards;
 }): JSX.Element | null {
@@ -418,7 +454,7 @@ export function RichText({
     if (slot.kind === 'photo') {
       parts.push(
         <div class={imgClass} key={`p${i}`}>
-          <img src={slot.url} alt="" loading="lazy" />
+          {clipTall ? <TallClip url={slot.url} /> : <img src={slot.url} alt="" loading="lazy" />}
         </div>
       );
     } else if (slot.kind === 'embed') {
