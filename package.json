@@ -43,7 +43,7 @@
     "@mediapipe/tasks-vision": "0.10.35",
     "astro": "^5.14.1",
     "jose": "^6.1.0",
-    "k-editor": "github:kechiiiiin/k-editor#v0.3.0",
+    "k-editor": "github:kechiiiiin/k-editor#v0.4.0",
     "octokit": "^5.0.3",
     "preact": "^10.27.2",
     "zod": "^3.25.76"
