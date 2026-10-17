@@ -16,8 +16,8 @@ import { CARD_IMAGE_SRC, EmbedBlock } from './RichText';
  * 中身は k-editor（github.com/kechiiiiin/k-editor・Tiptap の上の WYSIWYG）。保存の形は今までどおり Markdown:
  *  - 単独の改行・空行の数・写真の行・行として独立した URL・`---` は、読み込んで何も触らなければ 1 文字も変わらない
  *  - ツールバー: 写真／埋め込み／見出し／太字／取り消し線／リンク／箇条書き／番号付き／引用／区切り線／戻す・やり直す
- *    画面の下端に固定（キーボードが開いていればその直上）。長く書いても写真をすぐ上げられるように（2026-10-17 啓輔さん）。
- *    k-editor v0.3.0 の toolbarPosition: 'bottom'。v0.2.1 では無視され、従来どおり上に貼り付く
+ *    本文の下・日時と保存の行の上に常に出す（2026-10-18 啓輔さん。位置を変えただけで、出し入れはしない）。
+ *    本文が長いときは画面の下端に貼り付き、写真をスクロールせずに上げられる（k-editor v0.4.0 の toolbarPosition: 'bottom'）
  *    ⚠️ 斜体は入れない（2026-10-03）。⚠️ リンクの URL は prompt() で尋ねない（小さな欄で）
  *  - 写真はボタン・ドラッグ＆ドロップ・貼り付け（画像だけのとき）の3経路。写真は本文の中に見え、× で外せる
  *  - 他所からの貼り付けは文字だけ（書式は持ち込まない）。文字入りのコピーは文字として
@@ -28,7 +28,7 @@ import { CARD_IMAGE_SRC, EmbedBlock } from './RichText';
  * ⚠️ エディタの中では Spotify を置き方に関係なく埋め込みで見せる（行の前後の空行は見ない）。
  *    公開される姿は読む画面（RichText）が正。
  *
- * 並びは 本文 → 知らせ → inlineAction の行 → belowAction（ツールバーは画面の下端）。
+ * 並びは 本文 → ツールバー → 知らせ → inlineAction の行 → belowAction。
  */
 export function Editor({
   value,

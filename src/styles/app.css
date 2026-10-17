@@ -72,8 +72,7 @@ nav.tabs button {
 nav.tabs button.active { color: var(--fg); border-bottom-color: var(--fg); font-weight: 700; }
 nav.tabs button:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
 
-/* 下の余白は、書く欄のツールバー（k-editor の下置き）が出ている間はその高さぶん足す。最後の行・保存がツールバーの裏に残らないように */
-main { flex: 1; padding: 20px 18px calc(90px + var(--k-editor-dock-height, 0px)); }
+main { flex: 1; padding: 20px 18px 90px; }
 
 .page-date { font-size: 19px; font-weight: 500; margin: 0 0 4px; font-family: var(--mono); color: var(--fg); }
 #app.mode-read .page-date {
@@ -241,19 +240,15 @@ ol.rich-text-list { list-style: decimal; }
 #app.mode-read .rich-text-list, #app.mode-read .rich-text-quote { font-family: var(--serif); font-size: 17px; line-height: 1.9; margin: 0 0 1.5em; }
 
 /* ---- 書く欄（k-editor）。色は朱ひとつ・罫線だけ（§9）。 ----
-   ツールバーは画面の下端に固定（toolbarPosition: 'bottom'・キーボードが開いていればその直上。2026-10-17）。
-   中身の幅は本文の段（#frame 620px − 左右 18px）に揃える。z は見出し（20）より上・シート（60）と知らせ（100）より下。
-   本文の下の余白は k-editor の既定（エディタの直下）ではなく main の下で取る（直下に「保存」の行が続くため）。
-   上置き（k-editor v0.2.1 以前）のときはツールバーが上の見出し（header.topbar・sticky）の下に貼り付く */
+   ツールバーは本文の下・日時と保存の行の上（toolbarPosition: 'bottom'・2026-10-18 啓輔さん）。
+   本文が長いときは画面の下端に貼り付く（k-editor の sticky bottom: 0。上置きの鏡写し）。
+   上置きに戻したときは上の見出し（header.topbar・sticky）の下に貼り付く。高さは topbar に合わせる */
 #app .k-editor {
   --k-editor-bg: var(--bg); --k-editor-fg: var(--fg); --k-editor-muted: var(--muted);
   --k-editor-line: var(--line); --k-editor-accent: var(--accent);
   --k-editor-sticky-top: var(--topbar-h, 90px);
-  --k-editor-dock-width: 584px; --k-editor-dock-gutter: 18px; --k-editor-dock-z: 40;
 }
-#app .k-editor-dock { padding-bottom: 0; }
 #app .k-editor-prose { line-height: 1.7; }
-.composer .k-editor:not(.k-editor-dock) .k-editor-toolbar-wrap { margin-top: -6px; }
 .frag-edit .k-editor-content { border: 1px solid var(--line); border-radius: 2px; padding: 10px; }
 .editor-embed .embed-youtube, .editor-embed .embed-tweet, .editor-embed .embed-spotify { margin: 0; }
 .k-editor-url-embed .k-editor-remove { top: 6px; right: 6px; }
@@ -450,14 +445,15 @@ a.tall-img-more:hover { border-color: var(--muted); }
 
 /* ---- 知らせ（常に書く側の配色で固定） ---- */
 #toast {
-  /* 書く欄のツールバー（下置き）が出ている間はその上に出す */
-  position: fixed; left: 50%; bottom: calc(24px + var(--k-editor-dock-height, 0px)); transform: translateX(-50%) translateY(20px);
+  position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%) translateY(20px);
   background: #17171a; color: #fdfdfc;
   padding: 10px 18px; border-radius: 2px; font-size: 12.5px;
   opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; z-index: 100;
   max-width: 88%; text-align: center; line-height: 1.6;
 }
 #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+/* 書く欄のある画面では、下端に貼り付くツールバー（1 段 47px）の上に出す */
+body:has(.k-editor-toolbar-bottom) #toast { bottom: calc(24px + 48px + env(safe-area-inset-bottom, 0px)); }
 
 /* ---- かたち一覧（読む側） ---- */
 .search-box {
