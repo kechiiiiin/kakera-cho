@@ -1,0 +1,53 @@
+name: Deploy
+
+# main へ push したら本番（Cloudflare Workers）へデプロイする。
+# ⚠️ D1 のマイグレーションは自動で当てない。push より先に手元で remote へ当てておくこと（README 参照）。
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      # package-lock の k-editor は git+ssh://git@github.com/... で解決される。
+      # Actions には SSH 鍵が無いので、public リポを HTTPS で取りに行かせる。
+      - name: Git の ssh URL を https へ読み替える
+        run: |
+          git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+          git config --global --add url."https://github.com/".insteadOf "git@github.com:"
+
+      - run: npm ci
+
+      - name: 型チェック
+        run: npx tsc --noEmit
+
+      - name: astro check
+        run: npm run check
+
+      - name: テスト
+        run: npx vitest run
+
+      # npm run deploy = build（astro build + postbuild で .assetsignore）→ wrangler deploy
+      - name: デプロイ
+        run: npm run deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

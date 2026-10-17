@@ -38,6 +38,15 @@
 
 ---
 
+## 自動デプロイ（GitHub Actions）
+
+`main` へ push すると `.github/workflows/deploy.yml` が型チェック・astro check・テストを通して `npm run deploy` で本番へ出す（手動実行も可）。
+必要な repository secrets は `CLOUDFLARE_API_TOKEN`（Workers 編集権限）と `CLOUDFLARE_ACCOUNT_ID`。
+
+⚠️ **D1 のマイグレーションは自動で当てない**（一度だけのものがある）。**マイグレーションは push より先に手元で remote に当てる**（`npm run db:migrate:*:remote`）。
+
+---
+
 ## 手元で動かす
 
 ```sh
