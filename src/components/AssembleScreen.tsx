@@ -34,7 +34,16 @@ export function AssembleScreen({
   say: (msg: string) => void;
 }): JSX.Element {
   const { katachi, kakera, nikki, published_ids } = detail;
-  const [order, setOrder] = useState<string[]>(published_ids.filter((id) => kakera.some((k) => k.id === id)));
+  // まだ日記にしていない（published_ids が空）かたちは全かけらを written_at 昇順で既定チェック。
+  // 日記にしたことがあるなら、本人が外したかけらを戻さないよう published_ids のまま
+  const [order, setOrder] = useState<string[]>(() =>
+    published_ids.length === 0
+      ? kakera
+          .map((k, i) => ({ k, i }))
+          .sort((a, b) => (a.k.written_at < b.k.written_at ? -1 : a.k.written_at > b.k.written_at ? 1 : a.i - b.i))
+          .map(({ k }) => k.id)
+      : published_ids.filter((id) => kakera.some((k) => k.id === id)),
+  );
   const [step, setStep] = useState<'pick' | 'convert'>('pick');
   // 初期値は katachi.title。組み直し方式なので、変えた題も次の書き出しで初期値に戻る
   const [title, setTitle] = useState(katachi.title);
