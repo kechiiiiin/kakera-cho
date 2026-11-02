@@ -1,7 +1,8 @@
 import type { JSX } from 'preact';
-import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { Kakera, KatachiDetail, KatachiSummary, SearchResult } from '../lib/kakera/types';
 import type { LinkCards } from '../lib/card/types';
+import { wordsOf } from '../lib/markdown';
 import { nowJst } from '../lib/time';
 import { ulid } from '../lib/ulid';
 import { api } from './api';
@@ -12,6 +13,8 @@ import { NikkiListScreen } from './NikkiListScreen';
 import { ReadScreen } from './ReadScreen';
 import { AssembleScreen } from './AssembleScreen';
 import { NameMapScreen } from './NameMapScreen';
+import { WordPageScreen, WordsScreen } from './WordsScreen';
+import { WordLinkContext } from './RichText';
 
 type View =
   | { t: 'write' }
@@ -20,14 +23,25 @@ type View =
   | { t: 'nikki' }
   | { t: 'namemap' }
   | { t: 'read'; id: string }
-  | { t: 'assemble'; id: string };
+  | { t: 'assemble'; id: string }
+  | { t: 'words' }
+  /** back = 来た画面（言葉のページから言葉のページへ進んでも、順に戻れる） */
+  | { t: 'word'; word: string; back: View };
 
-type Tab = 'write' | 'katachi' | 'nikki';
+type Tab = 'write' | 'katachi' | 'nikki' | 'words';
 
 function tabOf(view: View): Tab {
   if (view.t === 'katachi' || view.t === 'read') return 'katachi';
   if (view.t === 'nikki' || view.t === 'namemap') return 'nikki';
+  if (view.t === 'words' || view.t === 'word') return 'words';
   return 'write';
+}
+
+/** 言葉のページの「戻る」に添える、来た画面の名前。 */
+function backLabelOf(view: View): string {
+  if (view.t === 'word') return view.word;
+  if (view.t === 'words') return 'ことば';
+  return tabOf(view) === 'katachi' ? 'かたち' : 'かけら';
 }
 
 /** 読む側（かたち）だけ紙の世界にする。純粋に見た目の話で、操作には影響しない。 */
@@ -135,8 +149,12 @@ export default function App(): JSX.Element {
   }, [query, guard]);
 
   function goTab(t: Tab): void {
-    setView(t === 'write' ? { t: 'write' } : t === 'katachi' ? { t: 'katachi' } : { t: 'nikki' });
+    setView({ t });
   }
+
+  const openWord = useCallback((word: string) => setView((back) => ({ t: 'word', word, back })), []);
+  // 本文の言葉を押すと言葉のページへ（かけらたちとかたちの読む画面だけ。変換ページなどには渡さない）
+  const wordLink = useMemo(() => ({ open: openWord }), [openWord]);
 
   async function openKatachi(id: string): Promise<void> {
     await guard(async () => {
@@ -171,6 +189,7 @@ export default function App(): JSX.Element {
               ['write', 'かけら'],
               ['katachi', 'かたち'],
               ['nikki', '日記'],
+              ['words', 'ことば'],
             ] as [Tab, string][]
           ).map(([key, label]) => (
             <button
@@ -187,6 +206,7 @@ export default function App(): JSX.Element {
 
       <main>
         {view.t === 'write' ? (
+          <WordLinkContext.Provider value={wordLink}>
           <WriteScreen
             nagare={nagare}
             cards={nagareCards}
@@ -204,11 +224,13 @@ export default function App(): JSX.Element {
                   body: draft.trim(),
                   written_at: draftChosenAt ?? draftMeta.current.writtenAt,
                 });
+                const word = wordsOf(draft)[0];
                 setDraft('');
                 // 次の下書きは「いま」に戻す（指定した日時を持ち越さない）
                 setDraftChosenAt(null);
                 draftMeta.current = { id: ulid(), writtenAt: nowJst() };
                 await loadNagare();
+                if (word) say(`「${word}」のページに溜まりました`);
               })
             }
             onEdit={(id, body, writtenAt) =>
@@ -242,6 +264,7 @@ export default function App(): JSX.Element {
               }
             }}
           />
+          </WordLinkContext.Provider>
         ) : null}
 
         {view.t === 'compose' ? (
@@ -289,7 +312,20 @@ export default function App(): JSX.Element {
 
         {view.t === 'namemap' ? <NameMapScreen onBack={() => setView({ t: 'nikki' })} say={say} /> : null}
 
+        {view.t === 'words' ? <WordsScreen onOpen={openWord} say={say} /> : null}
+
+        {view.t === 'word' ? (
+          <WordPageScreen
+            word={view.word}
+            backLabel={backLabelOf(view.back)}
+            onBack={() => setView(view.back)}
+            onOpen={openWord}
+            say={say}
+          />
+        ) : null}
+
         {view.t === 'read' && detail && detail.katachi.id === view.id ? (
+          <WordLinkContext.Provider value={wordLink}>
           <ReadScreen
             detail={detail}
             onBack={() => setView({ t: 'katachi' })}
@@ -362,6 +398,7 @@ export default function App(): JSX.Element {
               })
             }
           />
+          </WordLinkContext.Provider>
         ) : null}
 
         {view.t === 'assemble' && detail && detail.katachi.id === view.id ? (

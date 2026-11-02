@@ -2,7 +2,7 @@ import { h, render } from 'preact';
 import type { JSX, RefObject } from 'preact';
 import { useRef } from 'preact/hooks';
 import { KEditor, type KEditorInstance } from 'k-editor/preact';
-import type { LinkCardData } from 'k-editor';
+import type { LinkCardData, ToolbarItem } from 'k-editor';
 import 'k-editor/style.css';
 import { isSafeHref, matchBareUrl, matchEmbed, parsePhotoTokens } from '../lib/markdown';
 import { isCardCandidate, normalizeUrl } from '../lib/card/url';
@@ -11,11 +11,35 @@ import { pickPhotos, uploadOnePhoto } from './photo';
 import { CARD_IMAGE_SRC, EmbedBlock } from './RichText';
 
 /**
+ * 道具の並び。k-editor の既定（DEFAULT_TOOLBAR）の H2 の直前に、言葉のリンク `[[ ]]` を足したもの。
+ * ⚠️ この Editor は書く欄とその場編集でしか使わない。変換ページの「日記用に直す」は素の textarea なので道具は出ない。
+ */
+const TOOLBAR: ToolbarItem[] = [
+  'photo',
+  'embed',
+  '|',
+  'wikilink',
+  'h2',
+  'h3',
+  'bold',
+  'strike',
+  'link',
+  '|',
+  'bulletList',
+  'orderedList',
+  'blockquote',
+  'hr',
+  '|',
+  'undo',
+  'redo',
+];
+
+/**
  * かけらの本文を書くところ。composer（新規）と、流れ／かたちのその場編集で共用する。
  *
  * 中身は k-editor（github.com/kechiiiiin/k-editor・Tiptap の上の WYSIWYG）。保存の形は今までどおり Markdown:
  *  - 単独の改行・空行の数・写真の行・行として独立した URL・`---` は、読み込んで何も触らなければ 1 文字も変わらない
- *  - ツールバー: 写真／埋め込み／見出し／太字／取り消し線／リンク／箇条書き／番号付き／引用／区切り線／戻す・やり直す
+ *  - ツールバー: 写真／埋め込み／言葉のリンク／見出し／太字／取り消し線／リンク／箇条書き／番号付き／引用／区切り線／戻す・やり直す
  *    本文の下・日時と保存の行の上に常に出す（2026-10-18 啓輔さん。位置を変えただけで、出し入れはしない）。
  *    本文が長いときは画面の下端に貼り付き、写真をスクロールせずに上げられる（k-editor v0.4.0 の toolbarPosition: 'bottom'）
  *    ⚠️ 斜体は入れない（2026-10-03）。⚠️ リンクの URL は prompt() で尋ねない（小さな欄で）
@@ -102,6 +126,7 @@ export function Editor({
         }}
         placeholder={placeholder}
         editorRef={editorRef}
+        toolbar={TOOLBAR}
         toolbarPosition="bottom"
         uploadImage={uploadImage}
         pickImages={pickPhotos}

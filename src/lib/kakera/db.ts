@@ -1,8 +1,8 @@
 // D1 への問い合わせ。ここがドメインの処理の入口で、API ルートは薄い殻にする（iOS から同じ API を使うため）。
 
-import type { Kakera, Katachi, KatachiDetail, KatachiSummary, Nikki, SearchMatch, SearchResult } from './types';
+import type { Kakera, Katachi, KatachiDetail, KatachiSummary, Nikki, SearchMatch, SearchResult, WordDetail, WordKakera, WordSummary } from './types';
 import type { LinkCard, LinkCards } from '../card/types';
-import { buildExcerpt, textForExcerpt } from '../markdown';
+import { buildExcerpt, textForExcerpt, wordsOf } from '../markdown';
 import { domainOf, parseCardUrls } from '../card/url';
 import { isSafePhotoKey, photoUrlFor } from '../publish/photos';
 import { nowJst } from '../time';
@@ -504,6 +504,50 @@ export async function listBodiesWithUrls(db: D1Database): Promise<string[]> {
     .prepare("SELECT body FROM kakera WHERE body LIKE '%http%' ORDER BY written_at DESC")
     .all<{ body: string }>();
   return (results ?? []).map((r) => r.body);
+}
+
+/* ---------------- 言葉（かけら言葉リンク設計 §2.3。表は足さず、問い合わせのたびに本文から抜き出す） ---------------- */
+
+/**
+ * 言葉の候補の行。LIKE は候補を絞るだけで、言葉かどうかは必ず wordsOf で確かめる。
+ * ⚠️ 言葉そのもので LIKE しない。本文は `[[**あ**い]]` かもしれない（言葉は `あい`）ので、`[[` で絞る。
+ */
+const WORD_CANDIDATE = "k.body LIKE '%[[%'";
+
+/** ことばの索引（新しく書いた順。同じかけらに二度出ても 1 と数える）。 */
+export async function listWords(db: D1Database): Promise<WordSummary[]> {
+  const { results } = await db
+    .prepare(`SELECT k.body, k.written_at FROM kakera k WHERE ${WORD_CANDIDATE}`)
+    .all<{ body: string; written_at: string }>();
+  const byWord = new Map<string, WordSummary>();
+  for (const r of results ?? []) {
+    for (const word of wordsOf(r.body)) {
+      const e = byWord.get(word);
+      if (!e) byWord.set(word, { word, count: 1, last_written_at: r.written_at });
+      else {
+        e.count++;
+        if (r.written_at > e.last_written_at) e.last_written_at = r.written_at;
+      }
+    }
+  }
+  return [...byWord.values()].sort((a, b) => (a.last_written_at < b.last_written_at ? 1 : a.last_written_at > b.last_written_at ? -1 : 0));
+}
+
+/** 言葉のページ（その言葉を含むかけらを新しい順に・居場所とリンクカードつき）。 */
+export async function getWordDetail(db: D1Database, rawWord: string): Promise<WordDetail> {
+  const word = rawWord.trim();
+  const { results } = await db
+    .prepare(
+      `SELECT k.id, k.body, k.written_at, kk.katachi_id, k.updated_at, ka.date AS katachi_date
+         FROM kakera k
+         LEFT JOIN katachi_kakera kk ON kk.kakera_id = k.id
+         LEFT JOIN katachi ka ON ka.id = kk.katachi_id
+        WHERE ${WORD_CANDIDATE}
+        ORDER BY k.written_at DESC, k.id DESC`
+    )
+    .all<WordKakera>();
+  const kakera = (results ?? []).filter((k) => wordsOf(k.body).includes(word));
+  return { word, kakera, cards: await cardsForBodies(db, kakera.map((k) => k.body)) };
 }
 
 /* ---------------- 検索（第二段・かたちの全文検索。設計 §3／migrations/0001） ---------------- */

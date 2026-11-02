@@ -33,8 +33,10 @@ export function shortUrl(url: string): string {
  */
 export function textForPick(body: string, cards?: LinkCards): string {
   // [文字](url) はラベルだけ残す（URL を括弧ごと出さない）
-  const plain = textForExcerpt(body).replace(/\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/gi, (_w, label: string, url: string) =>
-    label.trim() ? label : url
+  // ラベルの中の括弧ひと組までは読む（`[[a]](url)` はリンクで、言葉の括弧を外した後にも残るため）
+  const plain = textForExcerpt(body).replace(
+    /\[((?:[^[\]]|\[[^\]]*\])*)\]\((https?:\/\/[^)\s]+)\)/gi,
+    (_w, label: string, url: string) => (label.trim() ? label : url)
   );
 
   let out = '';

@@ -217,9 +217,9 @@ export function parseStandaloneUrls(text: string): StandaloneUrl[] {
   return out;
 }
 
-/** 画像記法を取り除いた素の本文（一覧の抜粋・タイトル代わりに使う）。 */
+/** 画像記法と言葉の括弧を取り除いた素の本文（一覧の抜粋・タイトル代わりに使う）。 */
 export function textForExcerpt(text: string): string {
-  return text.replace(IMAGE_TOKEN_RE, '').replace(/\s+/g, ' ').trim();
+  return stripWikilinks(text).replace(IMAGE_TOKEN_RE, '').replace(/\s+/g, ' ').trim();
 }
 
 /**
@@ -266,6 +266,8 @@ export type InlineNode =
   | { type: 'text'; value: string }
   | { type: 'code'; value: string }
   | { type: 'link'; href: string; children: InlineNode[] }
+  /** 言葉のリンク。word は比べるときの名前（書式の記号なし）、children は見た目（`[[**あ**い]]` の太字を残す） */
+  | { type: 'wikilink'; word: string; children: InlineNode[] }
   | { type: 'strong'; children: InlineNode[] }
   | { type: 'em'; children: InlineNode[] }
   | { type: 'del'; children: InlineNode[] };
@@ -394,8 +396,23 @@ const DELIMS: ReadonlyArray<{ mark: string; type: 'strong' | 'del' | 'em' }> = [
   { mark: '*', type: 'em' },
 ];
 
+interface InlineCtx {
+  /** コードフェンスの範囲（一番外の文字列の位置）。この中は言葉にしない */
+  fences: Span[];
+  /** いま読んでいる文字列が、一番外の文字列のどこから始まるか */
+  base: number;
+  /** 言葉のリンクを作らない（リンクの表示文字と言葉の中。a の中に a を作らないため）。括弧は落として中身だけ出す */
+  noWord?: boolean;
+  /** リンクを作らない（言葉の中） */
+  noLink?: boolean;
+}
+
 /** 行内書式を木に開く。解釈できなかった記号はそのまま文字として残る。 */
 export function parseInline(text: string): InlineNode[] {
+  return parseNodes(text, { fences: fenceRanges(text), base: 0 });
+}
+
+function parseNodes(text: string, ctx: InlineCtx): InlineNode[] {
   const out: InlineNode[] = [];
   let buf = '';
   let i = 0;
@@ -438,16 +455,28 @@ export function parseInline(text: string): InlineNode[] {
       }
     }
 
-    // [リンク](url)
     if (c === '[') {
-      const m = matchLink(text, i);
+      const m = ctx.noLink ? null : matchLink(text, i);
+      // [リンク](url)。`[[a]](安全な url)` もこちらが優先（言葉にしない）
+      if (m && isSafeHref(m.href)) {
+        flush();
+        out.push({ type: 'link', href: m.href.trim(), children: parseNodes(m.label, { fences: [], base: 0, noWord: true }) });
+        i = m.end;
+        continue;
+      }
+      // [[言葉]]。安全でない URL が続く `[[a]](url)` は素の文字に倒れて言葉になる（k-editor と同じ）
+      const w = inSpans(ctx.fences, ctx.base + i) ? null : matchWordAt(text, i);
+      if (w) {
+        flush();
+        const children = parseNodes(w.inner, { fences: [], base: 0, noWord: true, noLink: true });
+        if (ctx.noWord) out.push(...children);
+        else out.push({ type: 'wikilink', word: w.word, children });
+        i = w.end;
+        continue;
+      }
       if (m) {
         flush();
-        if (isSafeHref(m.href)) {
-          out.push({ type: 'link', href: m.href.trim(), children: parseInline(m.label) });
-        } else {
-          out.push({ type: 'text', value: m.raw }); // 安全でない URL は素の文字として出す
-        }
+        out.push({ type: 'text', value: m.raw }); // 安全でない URL は素の文字として出す
         i = m.end;
         continue;
       }
@@ -455,7 +484,7 @@ export function parseInline(text: string): InlineNode[] {
 
     // 裸の URL をそのままリンクにする。
     // ⚠️ `[文字](url)` と `![](url)` は上で処理済みなので、ここへは来ない。
-    if ((c === 'h' || c === 'H') && /^https?:\/\//i.test(text.slice(i, i + 8))) {
+    if (!ctx.noLink && (c === 'h' || c === 'H') && /^https?:\/\//i.test(text.slice(i, i + 8))) {
       const u = matchBareUrl(text, i);
       if (u) {
         flush();
@@ -476,7 +505,7 @@ export function parseInline(text: string): InlineNode[] {
       const inner = text.slice(from, close);
       if (/^\s/.test(inner) || /\s$/.test(inner)) continue;
       flush();
-      out.push({ type: d.type, children: parseInline(inner) });
+      out.push({ type: d.type, children: parseNodes(inner, { ...ctx, base: ctx.base + from }) });
       i = close + d.mark.length;
       matched = true;
       break;
@@ -489,4 +518,254 @@ export function parseInline(text: string): InlineNode[] {
 
   flush();
   return out;
+}
+
+// ───────────────────────────────────────────────────────────────
+// 言葉のリンク `[[言葉]]`（かけら言葉リンク設計 §2.1）
+//
+// 本文の Markdown にただの文字として書く。D1 の表は足さない。
+// ⚠️ 文法は k-editor の src/wikilink.ts（WORD）の写し: `[[` + `[ ] 改行` を含まない1文字以上 + `]]`。
+//    前後の空白は落として比べ、空白だけは言葉にしない。コードの中は言葉にしない。
+// ⚠️ 読む側（parseInline・wordsOf）と公開側（stripWikilinks）で判定の厳しさが違う。読む側はかけら帳の画面の読み方、
+//    公開側は astro-blog の Markdown（CommonMark）の読み方に合わせ、迷ったら括弧を外す。括弧を公開に出さないのが約束。
+// ───────────────────────────────────────────────────────────────
+
+interface Span {
+  start: number;
+  end: number;
+}
+
+function inSpans(spans: readonly Span[], pos: number): boolean {
+  return spans.some((s) => s.start <= pos && pos < s.end);
+}
+
+/** コードフェンスの範囲（開き・閉じの行も含む）。閉じが無ければ本文の終わりまで（CommonMark と同じ）。 */
+function fenceRanges(text: string): Span[] {
+  const out: Span[] = [];
+  let open: { char: string; len: number; start: number } | null = null;
+  let pos = 0;
+  for (const line of text.split('\n')) {
+    const f = line.match(FENCE_LINE);
+    if (open) {
+      if (f && f[1]![0] === open.char && f[1]!.length >= open.len && line.trim() === f[1]) {
+        out.push({ start: open.start, end: pos + line.length });
+        open = null;
+      }
+    } else if (f) {
+      // 「```a```」のように、開きの行の残りにバッククォートがあるならフェンスではない（行内のコード）
+      const rest = line.slice(line.indexOf(f[1]!) + f[1]!.length);
+      if (f[1]![0] !== '`' || !rest.includes('`')) open = { char: f[1]![0]!, len: f[1]!.length, start: pos };
+    }
+    pos += line.length + 1; // +1 は '\n'
+  }
+  if (open) out.push({ start: open.start, end: text.length });
+  return out;
+}
+
+const WORD_RE = /\[\[([^[\]\n]+)\]\]/y;
+
+/**
+ * i の位置の言葉を読む。読めなければ null。
+ * 書式の記号は言葉に含めない（k-editor は `**あ**い` の選択も `[[**あ**い]]` と囲む。言葉は `あい`）。
+ * 中に行内コードがあるものは言葉にしない（k-editor がコードをまたいで飾らないのと同じ）。
+ */
+function matchWordAt(text: string, i: number): { word: string; inner: string; end: number } | null {
+  WORD_RE.lastIndex = i;
+  const m = WORD_RE.exec(text);
+  if (!m) return null;
+  const inner = m[1]!;
+  const word = inner.replace(/\*\*|~~/g, '').trim();
+  if (!word || /`[^`]+`/.test(inner)) return null;
+  return { word, inner, end: i + m[0].length };
+}
+
+/** 本文に出てくる言葉（重複なし・出てきた順）。読む画面が言葉のリンクに描くものと同じ。 */
+export function wordsOf(body: string): string[] {
+  const words = new Set<string>();
+  const walk = (nodes: InlineNode[]): void => {
+    for (const n of nodes) {
+      if (n.type === 'wikilink') words.add(n.word);
+      else if (n.type === 'strong' || n.type === 'em' || n.type === 'del') walk(n.children);
+    }
+  };
+  walk(parseInline(body));
+  return [...words];
+}
+
+/** 括弧の組（`[[]]` や空白だけも、公開には出さないので拾う）。打ち消した括弧（名前の置き換えが作る `\]`）を含むものは後ろで拾う。 */
+const BRACKETS_SIMPLE_RE = /\[\[[^[\]\n]*\]\]/y;
+const BRACKETS_ESCAPED_RE = /\[\[(?:[^[\]\n\\]|\\[^\n])*\]\]/y;
+const BRACKETS_ANY_RE = /\[\[[^[\]\n]*\]\]|\[\[(?:[^[\]\n\\]|\\[^\n])*\]\]/g;
+const BRACKETS_LEFT_RE = /\[\[[^[\]\n]*\]\]/;
+
+function bracketsEndAt(text: string, i: number): number {
+  for (const re of [BRACKETS_SIMPLE_RE, BRACKETS_ESCAPED_RE]) {
+    re.lastIndex = i;
+    const m = re.exec(text);
+    if (m) return i + m[0].length;
+  }
+  return -1;
+}
+
+/** `[a](url "title")` の行き先が CommonMark でもリンクと読まれる形か（matchLink はこれより緩い）。 */
+function isPublicLinkDest(raw: string, label: string): boolean {
+  const dest = raw.slice(label.length + 3, -1).trim(); // `[` + label + `](` … `)`
+  return /^\S+(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?$/.test(dest);
+}
+
+/** 行内コードの閉じ（同じ長さのバッククォート・空行をまたがない。CommonMark と同じ）。無ければ -1。 */
+function codeCloseOf(text: string, from: number, to: number, n: number): number {
+  let i = from;
+  while (i < to) {
+    if (text.charAt(i) === '\n' && /^\n[ \t]*\n/.test(text.slice(i, i + 64))) return -1;
+    if (text.charAt(i) !== '`') {
+      i++;
+      continue;
+    }
+    let j = i;
+    while (j < to && text.charAt(j) === '`') j++;
+    if (j - i === n) return i;
+    i = j;
+  }
+  return -1;
+}
+
+interface BracketWalk {
+  /** 消す範囲（左から順） */
+  drops: Span[];
+  /** 公開で文字として見える部分（打ち消しを解いたもの。コード・URL・リンク先・画像は含まない） */
+  visible: string;
+}
+
+/** [from, to) の行内を、公開側の読み方で歩く。 */
+function walkPublicInline(text: string, from: number, to: number, w: BracketWalk): void {
+  const takeBrackets = (start: number, open: number, end: number): void => {
+    w.drops.push({ start, end: open + 2 }, { start: end - 2, end });
+    w.visible += text.slice(open + 2, end - 2);
+  };
+  let i = from;
+  while (i < to) {
+    const c = text.charAt(i);
+
+    if (c === '\\' && i + 1 < to && ESCAPABLE.includes(text.charAt(i + 1))) {
+      // `\[[x]]`: 読む画面では素の文字だが、公開すると括弧がそのまま見えるので外す（k-editor も言葉として飾る）
+      if (text.charAt(i + 1) === '[') {
+        const end = bracketsEndAt(text, i + 1);
+        if (end > 0 && end <= to) {
+          takeBrackets(i, i + 1, end);
+          i = end;
+          continue;
+        }
+      }
+      w.visible += text.charAt(i + 1);
+      i += 2;
+      continue;
+    }
+
+    if (c === '`') {
+      let j = i;
+      while (j < to && text.charAt(j) === '`') j++;
+      const close = codeCloseOf(text, j, to, j - i);
+      if (close >= 0) {
+        w.visible += ' ';
+        i = close + (j - i);
+      } else {
+        w.visible += text.slice(i, j);
+        i = j;
+      }
+      continue;
+    }
+
+    // 画像は代替文字だけ見る（`![[[x]]](url)` の alt に括弧を残さない）。`![[x]](url)` の `[x]` は言葉ではない
+    if (c === '!' && text.charAt(i + 1) === '[') {
+      const m = matchLink(text, i + 1);
+      if (m && m.end <= to) {
+        walkPublicInline(text, i + 2, i + 2 + m.label.length, { drops: w.drops, visible: '' });
+        w.visible += ' ';
+        i = m.end;
+        continue;
+      }
+    }
+
+    if (c === '[') {
+      const m = matchLink(text, i);
+      if (m && m.end <= to && isSafeHref(m.href) && isPublicLinkDest(m.raw, m.label)) {
+        w.visible += ' ';
+        walkPublicInline(text, i + 1, i + 1 + m.label.length, w);
+        w.visible += ' ';
+        i = m.end;
+        continue;
+      }
+      const end = bracketsEndAt(text, i);
+      if (end > 0 && end <= to) {
+        takeBrackets(i, i, end);
+        i = end;
+        continue;
+      }
+    }
+
+    if ((c === 'h' || c === 'H') && /^https?:\/\//i.test(text.slice(i, i + 8))) {
+      const u = matchBareUrl(text, i);
+      if (u && u.end <= to) {
+        w.visible += ' ';
+        i = u.end;
+        continue;
+      }
+    }
+
+    w.visible += c;
+    i++;
+  }
+}
+
+function walkPublic(text: string): BracketWalk {
+  const w: BracketWalk = { drops: [], visible: '' };
+  let cur = 0;
+  for (const f of fenceRanges(text)) {
+    walkPublicInline(text, cur, f.start, w);
+    w.visible += '\n\n';
+    cur = f.end;
+  }
+  walkPublicInline(text, cur, text.length, w);
+  return w;
+}
+
+export interface WikilinkOptions {
+  /** Markdown ではない文（タイトル・説明文）。コードやリンクの解釈をせず、括弧の組を全部外す */
+  plain?: boolean;
+}
+
+/** 外す括弧の範囲（左から順）。 */
+export function wikilinkBracketSpans(text: string, opts: WikilinkOptions = {}): Span[] {
+  if (!opts.plain) return walkPublic(text).drops;
+  const out: Span[] = [];
+  for (const m of text.matchAll(BRACKETS_ANY_RE)) {
+    out.push({ start: m.index, end: m.index + 2 }, { start: m.index + m[0].length - 2, end: m.index + m[0].length });
+  }
+  return out;
+}
+
+/**
+ * 言葉の括弧を外す（`[[x]]` → `x`）。公開する文と抜粋に使う。
+ * コードの中はそのまま。`[[a]](安全な url)` はリンクなのでそのまま。閉じない `[[` もそのまま。
+ * ⚠️ 書き出しでは、名前の置き換えがすべて解けた後の文に当てる（names/assemble.ts）。
+ */
+export function stripWikilinks(text: string, opts: WikilinkOptions = {}): string {
+  let out = '';
+  let cur = 0;
+  for (const d of wikilinkBracketSpans(text, opts)) {
+    out += text.slice(cur, d.start);
+    cur = d.end;
+  }
+  return out + text.slice(cur);
+}
+
+/**
+ * 外した後の文に、公開で `[[…]]` と見えるものが残っているか。
+ * 打ち消しで作った `[\[x]]` や、外すと括弧が現れる `[[[[x]]]]` がこれに当たる（書き出しはここで止める）。
+ */
+export function hasVisibleWikilink(text: string, opts: WikilinkOptions = {}): boolean {
+  if (opts.plain) return BRACKETS_LEFT_RE.test(text);
+  const w = walkPublic(text);
+  return w.drops.length > 0 || BRACKETS_LEFT_RE.test(w.visible);
 }

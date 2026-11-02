@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import type { Kakera, KatachiDetail } from '../lib/kakera/types';
 import type { LinkCards } from '../lib/card/types';
 import type { DocView } from '../lib/names/doc-db';
-import { composeBody } from '../lib/markdown';
+import { composeBody, stripWikilinks } from '../lib/markdown';
 import { renderDiaryFile } from '../lib/publish/diary-file';
 import { composePublishBody } from '../lib/publish/blank-lines';
 import { tokenizeForNames, type NameEntry, type NameToken } from '../lib/names/replace';
@@ -18,7 +18,7 @@ import {
   type NameDocShape,
   type ResolvedSpan,
 } from '../lib/names/doc';
-import { assembleNikki, type Assembled } from '../lib/names/assemble';
+import { assembleNikki, stripResolvedWikilinks, type Assembled } from '../lib/names/assemble';
 import { hiddenKeysOf, hiddenPhotoSpans, overlapsAny, photoKeysIn, type PhotoChoice } from '../lib/publish/photo-choice';
 import { FACE_MODEL, faceFingerprint, hiddenFaces, isFacePhotoKey, type PhotoFace, type PhotoFaceState } from '../lib/publish/photo-face';
 import { api, type PublishNikkiInput, type RefChoiceInput } from './api';
@@ -59,8 +59,10 @@ interface Seg {
   /** 日記用の文書（かけらだけ） */
   pub: DocView | null;
   shape: NameDocShape | null;
-  /** 解いた文（打ち消しなし） */
+  /** 解いた文（打ち消しなし・言葉の括弧 `[[ ]]` を外した、画面に見せる文） */
   text: string;
+  /** 解いたままの文（括弧つき）。「日記用に直す」の保存でサーバに base として送る */
+  rawText: string;
   spans: ResolvedSpan[];
   tokens: NameToken[];
   /** 読めない・解けない */
@@ -139,8 +141,11 @@ export function ConvertScreen({
   const editRef = useRef<HTMLInputElement>(null);
   /** 日記用に直した文に出てくる URL のカード（かたちの詳細に同梱されたカードに足して使う） */
   const [pbCards, setPbCards] = useState<LinkCards>({});
-  /** 「日記用に直す」を開いているかけら（initial = 開いたときの文。保存でサーバに base として送る） */
-  const [pbEdit, setPbEdit] = useState<{ seg: string; draft: string; initial: string } | null>(null);
+  /**
+   * 「日記用に直す」を開いているかけら（initial = 開いたときの解いたままの文。保存でサーバに base として送る／
+   * shown = 開いたときに欄に見せた文。言葉の括弧は外して見せる）
+   */
+  const [pbEdit, setPbEdit] = useState<{ seg: string; draft: string; initial: string; shown: string } | null>(null);
   const [pbBusy, setPbBusy] = useState(false);
   /** 写真の key → 顔の枠（日記に出す写真だけ読む） */
   const [faces, setFaces] = useState<Record<string, PhotoFaceState>>({});
@@ -279,19 +284,23 @@ export function ConvertScreen({
     const shape = shapeOfView(doc);
     let error: string | null = null;
     let text = '';
+    let rawText = '';
     let spans: ResolvedSpan[] = [];
     if (!doc) error = '名前の記号がまだありません。開き直してください。';
     else if (!shape) error = doc.kind === 'publish' ? '日記用の文が読めません。原本に戻してください。' : '名前の記号が読めません。開き直してください。';
     else {
       try {
         const r = resolveShape(shape, idx);
-        text = r.text;
-        spans = r.spans;
+        rawText = r.text;
+        // 印つきの姿でも括弧を出さない（書き出しと同じく、名前を解いた後で外す）
+        const shown = stripResolvedWikilinks(r.text, r.spans, !kakera);
+        text = shown.text;
+        spans = shown.spans;
       } catch (e) {
         error = `名前の記号が解けません（${e instanceof Error ? e.message : String(e)}）。開き直してください。`;
       }
     }
-    return { seg, label, num, kakera, doc, pub, shape, text, spans, tokens: tokenizeForNames(text), error };
+    return { seg, label, num, kakera, doc, pub, shape, text, rawText, spans, tokens: tokenizeForNames(text), error };
   };
   const titleSeg = makeSeg(TITLE_SEG, 'タイトル', 0, null, docOf(TITLE_SEG, 'title'), null);
   // 説明が空なら段を作らない（frontmatter にも書かない）
@@ -522,7 +531,7 @@ export function ConvertScreen({
       return;
     }
     // 開いたときの文から何も変えていないなら、書き換えを作らない・既にある書き換えも変えない
-    if (pbEdit.draft === pbEdit.initial) {
+    if (pbEdit.draft === pbEdit.shown) {
       setPbEdit(null);
       return;
     }
@@ -848,7 +857,7 @@ export function ConvertScreen({
                     <p class="pb-stale-sub">日記用に直したあとで、かけらの原本が直されました。選ぶまでは直した文で出ます。</p>
                     <details class="pb-orig">
                       <summary>今の原本を見る</summary>
-                      <p class="pb-orig-text">{k.body}</p>
+                      <p class="pb-orig-text">{stripWikilinks(k.body)}</p>
                     </details>
                     <div class="pb-actions">
                       <button type="button" class="btn-ghost" disabled={pbBusy} onClick={() => void acceptPb(k)}>
@@ -880,7 +889,7 @@ export function ConvertScreen({
                         class="btn-ghost"
                         disabled={pbBusy}
                         onClick={() => {
-                          if (editing.draft !== editing.initial && !confirm('直した文はまだ保存していません。取り消しますか？')) return;
+                          if (editing.draft !== editing.shown && !confirm('直した文はまだ保存していません。取り消しますか？')) return;
                           setPbEdit(null);
                         }}
                       >
@@ -907,7 +916,8 @@ export function ConvertScreen({
                         onClick={() => {
                           // 開くときは置き換え済みの文で見せる: 名前はいまの選択どおり（拒否は実名）、写真の記法は残す。
                           // composePublishBody の空行の U+00A0 化・写真 URL の差し替え等、書き出し専用の変換は入れない。
-                          setPbEdit({ seg: s.seg, draft: s.text, initial: s.text });
+                          // 言葉の括弧は外して見せる（公開されないものを見せない）。base は括弧つきの文のまま送る
+                          setPbEdit({ seg: s.seg, draft: s.text, initial: s.rawText, shown: s.text });
                         }}
                       >
                         {pb ? '日記用の文を直す' : '日記用に直す'}

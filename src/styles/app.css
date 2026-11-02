@@ -869,3 +869,22 @@ pre.conv-md {
 .when-reset:disabled { opacity: .4; cursor: default; }
 .composer-actions { gap: 10px; }
 .read-date-note.time-note { margin: -6px 0 16px; }
+
+/* ---- ことば（かけら言葉リンク設計） ---- */
+a.word-link {
+  color: var(--accent); text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; cursor: pointer;
+}
+.word-here { font-weight: 700; }
+.word-title { font-size: 22px; font-weight: 600; margin: 0 0 4px; overflow-wrap: anywhere; }
+.word-sub { margin-bottom: 12px; }
+.word-frag { padding: 12px 2px; }
+.word-frag-meta { display: block; margin-top: 4px; font-size: 11px; color: var(--muted); font-family: var(--mono); }
+ul.word-index { list-style: none; margin: 0; padding: 0; }
+.word-index button {
+  display: flex; align-items: baseline; gap: 10px; width: 100%;
+  border: none; border-bottom: 1px solid var(--line); background: transparent;
+  padding: 14px 0; text-align: left; cursor: pointer; color: var(--fg); font-family: inherit;
+}
+.word-index-name { font-size: 15.5px; flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.word-index-count { font-family: var(--mono); font-size: 13px; color: var(--accent); }
+.word-index-last { font-family: var(--mono); font-size: 11px; color: var(--muted); }

@@ -1,6 +1,6 @@
-import { Fragment } from 'preact';
-import type { JSX } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { Fragment, createContext } from 'preact';
+import type { ComponentChildren, JSX } from 'preact';
+import { useContext, useEffect, useRef, useState } from 'preact/hooks';
 import type { Embed, InlineNode } from '../lib/markdown';
 import {
   FENCE_LINE,
@@ -15,6 +15,33 @@ import {
 } from '../lib/markdown';
 import type { LinkCard, LinkCards } from '../lib/card/types';
 import { parseCardUrls } from '../lib/card/url';
+
+/** 言葉のページを開く手段。渡されない画面（変換ページ・日記を組む画面など）では、言葉は括弧なしの文字になる。 */
+export interface WordLinkValue {
+  open: (word: string) => void;
+  /** いま開いている言葉のページの言葉。本文の中では太字にして、リンクにしない */
+  here?: string;
+}
+
+export const WordLinkContext = createContext<WordLinkValue | null>(null);
+
+function WordLink({ word, children }: { word: string; children: ComponentChildren }): JSX.Element {
+  const ctx = useContext(WordLinkContext);
+  if (!ctx) return <>{children}</>;
+  if (ctx.here === word) return <strong class="word-here">{children}</strong>;
+  return (
+    <a
+      class="word-link"
+      href="#"
+      onClick={(e) => {
+        e.preventDefault();
+        ctx.open(word);
+      }}
+    >
+      {children}
+    </a>
+  );
+}
 
 /**
  * 行内書式の木を Preact の要素に組み立てる。
@@ -40,6 +67,12 @@ function renderInline(nodes: InlineNode[], prefix = ''): JSX.Element[] {
           <a key={key} href={n.href} target="_blank" rel="noopener noreferrer">
             {renderInline(n.children, key + '-')}
           </a>
+        );
+      case 'wikilink':
+        return (
+          <WordLink key={key} word={n.word}>
+            {renderInline(n.children, key + '-')}
+          </WordLink>
         );
       default:
         return <Fragment key={key}>{n.value}</Fragment>;

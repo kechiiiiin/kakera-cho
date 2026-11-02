@@ -56,6 +56,27 @@ export interface KatachiDetail {
   cards?: LinkCards;
 }
 
+/** ことばの索引の1行（かけら言葉リンク設計 §2.3）。 */
+export interface WordSummary {
+  word: string;
+  /** その言葉を含むかけらの数（同じかけらに二度出ても 1） */
+  count: number;
+  /** その言葉を最後に書いた日時（kakera.written_at） */
+  last_written_at: string;
+}
+
+/** 言葉のページの1枚。居場所は katachi_date（NULL = かけらたち）。 */
+export interface WordKakera extends Kakera {
+  katachi_date: string | null;
+}
+
+/** 言葉のページ＝その言葉を含むかけら（新しい順）＋リンクカード。 */
+export interface WordDetail {
+  word: string;
+  kakera: WordKakera[];
+  cards: LinkCards;
+}
+
 /** 検索でヒットしたかけら1枚（抜粋つき）。 */
 export interface SearchMatch {
   kakera_id: string;

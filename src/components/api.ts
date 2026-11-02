@@ -1,6 +1,6 @@
 // 画面から API を叩くだけの薄い層（iOS から同じ API を使うので、ここに業務の判断を書かない）。
 
-import type { Kakera, KatachiDetail, KatachiSummary, SearchResult } from '../lib/kakera/types';
+import type { Kakera, KatachiDetail, KatachiSummary, SearchResult, WordDetail, WordSummary } from '../lib/kakera/types';
 import type { LinkCards } from '../lib/card/types';
 import type { DocView } from '../lib/names/doc-db';
 import type { ChoiceAction, NameRef } from '../lib/names/doc';
@@ -226,4 +226,10 @@ export const api = {
 
   search: (q: string) =>
     req<{ results: SearchResult[] }>(`/api/search?q=${encodeURIComponent(q)}`).then((r) => r.results),
+
+  /* ---- 言葉 ---- */
+
+  words: () => req<{ words: WordSummary[] }>('/api/words').then((r) => r.words),
+
+  word: (word: string) => req<WordDetail>(`/api/words?word=${encodeURIComponent(word)}`),
 };

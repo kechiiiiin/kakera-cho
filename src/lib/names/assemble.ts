@@ -1,10 +1,10 @@
 // 書き出す日記の中身を、名前の文書から組む（公開名変換設計・記号方式の同期と書き出し §2・§3）。純関数。
 // ⚠️ 画面の「公開される姿」「Markdown」と書き出し（nikki.ts）で、必ず同じこれを通す。
 //
-// 順番（原則 6）: 記号を解く → 出さない写真を解いた後の文から除く → 取り残しの検査。
+// 順番（原則 6）: 記号を解く → 出さない写真を解いた後の文から除く → 言葉の括弧を外す → 取り残しの検査。
 // 位置方式では写真を名前と一回の走査で除かないと選択が落ちたが、記号は文と一緒に動くので解いてから除いてよい。
 // 止める（NameDocError → 409）: 形の崩れ／記号が解けない／実名の文書を実名で解いても元の文と一致しない／
-// 記号になっていない実名が残った／出さない写真の key が残った／リンク・画像の記法が崩れた。
+// 記号になっていない実名が残った／出さない写真の key が残った／リンク・画像の記法が崩れた／括弧 [[ ]] が見える形で残った。
 
 import {
   NameDocError,
@@ -17,6 +17,7 @@ import {
 } from './doc';
 import { findHits, tokenizeForNames, type NameEntry, type NameToken, type Span } from './replace';
 import { hiddenPhotoSpans } from '../publish/photo-choice';
+import { hasVisibleWikilink, wikilinkBracketSpans } from '../markdown';
 
 export interface AssemblePart {
   seg: string;
@@ -83,6 +84,14 @@ function applyDrops(text: string, spans: ResolvedSpan[], drops: Span[]): { text:
   return { text: out, spans: kept };
 }
 
+/**
+ * 解いた文から言葉の括弧 `[[ ]]` を外す（かけら言葉リンク設計 §2.3「公開」）。記号の範囲は外した後の位置に写す。
+ * @param plain Markdown ではない文（タイトル・説明）
+ */
+export function stripResolvedWikilinks(text: string, spans: ResolvedSpan[], plain: boolean): { text: string; spans: ResolvedSpan[] } {
+  return applyDrops(text, spans, wikilinkBracketSpans(text, { plain }));
+}
+
 export function assemblePart(part: AssemblePart, dict: NameEntry[]): AssembledPart {
   const stop = (why: string): never => {
     throw new NameDocError(`${part.label}の名前の記号が${why}。開き直してください。`);
@@ -113,7 +122,13 @@ export function assemblePart(part: AssemblePart, dict: NameEntry[]): AssembledPa
 
   const hidden = part.hidden ?? new Set<string>();
   const drops = part.body && hidden.size ? hiddenPhotoSpans(resolved.text, hidden) : [];
-  const out = applyDrops(resolved.text, resolved.spans, drops);
+  const dropped = applyDrops(resolved.text, resolved.spans, drops);
+  // ⚠️ 言葉の括弧は、名前を解き写真を除いた後の最終の文で外し、下の検査はすべて外した後の文に当てる。
+  // `実[[名]]` のように括弧が名前を割っていると、外した後で初めて実名が現れる（下の検査で止まる）
+  const out = stripResolvedWikilinks(dropped.text, dropped.spans, !part.body);
+  if (hasVisibleWikilink(out.text, { plain: !part.body })) {
+    throw new NameDocError(`${part.label}に、公開に出してはいけない括弧 [[ ]] が残っています。手で直してください。`);
+  }
 
   // 記号になっていない実名（例外でない当たりが、一つの記号の出力範囲に丸ごと入っていない）
   for (const h of findHits(out.text, dict)) {
