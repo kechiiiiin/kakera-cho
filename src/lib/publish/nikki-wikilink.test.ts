@@ -17,6 +17,7 @@ import { diaryDocViews, dictRev, savePublishText, syncDiaryDocs, type DocView } 
 import { ulid } from '../ulid';
 import { publishNikki, type BlogWriter } from './astro-blog';
 import { prepareNikkiExport } from './nikki-export';
+import { GET as wordsGet, POST as wordsPost } from '../../pages/api/words';
 
 const root = new URL('../../../', import.meta.url).pathname;
 const MIGRATIONS = [
@@ -166,6 +167,34 @@ describe('公開の約束（ローカル D1 で書き出しまで通す）', () 
     });
   });
 
+  it('fail-closed: URL の中の括弧は外さず 409（https://example.com/[[仮名]]）', async () => {
+    for (const body of ['https://example.com/[[太郎]]', 'https://example.com/あ[[太郎]]', 'www.example.com/[[太郎]]', '<mailto:[[太郎]]>', '[a](/[[太郎]])']) {
+      await updateKakera(db, C, { body });
+      const page = await openPage(K2, [C], '');
+      await expect(prepareNikkiExport(db, K2, exportInput(page, [C], ['title', C]))).rejects.toMatchObject({ status: 409 });
+    }
+  });
+
+  it('[[ を含まない URL の書き出しは1バイトも変えない。URL の外の言葉は今までどおり外す', async () => {
+    for (const body of [
+      'https://example.com/a_(b)?c=1&d=[x]',
+      'https://example.com/あい',
+      'www.example.com/a]]',
+      '[a](https://example.com/b "題")',
+      '![](https://example.com/c.jpg)',
+      '<https://example.com/d>',
+    ]) {
+      await updateKakera(db, C, { body });
+      const page = await openPage(K2, [C], '');
+      const p = await prepareNikkiExport(db, K2, exportInput(page, [C], ['title', C]));
+      expect(p.publish.bodies).toEqual([body]);
+    }
+    await updateKakera(db, C, { body: 'https://example.com/x [[太郎]]\n[[https://example.com/y]]\n[[太郎]](/rel)' });
+    const page = await openPage(K2, [C], '');
+    const p = await prepareNikkiExport(db, K2, exportInput(page, [C], ['title', C]));
+    expect(p.publish.bodies).toEqual(['https://example.com/x 長男\nhttps://example.com/y\n長男(/rel)']);
+  });
+
   it('fail-closed: 開いた後に本文が変わったら今までどおり 409', async () => {
     const page = await openPage(K, [A, B]);
     await updateKakera(db, B, { body: '[[太郎]]と[[奈良]]。直した' });
@@ -259,6 +288,20 @@ describe('ことば（listWords・getWordDetail）', () => {
     expect((await getWordDetail(db, '100%')).kakera.map((k) => k.id)).toEqual([C]);
     expect((await getWordDetail(db, '1_0%')).kakera).toEqual([]);
     expect((await getWordDetail(db, '%')).kakera).toEqual([]);
+  });
+
+  it('POST /api/words: 言葉は本文で受ける。空の言葉は 400。GET は索引だけ', async () => {
+    const locals = { user: { email: 'test@example.com' }, runtime: { env: proxy.env } } as never;
+    const post = (body: unknown) =>
+      wordsPost({ locals, request: new Request('http://x/api/words', { method: 'POST', body: JSON.stringify(body) }) } as never) as Promise<Response>;
+    const ok = await post({ word: '京都' });
+    expect(ok.status).toBe(200);
+    expect(((await ok.json()) as { kakera: unknown[] }).kakera.length).toBeGreaterThan(0);
+    expect((await post({ word: '' })).status).toBe(400);
+    expect((await post({ word: '  ' })).status).toBe(400);
+    expect((await post({})).status).toBe(400);
+    const index = (await wordsGet({ locals, url: new URL('http://x/api/words?word=京都') } as never)) as Response;
+    expect(Object.keys((await index.json()) as object)).toEqual(['words']);
   });
 
   it('括弧を外す・かけらを消すと減り、0 個で消える', async () => {

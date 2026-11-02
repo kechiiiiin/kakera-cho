@@ -231,5 +231,6 @@ export const api = {
 
   words: () => req<{ words: WordSummary[] }>('/api/words').then((r) => r.words),
 
-  word: (word: string) => req<WordDetail>(`/api/words?word=${encodeURIComponent(word)}`),
+  /** 言葉のページ（言葉は実名を含みうるので URL に載せない。読むのも POST） */
+  word: (word: string) => req<WordDetail>('/api/words', { method: 'POST', body: JSON.stringify({ word }) }),
 };

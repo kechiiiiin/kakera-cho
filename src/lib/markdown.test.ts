@@ -62,6 +62,14 @@ describe('hasVisibleWikilink', () => {
     expect(hasVisibleWikilink(stripWikilinks('[[[[x]]]]'))).toBe(true);
     expect(hasVisibleWikilink('[[x]]', { plain: true })).toBe(true);
   });
+  it('URL の中の括弧は隠さない（画面と公開側のどちらの区切りでも）。[[ の無い URL はそのまま', () => {
+    expect(hasVisibleWikilink('https://example.com/[[仮名]]')).toBe(true);
+    expect(hasVisibleWikilink('https://example.com/あ[[仮名]]')).toBe(true);
+    expect(hasVisibleWikilink('www.example.com/[[仮名]]')).toBe(true);
+    expect(hasVisibleWikilink('https://example.com/あい')).toBe(false);
+    expect(stripWikilinks('https://example.com/[[仮名]]')).toBe('https://example.com/[[仮名]]');
+    expect(stripWikilinks('https://example.com/あい')).toBe('https://example.com/あい');
+  });
 });
 
 describe('wordsOf', () => {

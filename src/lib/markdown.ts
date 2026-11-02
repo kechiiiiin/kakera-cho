@@ -1,5 +1,7 @@
 // Markdown の扱い。書く側（k-editor に渡す判別）と読む側・書き出しの両方から使うので、DOM に依存しない。
 
+import { publicUrlEnd } from './names/replace';
+
 /**
  * 行全体が区切り線（thematic break）か。
  * CommonMark 準拠: 先頭空白3つまで・同じ記号3つ以上・間の空白可。
@@ -704,11 +706,15 @@ function walkPublicInline(text: string, from: number, to: number, w: BracketWalk
       }
     }
 
-    if ((c === 'h' || c === 'H') && /^https?:\/\//i.test(text.slice(i, i + 8))) {
-      const u = matchBareUrl(text, i);
-      if (u && u.end <= to) {
-        w.visible += ' ';
-        i = u.end;
+    // 裸の URL。範囲は画面の読み方（matchBareUrl）と公開側の読み方（publicUrlEnd）の長い方。
+    // ⚠️ 範囲に `[[` があれば、括弧を外さず見える文字として残す（hasVisibleWikilink で書き出しを止める）。
+    //    URL の中の名前は置き換えないので、黙って外すと実名が URL に残る。
+    if (c === 'h' || c === 'H' || c === 'w' || c === 'W') {
+      const end = Math.min(Math.max(matchBareUrl(text, i)?.end ?? -1, publicUrlEnd(text, i)), to);
+      if (end > i) {
+        const url = text.slice(i, end);
+        w.visible += url.includes('[[') ? url : ' ';
+        i = end;
         continue;
       }
     }

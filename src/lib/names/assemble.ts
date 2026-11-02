@@ -15,7 +15,7 @@ import {
   type NameDocShape,
   type ResolvedSpan,
 } from './doc';
-import { findHits, tokenizeForNames, type NameEntry, type NameToken, type Span } from './replace';
+import { findHits, replaceableSpans, tokenizeForNames, type NameEntry, type NameToken, type Span } from './replace';
 import { hiddenPhotoSpans } from '../publish/photo-choice';
 import { hasVisibleWikilink, wikilinkBracketSpans } from '../markdown';
 
@@ -92,6 +92,20 @@ export function stripResolvedWikilinks(text: string, spans: ResolvedSpan[], plai
   return applyDrops(text, spans, wikilinkBracketSpans(text, { plain }));
 }
 
+/**
+ * 外す括弧が、名前を置き換えない場所（URL・リンク先など）にあるか。開きの括弧も中身の先頭も置き換えてよい範囲の外なら、そこにある。
+ * ⚠️ 片方で足りる形: `[[a]](/rel)`（中身は表示文字）・`[[https://example.com]]`（開きの括弧は文字）。
+ */
+function hasBracketsInUntouchable(text: string): boolean {
+  const spans = replaceableSpans(tokenizeForNames(text));
+  const inside = (p: number): boolean => spans.some((s) => s.start <= p && p < s.end);
+  const drops = wikilinkBracketSpans(text);
+  for (let i = 0; i < drops.length; i += 2) {
+    if (!inside(drops[i]!.start) && !inside(drops[i]!.end)) return true;
+  }
+  return false;
+}
+
 export function assemblePart(part: AssemblePart, dict: NameEntry[]): AssembledPart {
   const stop = (why: string): never => {
     throw new NameDocError(`${part.label}の名前の記号が${why}。開き直してください。`);
@@ -125,6 +139,10 @@ export function assemblePart(part: AssemblePart, dict: NameEntry[]): AssembledPa
   const dropped = applyDrops(resolved.text, resolved.spans, drops);
   // ⚠️ 言葉の括弧は、名前を解き写真を除いた後の最終の文で外し、下の検査はすべて外した後の文に当てる。
   // `実[[名]]` のように括弧が名前を割っていると、外した後で初めて実名が現れる（下の検査で止まる）
+  // `[a](/[[実名]])`・`<mailto:[[実名]]>` のように、名前を置き換えない場所の括弧は外さず止める（外すと実名だけが残る）
+  if (part.body && hasBracketsInUntouchable(dropped.text)) {
+    throw new NameDocError(`${part.label}の URL の中に括弧 [[ ]] があります。手で直してください。`);
+  }
   const out = stripResolvedWikilinks(dropped.text, dropped.spans, !part.body);
   if (hasVisibleWikilink(out.text, { plain: !part.body })) {
     throw new NameDocError(`${part.label}に、公開に出してはいけない括弧 [[ ]] が残っています。手で直してください。`);
