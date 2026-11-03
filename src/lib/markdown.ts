@@ -1,6 +1,6 @@
 // Markdown の扱い。書く側（k-editor に渡す判別）と読む側・書き出しの両方から使うので、DOM に依存しない。
 
-import { publicUrlEnd } from './names/replace';
+import { publicUrlEnd, replaceableSpans, tokenizeForNames } from './names/replace';
 
 /**
  * 行全体が区切り線（thematic break）か。
@@ -774,4 +774,128 @@ export function hasVisibleWikilink(text: string, opts: WikilinkOptions = {}): bo
   if (opts.plain) return BRACKETS_LEFT_RE.test(text);
   const w = walkPublic(text);
   return w.drops.length > 0 || BRACKETS_LEFT_RE.test(w.visible);
+}
+
+// ───────────────────────────────────────────────────────────────
+// 既にページがある言葉の候補（かけら言葉リンク設計 §3.5）
+//
+// ⚠️ 読む画面（parseInline・wordsOf）と食い違わないよう、同じ判定（matchLink・matchWordAt・matchBareUrl）で歩く。
+//    公開側の読み方（URL の区切り・山括弧・参照の定義）で触らない場所も候補にしない（囲むと書き出しが 409 で止まるため）。
+// ───────────────────────────────────────────────────────────────
+
+export interface WordCandidate {
+  word: string;
+  start: number;
+  end: number;
+}
+
+/** 読む画面で素の文字として読む範囲（括弧・リンク記法・画像・コード・裸の URL・打ち消しの外）。 */
+function plainSpans(text: string): Span[] {
+  const out: Span[] = [];
+  const scan = (from: number, to: number): void => {
+    let s = from;
+    let i = from;
+    const skip = (end: number): void => {
+      if (i > s) out.push({ start: s, end: i });
+      i = Math.max(i + 1, end);
+      s = i;
+    };
+    while (i < to) {
+      const c = text.charAt(i);
+      if (c === '\\' && i + 1 < to && ESCAPABLE.includes(text.charAt(i + 1))) {
+        const end = text.charAt(i + 1) === '[' ? bracketsEndAt(text, i + 1) : -1;
+        skip(end > 0 ? end : i + 2);
+      } else if (c === '`') {
+        let j = i;
+        while (j < to && text.charAt(j) === '`') j++;
+        // 読む画面（次のバッククォートまで）と公開側（同じ長さ・空行をまたがない）の、遠い方まで
+        const read = text.indexOf('`', j);
+        const pub = codeCloseOf(text, j, to, j - i);
+        skip(Math.max(j, read >= 0 ? read + 1 : -1, pub >= 0 ? pub + (j - i) : -1));
+      } else if (c === '[' && (i === 0 || text.charAt(i - 1) === '\n') && /^\[[^\]\n]+\]:/.test(text.slice(i, to))) {
+        // 参照の定義の行（公開されない。囲むと定義でなくなって見えてしまう）
+        const nl = text.indexOf('\n', i);
+        skip(nl >= 0 ? nl : to);
+      } else if ((c === '!' && text.charAt(i + 1) === '[') || c === '[') {
+        const m = matchLink(text, c === '!' ? i + 1 : i);
+        const end = m ? m.end : c === '[' ? bracketsEndAt(text, i) : -1;
+        if (end > 0) skip(end);
+        else i++;
+      } else if (c === 'h' || c === 'H') {
+        const u = matchBareUrl(text, i);
+        if (u) skip(u.end);
+        else i++;
+      } else {
+        i++;
+      }
+    }
+    if (Math.min(i, to) > s) out.push({ start: s, end: Math.min(i, to) });
+  };
+  let cur = 0;
+  for (const f of fenceRanges(text)) {
+    scan(cur, f.start);
+    cur = f.end;
+  }
+  scan(cur, text.length);
+  return out;
+}
+
+/** 候補の範囲を括弧で囲む。 */
+export function wrapWordCandidates(body: string, candidates: readonly WordCandidate[]): string {
+  let out = body;
+  for (const c of [...candidates].sort((a, b) => b.start - a.start)) {
+    out = `${out.slice(0, c.start)}[[${out.slice(c.start, c.end)}]]${out.slice(c.end)}`;
+  }
+  return out;
+}
+
+/** 囲んでも、読む画面でその言葉になり、他の言葉を崩さず、括弧を外すと元に戻るか（`猫(https://…)` はリンクに化ける）。 */
+function wrapsCleanly(body: string, c: WordCandidate): boolean {
+  const out = wrapWordCandidates(body, [c]);
+  const stripped = stripWikilinks(out);
+  const after = wordsOf(out);
+  return (
+    after.includes(c.word) &&
+    wordsOf(body).every((w) => after.includes(w)) &&
+    stripped === stripWikilinks(body) &&
+    !hasVisibleWikilink(stripped)
+  );
+}
+
+/**
+ * 本文の中の、索引に載っている言葉（本文の中の順）。言葉ごとに最初の1か所。そのかけらで既に囲んである言葉は出さない。
+ * 言葉が重なるときは長い方を取る: 長い語から順に、全部の出現を場所取りする（候補にしない出現も、短い語に割らせない）。
+ */
+export function wordCandidates(body: string, pages: readonly string[]): WordCandidate[] {
+  const publicSpans = replaceableSpans(tokenizeForNames(body));
+  const spans = plainSpans(body).flatMap((p) =>
+    publicSpans
+      .map((q) => ({ start: Math.max(p.start, q.start), end: Math.min(p.end, q.end) }))
+      .filter((s) => s.start < s.end)
+  );
+  const wrapped = new Set(wordsOf(body));
+  const taken: Span[] = [];
+  const out: WordCandidate[] = [];
+  const unique = [...new Set(pages.map((w) => w.trim()).filter((w) => w))];
+  unique.sort((a, b) => b.length - a.length || (a < b ? -1 : 1));
+  for (const word of unique) {
+    let found = false;
+    for (const s of spans) {
+      let at = body.indexOf(word, s.start);
+      while (at >= 0 && at + word.length <= s.end) {
+        const end = at + word.length;
+        if (taken.some((t) => at < t.end && t.start < end)) {
+          at = body.indexOf(word, at + 1);
+          continue;
+        }
+        taken.push({ start: at, end });
+        if (!found && !wrapped.has(word) && wrapsCleanly(body, { word, start: at, end })) {
+          out.push({ word, start: at, end });
+          found = true;
+        }
+        at = body.indexOf(word, end);
+      }
+    }
+  }
+  return out.sort((a, b) => a.start - b.start);
 }

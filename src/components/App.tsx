@@ -2,6 +2,7 @@ import type { JSX } from 'preact';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { Kakera, KatachiDetail, KatachiSummary, SearchResult } from '../lib/kakera/types';
 import type { LinkCards } from '../lib/card/types';
+import { applyWordLinks } from '../lib/kakera/word-links';
 import { wordsOf } from '../lib/markdown';
 import { nowJst } from '../lib/time';
 import { ulid } from '../lib/ulid';
@@ -272,6 +273,16 @@ export default function App(): JSX.Element {
             nagare={nagare}
             cards={nagareCards}
             onBack={() => setView({ t: 'write' })}
+            onLinkWords={async (edits) => {
+              try {
+                await applyWordLinks(edits, (id, body) => api.updateKakera(id, { body }));
+              } catch (e) {
+                await guard(loadNagare);
+                say(`リンクにできなかったので、かたちは作っていません: ${e instanceof Error ? e.message : String(e)}`);
+                throw e;
+              }
+              await guard(loadNagare);
+            }}
             onCreate={(input) =>
               guard(async () => {
                 const created = await api.createKatachi({

@@ -888,3 +888,4 @@ ul.word-index { list-style: none; margin: 0; padding: 0; }
 .word-index-name { font-size: 15.5px; flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .word-index-count { font-family: var(--mono); font-size: 13px; color: var(--accent); }
 .word-index-last { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.word-hit { color: var(--accent); font-weight: 700; }

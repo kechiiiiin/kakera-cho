@@ -1,8 +1,10 @@
 import type { JSX } from 'preact';
-import { useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import type { Kakera } from '../lib/kakera/types';
 import type { LinkCards } from '../lib/card/types';
-import { textForPick } from '../lib/card/pick';
+import { candidateContext, textForPick } from '../lib/card/pick';
+import { planWordLinks, wordLinkEdits, type WordLinkEdit, type WordLinkRow } from '../lib/kakera/word-links';
+import { api } from './api';
 import { dateHeading, dateOf, timeOf } from './format';
 import { RowThumb } from './RichText';
 import { TimeBulkBar, TimeToggle } from './TimeToggle';
@@ -20,18 +22,23 @@ function byWrittenOrder(a: Kakera, b: Kakera): number {
  *    並びを調整したくなるのは日記のほう（日記にする画面で組む）。
  *  日付の既定値は、選んだかけらのうち最も古いものの日付。
  *  選び直すたびに更新するが、⚠️ 手で変えた後は上書きしない。
+ *  「かたちにする」を押すと、かたちを作る前に、既にページがある言葉の確認を1枚挟む（かけら言葉リンク設計 §3.5）。
+ *  候補が無ければ挟まない。索引を取れないときも挟まない（かたちにするのを止めない）。入力中は何も出さない。
  */
 export function ComposeScreen({
   nagare,
   cards,
   onBack,
   onCreate,
+  onLinkWords,
 }: {
   nagare: Kakera[];
   /** URL をタイトルに畳むためだけに使う（ここのために取りに行かない） */
   cards: LinkCards;
   onBack: () => void;
   onCreate: (input: { date: string; title: string; kakera_ids: string[]; show_time_ids: string[] }) => Promise<void>;
+  /** 本文の直しを当てる。失敗したら知らせて投げる（かたちは作らない） */
+  onLinkWords: (edits: WordLinkEdit[]) => Promise<void>;
 }): JSX.Element {
   const [picked, setPicked] = useState<string[]>([]);
   // 時刻を出すかけら（かけら時刻表示設計・2026-10-12）。既定はオフ。選びから外したら一緒に外す
@@ -40,6 +47,14 @@ export function ComposeScreen({
   const [dateAuto, setDateAuto] = useState(true);
   const [title, setTitle] = useState('');
   const [busy, setBusy] = useState(false);
+  // 確認の行（null = 確認を開いていない）と、外した行
+  const [rows, setRows] = useState<WordLinkRow[] | null>(null);
+  const [off, setOff] = useState<string[]>([]);
+  const confirming = !!rows;
+
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [confirming]);
 
   const byId = new Map(nagare.map((k) => [k.id, k]));
   const chosen = picked
@@ -64,19 +79,96 @@ export function ComposeScreen({
     if (dateAuto) setDate(recomputeDate(next));
   }
 
+  async function finish(edits: WordLinkEdit[]): Promise<void> {
+    if (edits.length) {
+      try {
+        await onLinkWords(edits);
+      } catch {
+        // 知らせは onLinkWords が出している。かたちは作らず、選ぶ画面へ戻る（直し終えたかけらは囲まれたまま）
+        setRows(null);
+        return;
+      }
+    }
+    await onCreate({
+      date: date || recomputeDate(picked),
+      title: title.trim(),
+      kakera_ids: chosen.map((k) => k.id),
+      show_time_ids: chosen.filter((k) => showTime.includes(k.id)).map((k) => k.id),
+    });
+    // かたちを作れなかったとき（同じ日付がある等）は選ぶ画面へ戻る
+    setRows(null);
+  }
+
   async function create(): Promise<void> {
     if (!chosen.length || busy) return;
     setBusy(true);
     try {
-      await onCreate({
-        date: date || recomputeDate(picked),
-        title: title.trim(),
-        kakera_ids: chosen.map((k) => k.id),
-        show_time_ids: chosen.filter((k) => showTime.includes(k.id)).map((k) => k.id),
-      });
+      const pages = await api.words().then(
+        (words) => words.map((w) => w.word),
+        () => [] as string[] // 索引を取れなければ確認を挟まず進む
+      );
+      const found = planWordLinks(chosen, pages);
+      if (found.length) {
+        setOff([]);
+        setRows(found);
+        return;
+      }
+      await finish([]);
     } finally {
       setBusy(false);
     }
+  }
+
+  async function confirmLinks(list: WordLinkRow[]): Promise<void> {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await finish(wordLinkEdits(list.filter((r) => !off.includes(r.key))));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (rows) {
+    const count = rows.filter((r) => !off.includes(r.key)).length;
+    return (
+      <section>
+        <div class="back-row">
+          <button type="button" class="back-btn" disabled={busy} onClick={() => setRows(null)}>
+            ‹ かけらを選び直す
+          </button>
+        </div>
+        <p class="page-date" style="font-size:17px;">この言葉もリンクにしますか</p>
+        <p class="page-sub">すでにページがある言葉です。いらないものは外してください。</p>
+        <div class="assembled">
+          {rows.map((r) => {
+            const checked = !off.includes(r.key);
+            const c = candidateContext(r.body, r, cards);
+            return (
+              <div
+                class="pick-row"
+                key={r.key}
+                onClick={() => {
+                  if (!busy) setOff((o) => (checked ? [...o, r.key] : o.filter((x) => x !== r.key)));
+                }}
+              >
+                <div class={'checkbox' + (checked ? ' checked' : '')}>{checked ? '✓' : ''}</div>
+                <div class="pick-text">
+                  {c.before}
+                  <span class="word-hit">{c.word}</span>
+                  {c.after}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div style="margin-top:22px;">
+          <button type="button" class="btn-cta" style="width:100%;" disabled={busy} onClick={() => void confirmLinks(rows)}>
+            {count ? `${count}か所をリンクにして、かたちにする` : 'そのまま、かたちにする'}
+          </button>
+        </div>
+      </section>
+    );
   }
 
   return (

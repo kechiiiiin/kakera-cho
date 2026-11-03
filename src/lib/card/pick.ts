@@ -2,7 +2,7 @@
 // 要素は作らず**文字列だけ**を作る（-webkit-line-clamp が単一のテキストノードで効くように）。
 // ⚠️ ここのために OGP を取りに行かない。渡されたキャッシュを見るだけ。
 
-import { matchBareUrl, textForExcerpt } from '../markdown';
+import { matchBareUrl, textForExcerpt, type WordCandidate } from '../markdown';
 import type { LinkCards } from './types';
 import { normalizeUrl } from './url';
 
@@ -53,4 +53,29 @@ export function textForPick(body: string, cards?: LinkCards): string {
     re.lastIndex = hit.end;
   }
   return out + plain.slice(pos);
+}
+
+const CONTEXT_BEFORE = 30;
+const CONTEXT_AFTER = 60;
+
+/**
+ * 確認の行に添える、候補の言葉の前後の文（かけら言葉リンク設計 §3.5）。括弧・書式の記号・写真は出さず、URL は畳む。
+ * 長い本文は言葉のまわりだけにする。文字列を返すだけで、言葉の強調は画面が要素で組む。
+ */
+export function candidateContext(
+  body: string,
+  c: WordCandidate,
+  cards?: LinkCards
+): { before: string; word: string; after: string } {
+  const clean = (raw: string): string => {
+    const s = textForPick(raw, cards).replace(/\*\*|~~/g, '');
+    return `${/^\s/.test(raw) && s ? ' ' : ''}${s}${/\s$/.test(raw) && s ? ' ' : ''}`;
+  };
+  const before = Array.from(clean(body.slice(0, c.start)));
+  const after = Array.from(clean(body.slice(c.end)));
+  return {
+    before: (before.length > CONTEXT_BEFORE ? '…' : '') + before.slice(-CONTEXT_BEFORE).join(''),
+    word: c.word,
+    after: after.slice(0, CONTEXT_AFTER).join('') + (after.length > CONTEXT_AFTER ? '…' : ''),
+  };
 }
