@@ -11,7 +11,9 @@
 設計は vault の [[かけら帳設計]] / [[かけら帳設計・詳細]]（`hestia/projects/blog-cms-design/`）。
 **ここに書いていないことは決まっていない。**
 
-- 実装: Astro SSR / Cloudflare Workers / Preact / zod / octokit / jose
+- 実装: Astro SSR / Cloudflare Workers / Preact / zod / octokit
+- 認証: Cloudflare Access。JWT の検証は関所（`sekisho`・認証 Worker）に Service Binding `SEKISHO` の RPC で聞く（2026-11-05〜・`src/lib/auth/sekisho.ts`）。
+  かけら帳が持つのは `CF_ACCESS_AUD` だけ。許可メールは関所の secret `ALLOWED_EMAILS`。関所が答えない・null・3 秒超は 401（fail-closed）
 - 原本の真実: **D1**（`kakera` / `katachi` / `katachi_kakera`（置き場所） / `nikki` / `nikki_kakera`（書き出しの記録） / `device`）
 - 原本の控え: **`kakera-data`（private）** に Markdown（保存の都度・`waitUntil` で裏に回す）
 - 公開先: **`astro-blog`** の `src/content/diary/YYYY-MM-DD.md` へ octokit で直接 commit
@@ -30,7 +32,8 @@
 
 1. GitHub の細粒度 PAT を2本（`kechiiiiin/astro-blog` 用・`kechiiiiin/kakera-data` 用、どちらも Contents: Read and write）
 2. 一度 `npx wrangler deploy` して Worker を作る（`secret put` の置き場ができる）
-3. `npx wrangler secret put` で `BLOG_GITHUB_TOKEN` / `DATA_GITHUB_TOKEN` / `ALLOWED_EMAILS` / `CF_ACCESS_TEAM_DOMAIN` / `CF_ACCESS_AUD`
+3. `npx wrangler secret put` で `BLOG_GITHUB_TOKEN` / `DATA_GITHUB_TOKEN` / `CF_ACCESS_AUD`
+   （当初は `ALLOWED_EMAILS` / `CF_ACCESS_TEAM_DOMAIN` も入れていたが、2026-11-05 に検証を関所へ移して不要になった。関所を先にデプロイしておくこと）
 4. Cloudflare Access の Self-hosted アプリを `kakera.kechiiiiin.com` に（Google ログイン・メール allowlist）
 5. Custom Domain `kakera.kechiiiiin.com`（いまは `wrangler.toml` の `[[routes]]` にあり、deploy だけで揃う）
 
@@ -71,7 +74,7 @@ npm run dev
 ```sh
 npm run check         # 型チェック（astro check）
 npx tsc --noEmit -p . # ⚠️ astro check は API の import 忘れを見逃す。こちらも必ず通す
-npm test              # 公開名変換の記号方式のテスト（vitest・仮名の辞書）
+npm test              # 公開名変換の記号方式・関所の呼び出しなどのテスト（vitest・仮名の辞書）
 npm run build         # 本番ビルド
 # 本番 D1: 初期スキーマと 0001〜0008 は適用済み。0009（name_doc・name_ref）はデプロイより先に当てる。0010 は数日動かしてから
 # 0011（photo_face・photo_face_scan＝顔モザイク）もデプロイより先に当てる（無いと写真のある日記を書き出せない）
@@ -102,7 +105,7 @@ npm run build         # 本番ビルド
 
 ```
 src/
-  middleware.ts              Access JWT の検証（jose・fail-closed）
+  middleware.ts              Access JWT の確認（関所 sekisho に聞く・fail-closed）
   pages/
     index.astro              画面の入口（Preact を client:load で載せる）
     api/                     設計 §7 の API 一式
@@ -111,6 +114,7 @@ src/
     backup/                  kakera-data への控え（github.ts / kakera-data.ts / sync.ts）
     publish/                 astro-blog への公開（astro-blog.ts / photos.ts）
     markdown.ts              区切り線の正規化・画像記法の出し入れ
+    auth/sekisho.ts          関所（SEKISHO）の RPC 呼び出し・3 秒で打ち切り・fail-closed
     time.ts  ulid.ts  http.ts  ctx.ts
   components/                画面（Preact）。API を叩くだけの薄い層
 schema.sql                   設計 §3 の DDL

@@ -20,9 +20,14 @@ custom_domain = true
 directory = "./dist"
 binding = "ASSETS"
 
-# 秘密（BLOG_GITHUB_TOKEN / DATA_GITHUB_TOKEN / CF_ACCESS_TEAM_DOMAIN /
-# CF_ACCESS_AUD / ALLOWED_EMAILS）は `wrangler secret put` で登録する。
+# 秘密（BLOG_GITHUB_TOKEN / DATA_GITHUB_TOKEN / CF_ACCESS_AUD）は `wrangler secret put` で登録する。
 # ローカルは .dev.vars（.gitignore 済み）。README の手順を見ること。
+# Access の JWT の検証は関所（sekisho）に聞く。チームドメインと許可メールは関所の側で持つ。
+
+# 関所（sekisho・Cloudflare Access の JWT を検証する認証 Worker）。src/lib/auth/sekisho.ts が RPC で verify を呼ぶ
+[[services]]
+binding = "SEKISHO"
+service = "sekisho"
 
 [vars]
 BLOG_REPO = "astro-blog"

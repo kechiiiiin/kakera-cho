@@ -1,15 +1,12 @@
 import { defineMiddleware } from 'astro:middleware';
-import { createRemoteJWKSet, jwtVerify } from 'jose';
+import { verifyAccess } from './lib/auth/sekisho';
 
 // 第一段は Cloudflare Access のみ（設計 §6）。
 // ホスト全体を Access で保護し、middleware は Cf-Access-Jwt-Assertion を
-// jose で検証する（JWKS・iss・aud・exp）。**fail-closed**。
+// 関所（sekisho・認証 Worker）に Service Binding の RPC で確かめてもらう（src/lib/auth/sekisho.ts）。**fail-closed**。
 //
 // Bearer 経路（iOS）は第二段。Access と Bearer は素直に組むと両立しないので、
 // ここでは作らない。device テーブルだけは最初から用意してある。
-
-// JWKS はモジュールスコープでキャッシュ（jose が内部で cooldown を管理する）
-let jwks: ReturnType<typeof createRemoteJWKSet> | null = null;
 
 /**
  * ローカル開発でだけ認証を迂回する。
@@ -36,32 +33,12 @@ export const onRequest = defineMiddleware(async (context, next) => {
     return next();
   }
 
-  const token = request.headers.get('Cf-Access-Jwt-Assertion');
-  if (!token || !env?.CF_ACCESS_TEAM_DOMAIN || !env?.CF_ACCESS_AUD) {
-    return new Response('Unauthorized', { status: 401 });
+  // 不正・期限切れ・許可メール外・関所の不調・設定漏れは 401、サービストークンは 403（他の経路へフォールスルーしない）
+  const auth = await verifyAccess(request, env);
+  if (!auth.ok) {
+    return new Response(auth.status === 403 ? 'Forbidden' : 'Unauthorized', { status: auth.status });
   }
 
-  try {
-    jwks ??= createRemoteJWKSet(new URL(`${env.CF_ACCESS_TEAM_DOMAIN}/cdn-cgi/access/certs`));
-    const { payload } = await jwtVerify(token, jwks, {
-      issuer: env.CF_ACCESS_TEAM_DOMAIN,
-      audience: env.CF_ACCESS_AUD,
-    });
-    const email = String(payload.email ?? '').toLowerCase();
-
-    const allowed = (env.ALLOWED_EMAILS ?? '')
-      .split(',')
-      .map((e) => e.trim().toLowerCase())
-      .filter(Boolean);
-    // allowlist 未設定は全員拒否。設定漏れを裏口にしない
-    if (!email || allowed.length === 0 || !allowed.includes(email)) {
-      return new Response('Forbidden', { status: 403 });
-    }
-
-    locals.user = { email };
-    return next();
-  } catch {
-    // 検証に失敗したら即 401（他の経路へフォールスルーしない）
-    return new Response('Unauthorized', { status: 401 });
-  }
+  locals.user = { email: auth.email };
+  return next();
 });
