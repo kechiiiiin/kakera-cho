@@ -1,0 +1,62 @@
+name: kakera
+
+# かけら帳（kakera-cho）iOS — 第一弾（設計: jinsei vault hestia/projects/blog-cms-design/かけら帳iOS構想.md §2）
+# `*.xcodeproj` は生成物でコミットしない。必ず `xcodegen generate`（make generate）が先
+# iPhone だけ（TARGETED_DEVICE_FAMILY 1）。PC は今までどおりブラウザで Web 版
+
+options:
+  bundleIdPrefix: jp.kechiiiiin
+  deploymentTarget:
+    iOS: "26.0"
+  createIntermediateGroups: true
+  minimumXcodeGenVersion: "2.40.0"
+
+# Release だけ Secrets.xcconfig（make archive が生成・gitignore）を読む。無ければ空のまま
+configFiles:
+  Release: Config/Release.xcconfig
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    SWIFT_STRICT_CONCURRENCY: minimal
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    DEAD_CODE_STRIPPING: YES
+    TARGETED_DEVICE_FAMILY: "1"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    GENERATE_INFOPLIST_FILE: NO
+    CODE_SIGN_STYLE: Automatic
+    # 有料チーム（Apple Developer Program）の Team ID。環境変数 KAKERA_TEAM_ID から入れる
+    # （Makefile が ~/.config/kazoku-keijiban/team-id を読む。便りと同じチーム）
+    DEVELOPMENT_TEAM: "${KAKERA_TEAM_ID}"
+    # Worker の URL（秘密ではない）。同じサービストークンをこの2つのホストにだけ付ける
+    KAKERA_SERVER_URL: "https://kakera.kechiiiiin.com"
+    TAYORI_SERVER_URL: "https://tayori.kechiiiiin.com"
+
+targets:
+  Kakera:
+    type: application
+    platform: iOS
+    sources:
+      - path: App
+        excludes:
+          - "Info.plist"
+    settings:
+      base:
+        PRODUCT_NAME: Kakera
+        PRODUCT_BUNDLE_IDENTIFIER: jp.kechiiiiin.kakera
+        INFOPLIST_FILE: App/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        SWIFT_EMIT_LOC_STRINGS: YES
+        ENABLE_PREVIEWS: YES
+
+schemes:
+  Kakera:
+    build:
+      targets:
+        Kakera: all
+    run:
+      config: Debug
+    archive:
+      config: Release

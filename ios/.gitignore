@@ -1,0 +1,16 @@
+# xcodegen の生成物はコミットしない
+*.xcodeproj
+*.xcworkspace
+build/
+build-sim/
+*.xcresult
+DerivedData/
+.DS_Store
+
+# Access サービストークンを埋め込む生成物（値が入る・コミットしない）
+Secrets.xcconfig
+
+# TestFlight 用 API キーの ID 類
+Release.local.env
+*.p8
+build-sim.log

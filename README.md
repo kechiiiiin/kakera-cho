@@ -127,3 +127,12 @@ wrangler.toml                バインディングと [vars]
 かたちの全文検索（FTS5・trigram）／iOS ネイティブ（同じ API・共有シート・ウィジェット・オフライン）／
 端末トークンの発行画面。`device` テーブルと `POST /api/device` は先に用意してあるが、
 **Bearer での認証経路そのものは第二段**（Access と素直には両立しないため）。
+
+## iPhone アプリ（ios/）
+
+第一弾（設計: jinsei vault `hestia/projects/blog-cms-design/かけら帳iOS構想.md` §2）。SwiftUI・XcodeGen・iOS 26。便り（tayori/ios）と同じ組み立て。
+
+- 日ごとの画面（日付を左右で移る）・かけらを書く／直す／消す・写真を添える（端末で JPEG にして `POST /api/photo`）
+- 思い出す材料: その日（JST）に撮った写真（PhotoKit・複数選んで一つのかけらに・時刻は一番早い一枚）と、便りで既読にした記事（`GET /api/items/read-on`）。使った材料には端末の中で印を付ける
+- 認証: Access のサービストークン「kakera-ios」を、かけら帳と便りの本番ホストにだけ付ける。Worker は `ACCESS_SERVICE_CLIENT_IDS` で照合
+- `make sim`（ビルドだけ）／`make run-local`（ローカルの `astro dev --port 4321` と便りの `npm run dev` に向けて起動）／`make archive`・`make upload`（TestFlight。トークンは Mac のキーチェーン `kakera-token` の `client-id`・`client-secret` から `Secrets.xcconfig` を生成・gitignore）
