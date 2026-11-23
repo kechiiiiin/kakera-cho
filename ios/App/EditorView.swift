@@ -60,91 +60,99 @@ struct EditorView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    // .page-date（17pt の題）と .page-sub
+                    Text(isNew ? "かけらを書く" : "かけらを直す")
+                        .font(Theme.gothic(17, weight: .medium)).foregroundStyle(Theme.ink)
+                        .padding(.bottom, 4)
+                    Text("Markdown のまま書けます。URL だけの行はリンクカードになります。")
+                        .pageSub().lineSpacing(3).fixedSize(horizontal: false, vertical: true)
+                        .padding(.bottom, 18)
+
+                    // 本文欄（.frag-edit textarea: 罫 1pt・角丸 2pt・内側 10pt）
                     TextEditor(text: $draft.body)
                         .focused($focused)
                         .frame(minHeight: 220)
                         .font(Theme.gothic(16))
                         .foregroundStyle(Theme.ink)
-                        .lineSpacing(3)
+                        .lineSpacing(5)
                         .scrollContentBackground(.hidden)
+                        .padding(.horizontal, 5).padding(.vertical, 2)
+                        .padding(5)
+                        .overlay(RoundedRectangle(cornerRadius: Theme.radius).strokeBorder(Theme.line, lineWidth: Theme.hairline))
                         .accessibilityIdentifier("bodyEditor")
-                } footer: {
-                    Text("Markdown のまま書けます。URL だけの行はリンクカードになります。").font(Theme.gothic(11)).foregroundStyle(Theme.muted).lineSpacing(3)
-                }
-                .listRowBackground(Theme.sheet)
 
-                let urls = KakeraBody.photoURLs(draft.body)
-                Section {
+                    let urls = KakeraBody.photoURLs(draft.body)
                     if !urls.isEmpty {
                         ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 6) { ForEach(urls, id: \.self) { RemotePhoto(path: $0, side: 84) } }
+                            HStack(spacing: 8) { ForEach(urls, id: \.self) { RemotePhoto(path: $0, side: 52) } }
                         }
+                        .padding(.top, 10)
                     }
-                    if let uploading {
-                        HStack { ProgressView(); Text(uploading).font(Theme.gothic(14)) }
-                    } else {
-                        PhotosPicker(selection: $picks, maxSelectionCount: 10, matching: .images, photoLibrary: .shared()) {
-                            Label("写真を添える", systemImage: "photo.badge.plus").font(Theme.gothic(15)).foregroundStyle(Theme.accent)
+
+                    // 道具（.icon-btn）と書いた日時
+                    HStack(spacing: 8) {
+                        if let uploading {
+                            HStack(spacing: 6) { ProgressView().controlSize(.small); Text(uploading).font(Theme.gothic(12)).foregroundStyle(Theme.muted) }
+                                .frame(minHeight: 36)
+                        } else {
+                            PhotosPicker(selection: $picks, maxSelectionCount: 10, matching: .images, photoLibrary: .shared()) {
+                                Text("写真")
+                            }
+                            .buttonStyle(GhostButtonStyle())
+                            .accessibilityIdentifier("addPhoto")
                         }
+                        Spacer(minLength: 4)
+                        pickerChip(JST.dayKey(draft.writtenAt), components: .date)
+                            .accessibilityIdentifier("writtenAt")
+                        pickerChip(JST.time(draft.writtenAt), components: .hourAndMinute)
                     }
-                } header: {
-                    Text("写真").font(Theme.mincho(14, bold: true)).foregroundStyle(Theme.ink)
-                }
-                .listRowBackground(Theme.sheet)
+                    .padding(.top, 10)
 
-                Section {
-                    DatePicker(selection: $draft.writtenAt, in: ...Date().addingTimeInterval(60), displayedComponents: [.date, .hourAndMinute]) {
-                        Text("書いた日時").font(Theme.gothic(15)).foregroundStyle(Theme.ink)
+                    if let error {
+                        Text(error).font(Theme.gothic(13)).foregroundStyle(Theme.accent)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.top, 12)
                     }
-                    .environment(\.timeZone, JST.timeZone)
-                    .accessibilityIdentifier("writtenAt")
-                }
-                .listRowBackground(Theme.sheet)
 
-                if let error {
-                    Section { Text(error).foregroundStyle(Theme.accent).font(Theme.gothic(14)) }
-                        .listRowBackground(Theme.sheet)
-                }
-
-                if !isNew {
-                    Section {
-                        Button("このかけらを消す", role: .destructive) { confirmDelete = true }
-                            .font(Theme.gothic(15))
+                    // 下に罫を挟んで、保存（黒塗り）・やめる・消す（.frag-edit-actions）
+                    Rule().padding(.top, 14)
+                    HStack(spacing: 8) {
+                        if saving {
+                            ProgressView().frame(minWidth: 60, minHeight: 38)
+                        } else {
+                            Button("保存") { Task { await save() } }
+                                .buttonStyle(PrimaryButtonStyle())
+                                .disabled(trimmed.isEmpty || uploading != nil)
+                                .accessibilityIdentifier("save")
+                        }
+                        Button("やめる") { if dirty { confirmDiscard = true } else { dismiss() } }
+                            .buttonStyle(GhostButtonStyle())
                             .disabled(saving)
-                    } footer: {
-                        if draft.original?.katachiId != nil {
-                            Text("このかけらは、かたちの中にあります。消すと、かたちからも消えます。").font(Theme.gothic(11)).foregroundStyle(Theme.muted).lineSpacing(3)
+                        Spacer(minLength: 4)
+                        if !isNew {
+                            Button("消す") { confirmDelete = true }
+                                .buttonStyle(DangerButtonStyle())
+                                .disabled(saving)
+                                .accessibilityIdentifier("delete")
                         }
                     }
-                    .listRowBackground(Theme.sheet)
-                }
-            }
-            .scrollContentBackground(.hidden)
-            .background(Theme.paper.ignoresSafeArea())
-            .navigationTitle(isNew ? "かけらを書く" : "かけらを直す")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(Theme.paper, for: .navigationBar)
-            .toolbar {
-                ToolbarItem(placement: .principal) {
-                    Text(isNew ? "かけらを書く" : "かけらを直す").font(Theme.mincho(17, bold: true, relativeTo: .headline)).foregroundStyle(Theme.ink)
-                }
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("やめる") { if dirty { confirmDiscard = true } else { dismiss() } }
-                        .disabled(saving)
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    if saving {
-                        ProgressView()
-                    } else {
-                        Button("保存") { Task { await save() } }
-                            .fontWeight(.semibold)
-                            .disabled(trimmed.isEmpty || uploading != nil)
-                            .accessibilityIdentifier("save")
+                    .padding(.top, 14)
+                    if !isNew && draft.original?.katachiId != nil {
+                        Text("このかけらは、かたちの中にあります。消すと、かたちからも消えます。")
+                            .font(Theme.gothic(11)).foregroundStyle(Theme.muted).lineSpacing(3)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.top, 10)
                     }
                 }
+                .padding(.horizontal, 18)
+                .padding(.top, 20)
+                .padding(.bottom, 40)
             }
+            .scrollDismissesKeyboard(.interactively)
+            .background(Theme.paper.ignoresSafeArea())
+            .toolbar(.hidden, for: .navigationBar)
             .interactiveDismissDisabled(dirty || saving)
             .confirmationDialog("書いた内容を捨てますか", isPresented: $confirmDiscard, titleVisibility: .visible) {
                 Button("捨てる", role: .destructive) { dismiss() }
@@ -159,6 +167,22 @@ struct EditorView: View {
             }
             .onAppear { if isNew && draft.body.isEmpty { focused = true } }
         }
+    }
+
+    /// 書いた日時の欄。見えるのは等幅の数字と罫の枠（.icon-btn の形）。押すと端末の日時の選び方が開く
+    /// （システムの DatePicker を透明にして重ねる。丸いカプセルを出さないため）
+    private func pickerChip(_ label: String, components: DatePickerComponents) -> some View {
+        Text(label)
+            .font(Theme.mono(12.5)).foregroundStyle(Theme.ink)
+            .padding(.horizontal, 12).frame(minHeight: 36)
+            .overlay(RoundedRectangle(cornerRadius: Theme.radius).strokeBorder(Theme.line, lineWidth: Theme.hairline))
+            .overlay {
+                DatePicker("書いた日時", selection: $draft.writtenAt, in: ...Date().addingTimeInterval(60), displayedComponents: components)
+                    .labelsHidden()
+                    .environment(\.timeZone, JST.timeZone)
+                    .colorMultiply(.clear)
+            }
+            .clipped()
     }
 
     private func attach(_ items: [PhotosPickerItem]) async {

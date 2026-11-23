@@ -119,7 +119,7 @@ struct PlacesNote: View {
 
     var body: some View {
         if places.hasLocatedPhotos {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 0) {
                 NoteHeading(title: "行った場所", count: places.places.count, note: "写真の位置から・端末の中だけ")
                 if places.loading && places.places.isEmpty {
                     HStack(spacing: 6) { ProgressView().controlSize(.small); Text("地名を調べています").font(Theme.gothic(13)).foregroundStyle(Theme.muted) }
@@ -135,9 +135,9 @@ struct PlacesNote: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("place-\(p.name)")
+                    .ruledRow(last: p.id == places.places.last?.id)
                 }
             }
-            .stickyNote("place")
         }
     }
 }

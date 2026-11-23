@@ -1,40 +1,28 @@
 import SwiftUI
 import UIKit
 
-/// 紙の手帳らしい見た目（第二弾・本人の選択）。色は Web 版（src/styles/app.css の #app）と同じ値:
-///   --bg #fdfdfc（生成りの紙）・--fg #17171a・--muted #86837c・--line #e4e1da・--accent #b03a2e（朱）
-/// ダークモードは墨色の紙に同系の朱（Web 版はダークを持たないので、ここだけの値）
-/// 書体: 日付と見出しは明朝（Hiragino Mincho ProN）、本文はヒラギノ角ゴ。端末に無ければシステムの書体
+/// Web 版の書く側（src/styles/app.css 冒頭 §9「素っ気ない道具」）に揃えた見た目。
+///   ゴシック（ヒラギノ角ゴ）。カードと影を使わず罫線だけで区切る。角丸 2pt 以下。
+///   塗りの主ボタンは書く画面の「保存」だけ（黒の塗りに白文字）。ほかは 1pt の罫の枠・灰の文字か、文字だけのリンク。
+///   取り返しのつかない操作（削除）は朱の文字と枠。差し色は朱ひとつだけ（リンクと行動）。絵文字を使わない。
+///   等幅は数字・記号・ラベルだけ。ダークモード対応はしない（アプリは常にライト）。
+/// 色は #app の変数と同じ値: --bg #fdfdfc・--fg #17171a・--muted #86837c・--line #e4e1da・--accent #b03a2e
 enum Theme {
-    private static func dynamic(_ light: UInt32, _ dark: UInt32) -> Color {
-        Color(uiColor: UIColor { $0.userInterfaceStyle == .dark ? UIColor(hex: dark) : UIColor(hex: light) })
-    }
+    /// 地（--bg）
+    static let paper = Color(uiColor: UIColor(hex: 0xFDFDFC))
+    /// 文字（--fg）
+    static let ink = Color(uiColor: UIColor(hex: 0x17171A))
+    /// 灰（--muted）
+    static let muted = Color(uiColor: UIColor(hex: 0x86837C))
+    /// 罫（--line）
+    static let line = Color(uiColor: UIColor(hex: 0xE4E1DA))
+    /// 朱（--accent）。リンクと行動だけに使う
+    static let accent = Color(uiColor: UIColor(hex: 0xB03A2E))
 
-    /// 紙（画面の地）
-    static let paper = dynamic(0xFDFDFC, 0x1B1A18)
-    /// 紙片（かけらのカード・編集欄）。地より一段明るい（ダークでは一段浮かせる）
-    static let sheet = dynamic(0xFFFFFF, 0x252421)
-    static let ink = dynamic(0x17171A, 0xE9E5DC)
-    static let muted = dynamic(0x86837C, 0x9A958A)
-    static let line = dynamic(0xE4E1DA, 0x3A3732)
-    /// 朱。ダークでは少し明るくして沈まないように
-    static let accent = dynamic(0xB03A2E, 0xD9634F)
-    static let shadow = Color.black.opacity(0.06)
-
-    /// 付箋（材料の種類ごとの淡い色。派手にしない）
-    static func note(_ kind: String) -> Color {
-        switch kind {
-        case "tayori": return dynamic(0xEEF2F3, 0x232A2C)    // 記事: 青灰
-        case "nobu": return dynamic(0xF5EFE2, 0x2C2820)      // 本: 麦
-        case "health": return dynamic(0xEEF3EA, 0x232A22)    // からだ: 若草
-        case "weather": return dynamic(0xEDF1F6, 0x22272E)   // 天気: 空
-        case "vault-log": return dynamic(0xF6EEEB, 0x2D2423) // ヘスティア: 薄紅
-        case "ambient": return dynamic(0xF0EEF4, 0x26242C)   // Mac: 藤
-        case "hevy": return dynamic(0xF3F0E8, 0x2A2822)      // 筋トレ: 砂
-        case "place": return dynamic(0xF2F2E6, 0x282820)     // 行った場所: 若菜
-        default: return dynamic(0xF3F2EE, 0x262522)
-        }
-    }
+    /// 罫の太さ（Web の 1px）
+    static let hairline: CGFloat = 1
+    /// 角丸（Web の 2px）
+    static let radius: CGFloat = 2
 
     // MARK: 書体
 
@@ -45,22 +33,26 @@ enum Theme {
         return .system(size: size)
     }
 
-    /// 明朝（日付・見出し）
-    static func mincho(_ size: CGFloat, bold: Bool = false, relativeTo style: Font.TextStyle = .body) -> Font {
-        font(bold ? ["HiraMinProN-W6", "HiraMinProN-W3"] : ["HiraMinProN-W3"], size: size, relativeTo: style)
+    /// ヒラギノ角ゴ（本文・ボタン・見出し）。W3（ふつう）・W5（500）・W6（600/700）
+    static func gothic(_ size: CGFloat, weight: Font.Weight = .regular, relativeTo style: Font.TextStyle = .body) -> Font {
+        let names: [String]
+        switch weight {
+        case .semibold, .bold, .heavy, .black: names = ["HiraginoSans-W6", "HiraKakuProN-W6"]
+        case .medium: names = ["HiraginoSans-W5", "HiraginoSans-W4", "HiraginoSans-W3", "HiraKakuProN-W3"]
+        default: names = ["HiraginoSans-W3", "HiraKakuProN-W3"]
+        }
+        return font(names, size: size, relativeTo: style)
     }
 
-    /// ヒラギノ角ゴ（本文）
-    static func gothic(_ size: CGFloat, bold: Bool = false, relativeTo style: Font.TextStyle = .body) -> Font {
-        font(bold ? ["HiraginoSans-W6", "HiraKakuProN-W6"] : ["HiraginoSans-W3", "HiraKakuProN-W3"], size: size, relativeTo: style)
+    static func gothic(_ size: CGFloat, bold: Bool) -> Font { gothic(size, weight: bold ? .semibold : .regular) }
+
+    /// 等幅（数字・記号・ラベルだけ。ui-monospace / SF Mono）
+    static func mono(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        .system(size: size, weight: weight, design: .monospaced)
     }
 
     static func uiGothic(_ size: CGFloat) -> UIFont {
         UIFont(name: "HiraginoSans-W3", size: size) ?? UIFont(name: "HiraKakuProN-W3", size: size) ?? .systemFont(ofSize: size)
-    }
-
-    static func uiMincho(_ size: CGFloat) -> UIFont {
-        UIFont(name: "HiraMinProN-W6", size: size) ?? UIFont(name: "HiraMinProN-W3", size: size) ?? .systemFont(ofSize: size, weight: .semibold)
     }
 }
 
@@ -70,41 +62,140 @@ extension UIColor {
     }
 }
 
-/// 紙片のカード（細い罫・わずかな影）
-struct PaperCard: ViewModifier {
-    var fill: Color = Theme.sheet
-    var padding: CGFloat = 14
+// MARK: - 罫・見出し
 
-    func body(content: Content) -> some View {
-        content
-            .padding(padding)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(fill, in: RoundedRectangle(cornerRadius: 3))
-            .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(Theme.line, lineWidth: 0.5))
-            .shadow(color: Theme.shadow, radius: 2, x: 0, y: 1)
+/// 1pt の罫（横線）
+struct Rule: View {
+    var body: some View { Rectangle().fill(Theme.line).frame(height: Theme.hairline) }
+}
+
+/// 節の見出し（.section-head: 11pt・600・灰・字間 .06em）と、右に添えるもの
+struct SectionHead<Trailing: View>: View {
+    let title: String
+    var count: Int? = nil
+    @ViewBuilder var trailing: () -> Trailing
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(title).sectionHeading()
+            if let count, count > 0 {
+                Text("\(count)").font(Theme.mono(11)).foregroundStyle(Theme.muted)
+            }
+            Spacer(minLength: 4)
+            trailing()
+        }
+        .padding(.top, 26).padding(.bottom, 10)
     }
 }
 
-/// 付箋（種類ごとの淡い色・上辺に少し濃い帯）
-struct StickyNote: ViewModifier {
-    let kind: String
+extension SectionHead where Trailing == EmptyView {
+    init(title: String, count: Int? = nil) {
+        self.init(title: title, count: count) { EmptyView() }
+    }
+}
 
-    func body(content: Content) -> some View {
-        content
-            .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Theme.note(kind))
-            .overlay(alignment: .top) { Rectangle().fill(Theme.line).frame(height: 0.5) }
-            .shadow(color: Theme.shadow, radius: 1.5, x: 0, y: 1)
+/// 小さな印（「かたち」など。罫枠・灰の小さな文字）
+struct Mark: View {
+    let text: String
+    var body: some View {
+        Text(text).font(Theme.gothic(10)).foregroundStyle(Theme.muted).lineLimit(1).fixedSize()
+            .padding(.horizontal, 5).padding(.vertical, 1)
+            .overlay(RoundedRectangle(cornerRadius: 1).strokeBorder(Theme.line, lineWidth: Theme.hairline))
     }
 }
 
 extension View {
-    func paperCard(fill: Color = Theme.sheet, padding: CGFloat = 14) -> some View { modifier(PaperCard(fill: fill, padding: padding)) }
-    func stickyNote(_ kind: String) -> some View { modifier(StickyNote(kind: kind)) }
-
-    /// 見出し（明朝・小さめ・薄墨）
+    /// 節の見出しの字（11pt・600・灰・字間 .06em）
     func sectionHeading() -> some View {
-        self.font(Theme.mincho(15, bold: true, relativeTo: .subheadline)).foregroundStyle(Theme.ink)
+        self.font(Theme.gothic(11, weight: .semibold)).foregroundStyle(Theme.muted).tracking(11 * 0.06)
+    }
+
+    /// .page-sub（灰 12.5pt の小さな一行）
+    func pageSub() -> some View {
+        self.font(Theme.gothic(12.5)).foregroundStyle(Theme.muted)
+    }
+
+    /// 罫で区切った並びの一行（上に罫。最後の行は lastRule で下にも罫）
+    func ruledRow(last: Bool = false) -> some View {
+        VStack(spacing: 0) {
+            Rule()
+            self
+            if last { Rule() }
+        }
+    }
+}
+
+// MARK: - ボタン（Web の .btn-* と同じ作法）
+
+/// .btn-primary: 黒の塗りに白文字。**書く画面の「保存」だけ**に使う
+struct PrimaryButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var enabled
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(Theme.gothic(12, weight: .bold)).tracking(12 * 0.02)
+            .foregroundStyle(Theme.paper)
+            .padding(.horizontal, 18).frame(minHeight: 38)
+            .background(Theme.ink, in: RoundedRectangle(cornerRadius: Theme.radius))
+            .opacity(enabled ? (configuration.isPressed ? 0.8 : 1) : 0.35)
+    }
+}
+
+/// .btn-cta: 朱の枠と文字（塗らない）。前へ進める一つの行動に
+struct CTAButtonStyle: ButtonStyle {
+    var fullWidth = false
+    @Environment(\.isEnabled) private var enabled
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(Theme.gothic(12, weight: .semibold)).tracking(12 * 0.02)
+            .foregroundStyle(enabled ? Theme.accent : Theme.muted)
+            .padding(.horizontal, 18).frame(minHeight: 38)
+            .frame(maxWidth: fullWidth ? .infinity : nil)
+            .background(Theme.paper, in: RoundedRectangle(cornerRadius: Theme.radius))
+            .overlay(RoundedRectangle(cornerRadius: Theme.radius).strokeBorder(enabled ? Theme.accent : Theme.line, lineWidth: Theme.hairline))
+            .contentShape(Rectangle())
+            .opacity(configuration.isPressed ? 0.7 : 1)
+    }
+}
+
+/// .icon-btn / .btn-ghost: 1pt の罫の枠・灰の文字
+struct GhostButtonStyle: ButtonStyle {
+    var compact = false
+    @Environment(\.isEnabled) private var enabled
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(Theme.gothic(12, weight: .medium))
+            .foregroundStyle(Theme.muted)
+            .padding(.horizontal, compact ? 0 : 14).frame(minWidth: 36, minHeight: 36)
+            .overlay(RoundedRectangle(cornerRadius: Theme.radius).strokeBorder(Theme.line, lineWidth: Theme.hairline))
+            .contentShape(Rectangle())
+            .opacity(enabled ? (configuration.isPressed ? 0.7 : 1) : 0.4)
+    }
+}
+
+/// .btn-danger: 朱の文字と枠（取り返しのつかない操作）
+struct DangerButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var enabled
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(Theme.gothic(12, weight: .medium))
+            .foregroundStyle(Theme.accent)
+            .padding(.horizontal, 14).frame(minHeight: 36)
+            .overlay(RoundedRectangle(cornerRadius: Theme.radius).strokeBorder(Theme.accent, lineWidth: Theme.hairline))
+            .contentShape(Rectangle())
+            .opacity(enabled ? (configuration.isPressed ? 0.7 : 1) : 0.4)
+    }
+}
+
+/// .link-btn: 文字だけ（12pt・500）。既定は黒、リンクは朱
+struct LinkButtonStyle: ButtonStyle {
+    var color: Color = Theme.ink
+    @Environment(\.isEnabled) private var enabled
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(Theme.gothic(12, weight: .medium))
+            .foregroundStyle(enabled ? color : Theme.muted)
+            .frame(minHeight: 38)
+            .contentShape(Rectangle())
+            .opacity(configuration.isPressed ? 0.6 : 1)
     }
 }

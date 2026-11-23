@@ -11,7 +11,8 @@ struct KakeraApp: App {
 
     var body: some Scene {
         WindowGroup {
-            DayView().tint(Theme.accent)
+            // ダークモード対応はしない（Web 版 §9 と同じ）。常にライト
+            DayView().tint(Theme.accent).preferredColorScheme(.light)
         }
     }
 }

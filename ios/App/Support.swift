@@ -211,7 +211,7 @@ struct RemotePhoto: View {
         ZStack {
             Rectangle().fill(Theme.line)
             if let image {
-                Image(uiImage: image).resizable().scaledToFill()
+                Image(uiImage: image).resizable().scaledToFill().frame(width: side, height: side).clipped()
             } else if failed {
                 Image(systemName: "photo").foregroundStyle(Theme.muted)
             } else {
@@ -219,7 +219,8 @@ struct RemotePhoto: View {
             }
         }
         .frame(width: side, height: side)
-        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .clipShape(RoundedRectangle(cornerRadius: Theme.radius))
+        .overlay(RoundedRectangle(cornerRadius: Theme.radius).strokeBorder(Theme.line, lineWidth: Theme.hairline))
         .task(id: path) {
             image = await PhotoCache.shared.image(path)
             failed = image == nil

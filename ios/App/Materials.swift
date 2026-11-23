@@ -164,19 +164,14 @@ final class MinatoMaterials {
 
 // MARK: - 画面の部品
 
-/// 付箋の見出し（明朝）と件数
+/// 材料の塊の見出し（.section-head と同じ字）と件数・右の添え書き
 struct NoteHeading: View {
     let title: String
     var count: Int? = nil
     var note: String? = nil
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Text(title).sectionHeading()
-            if let count, count > 0 {
-                Text("\(count)").font(.caption2.monospacedDigit()).foregroundStyle(Theme.muted)
-            }
-            Spacer(minLength: 4)
+        SectionHead(title: title, count: count) {
             if let note {
                 Text(note).font(Theme.gothic(10.5)).foregroundStyle(Theme.muted).lineLimit(1)
             }
@@ -184,7 +179,7 @@ struct NoteHeading: View {
     }
 }
 
-/// 材料の一行（時刻・題・添え書き・使った印）
+/// 材料の一行（時刻・題・添え書き・使った印）。.frag-row と同じ形
 struct MaterialLine: View {
     let time: Date?
     let title: String
@@ -193,44 +188,44 @@ struct MaterialLine: View {
     var used = false
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(time.map(JST.time) ?? "")
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundStyle(Theme.accent)
-                .frame(width: 36, alignment: .leading)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(Theme.gothic(14)).foregroundStyle(Theme.ink).lineLimit(2).lineSpacing(3)
+        HStack(alignment: .top, spacing: 10) {
+            if let time {
+                Text(JST.time(time))
+                    .font(Theme.mono(11))
+                    .foregroundStyle(Theme.muted)
+                    .frame(width: 36, alignment: .leading)
+                    .padding(.top, 3)
+            }
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title).font(Theme.gothic(15)).foregroundStyle(used ? Theme.muted : Theme.ink).lineLimit(2).lineSpacing(4)
                     .multilineTextAlignment(.leading)
                 if sub != nil || used {
-                    HStack(spacing: 6) {
-                        if let sub { Text(sub).lineLimit(1) }
+                    HStack(spacing: 8) {
+                        if let sub { Text(sub).font(Theme.gothic(11.5)).lineLimit(1) }
                         if used { UsedBadge() }
                     }
-                    .font(Theme.gothic(11)).foregroundStyle(Theme.muted)
+                    .foregroundStyle(Theme.muted)
                 }
                 if let extra {
-                    Text(extra).font(Theme.gothic(12)).foregroundStyle(Theme.muted).lineLimit(3).lineSpacing(2)
+                    Text(extra).font(Theme.gothic(12)).foregroundStyle(Theme.muted).lineLimit(3).lineSpacing(3)
                 }
             }
             Spacer(minLength: 0)
         }
-        .padding(.vertical, 3)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 12).padding(.horizontal, 2)
+        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
         .contentShape(Rectangle())
-        .opacity(used ? 0.72 : 1)
     }
 }
 
+/// 「かけらにした」印（灰の等幅のラベル）
 struct UsedBadge: View {
     var body: some View {
-        Text("かけらにした").font(.system(size: 10, weight: .semibold)).lineLimit(1).fixedSize()
-            .padding(.horizontal, 5).padding(.vertical, 1)
-            .overlay(Capsule().strokeBorder(Theme.accent.opacity(0.6), lineWidth: 0.5))
-            .foregroundStyle(Theme.accent)
+        Text("かけらにした").font(Theme.mono(10.5)).foregroundStyle(Theme.muted).lineLimit(1).fixedSize()
     }
 }
 
-/// 港の一つの塊（付箋）。長い塊は畳む
+/// 港の一つの塊（見出し＋罫で区切った行）。長い塊は畳む
 struct MaterialGroupNote: View {
     let group: MaterialGroup
     let used: UsedMarks
@@ -241,7 +236,7 @@ struct MaterialGroupNote: View {
 
     var body: some View {
         let items = expanded ? group.items : Array(group.items.prefix(Self.foldAt))
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 0) {
             NoteHeading(title: MinatoMaterials.title(group), count: group.items.count)
             ForEach(items) { m in
                 Button { onMake(m) } label: {
@@ -250,16 +245,24 @@ struct MaterialGroupNote: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("material-\(m.source)-\(m.externalId)")
+                .ruledRow(last: m.id == items.last?.id)
             }
             if group.items.count > Self.foldAt {
-                Button(expanded ? "畳む" : "ほか \(group.items.count - Self.foldAt) 件を見る") {
+                Button {
                     withAnimation(.easeOut(duration: 0.2)) { expanded.toggle() }
+                } label: {
+                    if expanded {
+                        Text("畳む")
+                    } else {
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text("ほかも見る")
+                            Text("\(group.items.count - Self.foldAt)").font(Theme.mono(11)).foregroundStyle(Theme.muted)
+                        }
+                    }
                 }
-                .font(Theme.gothic(12)).foregroundStyle(Theme.accent)
-                .padding(.leading, 44)
+                .buttonStyle(LinkButtonStyle())
             }
         }
-        .stickyNote(group.source)
     }
 }
 
@@ -271,32 +274,27 @@ struct MaterialsHeader: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("思い出す材料").font(Theme.mincho(17, bold: true, relativeTo: .headline)).foregroundStyle(Theme.ink)
-                Spacer()
+            SectionHead(title: "思い出す材料") {
                 if minato.collecting {
                     HStack(spacing: 4) { ProgressView().controlSize(.mini); Text("集めています") }
                         .font(Theme.gothic(11)).foregroundStyle(Theme.muted)
+                        .frame(minHeight: 36)
                 } else {
-                    Button(action: onCollect) {
-                        Label("今すぐ集める", systemImage: "arrow.clockwise").font(Theme.gothic(12))
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(Theme.accent)
-                    .disabled(!canCollect)
-                    .opacity(canCollect ? 1 : 0.4)
-                    .accessibilityIdentifier("collectNow")
+                    Button("今すぐ集める", action: onCollect)
+                        .buttonStyle(GhostButtonStyle())
+                        .disabled(!canCollect)
+                        .accessibilityIdentifier("collectNow")
                 }
             }
+            .padding(.top, 16)
             ForEach(minato.collectNotes, id: \.self) { n in
-                Text(n).font(Theme.gothic(10.5)).foregroundStyle(Theme.muted).lineSpacing(2).fixedSize(horizontal: false, vertical: true)
+                Text(n).font(Theme.gothic(11)).foregroundStyle(Theme.muted).lineSpacing(3).fixedSize(horizontal: false, vertical: true)
             }
             ForEach(minato.errors, id: \.source) { s in
                 Text("\(s.label): 前の集めで失敗" + (s.reason.map { "（\($0)）" } ?? ""))
-                    .font(Theme.gothic(10.5)).foregroundStyle(Theme.accent.opacity(0.85))
-                    .lineSpacing(2).fixedSize(horizontal: false, vertical: true)
+                    .font(Theme.gothic(11)).foregroundStyle(Theme.accent)
+                    .lineSpacing(3).fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(.top, 10)
     }
 }

@@ -1,8 +1,8 @@
 import Photos
 import SwiftUI
 
-/// 日ごとの画面: 日付を左右で移る（既定は今日）。その日のかけら（時刻順・紙片のカード）と、下に「思い出す材料」
-/// （写真・行った場所・港の材料を付箋の塊で）
+/// 日ごとの画面: 日付を左右で移る（既定は今日）。その日のかけら（時刻順・罫で区切った行）と、下に「思い出す材料」
+/// （写真・行った場所・港の材料を、見出しと罫の行の塊で）。見た目は Web 版の書く側（.topbar・.page-date・.frag-list）
 struct DayView: View {
     @State private var day = JST.todayKey
     @State private var kakera: [Kakera] = []
@@ -24,7 +24,7 @@ struct DayView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 12) {
+                LazyVStack(alignment: .leading, spacing: 0) {
                     dateHeader
                     kakeraSection
                     MaterialsHeader(minato: minato, canCollect: API.shared.isConfigured(.minato)) {
@@ -34,7 +34,8 @@ struct DayView: View {
                     PlacesNote(places: places, used: used) { makeFromPlace($0) }
                     minatoSection
                 }
-                .padding(.horizontal, 16)
+                .padding(.horizontal, 18)
+                .padding(.top, 20)
                 .padding(.bottom, 24)
             }
             .background(Theme.paper.ignoresSafeArea())
@@ -43,24 +44,15 @@ struct DayView: View {
                 guard abs(v.translation.width) > 90, abs(v.translation.width) > abs(v.translation.height) * 2 else { return }
                 move(v.translation.width > 0 ? -1 : 1)
             })
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(Theme.paper, for: .navigationBar)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button { showSettings = true } label: { Image(systemName: "gearshape") }
-                        .accessibilityLabel("設定")
-                }
-                if !isToday {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Button("今日") { day = JST.todayKey }
-                    }
-                }
-            }
-            .safeAreaInset(edge: .bottom) { writeBar }
+            .toolbar(.hidden, for: .navigationBar)
+            .safeAreaInset(edge: .top, spacing: 0) { topbar }
+            .safeAreaInset(edge: .bottom, spacing: 0) { writeBar }
             .overlay {
                 if let busy {
-                    VStack(spacing: 10) { ProgressView(); Text(busy).font(Theme.gothic(14)) }
-                        .padding(20).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+                    HStack(spacing: 10) { ProgressView(); Text(busy).font(Theme.gothic(13)).foregroundStyle(Theme.ink) }
+                        .padding(.horizontal, 18).padding(.vertical, 14)
+                        .background(Theme.paper, in: RoundedRectangle(cornerRadius: Theme.radius))
+                        .overlay(RoundedRectangle(cornerRadius: Theme.radius).strokeBorder(Theme.line, lineWidth: Theme.hairline))
                 }
             }
             .task(id: "\(day)#\(configVersion)") { await reload() }
@@ -83,34 +75,57 @@ struct DayView: View {
         }
     }
 
-    // MARK: 日付
+    // MARK: 上部（.topbar: 「かけら帳」と下罫）
 
-    /// 明朝の日付と、その下にその日の天気・気温・歩数（港の weather・health。無ければ出さない）
+    private var topbar: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .center, spacing: 8) {
+                Text("かけら帳").font(Theme.gothic(16, weight: .semibold)).tracking(16 * 0.02).foregroundStyle(Theme.ink)
+                Spacer()
+                Button { showSettings = true } label: {
+                    Image(systemName: "gearshape").font(.system(size: 15, weight: .regular))
+                        .frame(width: 36, height: 36)
+                }
+                .buttonStyle(LinkButtonStyle(color: Theme.muted))
+                .accessibilityLabel("設定")
+            }
+            .padding(.horizontal, 18).padding(.top, 4).padding(.bottom, 6)
+            Rule()
+        }
+        .background(Theme.paper.ignoresSafeArea(edges: .top))
+    }
+
+    // MARK: 日付（.page-date と .page-sub）
+
+    /// 等幅の日付と、その下にその日の天気・気温・歩数（港の weather・health。無ければ出さない）
     private var dateHeader: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 4) {
-                Button { move(-1) } label: { Image(systemName: "chevron.left").frame(width: 32, height: 36) }
-                    .accessibilityLabel("前の日").accessibilityIdentifier("prevDay")
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .center, spacing: 6) {
                 Text(JST.title(day))
-                    .font(Theme.mincho(26, bold: true, relativeTo: .title))
+                    .font(Theme.mono(19, weight: .medium))
                     .foregroundStyle(Theme.ink)
                     .lineLimit(1).minimumScaleFactor(0.7)
                     .accessibilityIdentifier("dayTitle")
-                Button { move(1) } label: { Image(systemName: "chevron.right").frame(width: 32, height: 36) }
+                Spacer(minLength: 4)
+                if !isToday {
+                    Button("今日") { day = JST.todayKey }
+                        .buttonStyle(LinkButtonStyle(color: Theme.accent))
+                        .padding(.trailing, 4)
+                }
+                Button { move(-1) } label: { Image(systemName: "chevron.left").font(.system(size: 13)) }
+                    .buttonStyle(GhostButtonStyle(compact: true))
+                    .accessibilityLabel("前の日").accessibilityIdentifier("prevDay")
+                Button { move(1) } label: { Image(systemName: "chevron.right").font(.system(size: 13)) }
+                    .buttonStyle(GhostButtonStyle(compact: true))
                     .disabled(isToday)
                     .accessibilityLabel("次の日").accessibilityIdentifier("nextDay")
-                Spacer(minLength: 0)
             }
-            .foregroundStyle(Theme.accent)
             if let s = minato.daySummary {
-                Text(s).font(Theme.gothic(13)).foregroundStyle(Theme.muted)
+                Text(s).pageSub()
                     .lineLimit(1).minimumScaleFactor(0.8)
-                    .padding(.leading, 36)
                     .accessibilityIdentifier("daySummary")
             }
-            Rectangle().fill(Theme.accent.opacity(0.55)).frame(height: 0.75).padding(.top, 4)
         }
-        .padding(.top, 4)
     }
 
     private func move(_ days: Int) {
@@ -123,16 +138,14 @@ struct DayView: View {
 
     @ViewBuilder
     private var kakeraSection: some View {
-        Text("かけら").font(Theme.mincho(17, bold: true, relativeTo: .headline)).foregroundStyle(Theme.ink)
-            .padding(.top, 4)
+        SectionHead(title: "かけら", count: kakera.count)
         if !API.shared.isConfigured(.kakera) {
             VStack(alignment: .leading, spacing: 8) {
                 Text("かけら帳につなぐサービストークンが入っていません。").font(Theme.gothic(14)).foregroundStyle(Theme.ink)
-                Button("設定を開く") { showSettings = true }.font(Theme.gothic(14))
+                Button("設定を開く") { showSettings = true }.buttonStyle(LinkButtonStyle(color: Theme.accent))
             }
-            .paperCard()
         } else if let kakeraError {
-            Text(kakeraError).font(Theme.gothic(13)).foregroundStyle(Theme.accent).paperCard()
+            Text(kakeraError).font(Theme.gothic(13)).foregroundStyle(Theme.accent)
         } else if loadedKakera && kakera.isEmpty {
             Text("この日のかけらはまだありません").font(Theme.gothic(14)).foregroundStyle(Theme.muted)
                 .padding(.vertical, 6)
@@ -140,28 +153,27 @@ struct DayView: View {
         ForEach(kakera) { k in
             Button { draft = .edit(k) } label: { KakeraRow(kakera: k) }
                 .buttonStyle(.plain)
+                .ruledRow(last: k.id == kakera.last?.id)
         }
     }
 
+    /// 「書く」: Web で前へ進める一つの行動に使う .btn-cta（朱の枠と文字・塗らない）を、下の罫の上に幅いっぱいで
     private var writeBar: some View {
-        Button {
-            draft = .new(at: newKakeraDate())
-        } label: {
-            Label("書く", systemImage: "square.and.pencil")
-                .font(Theme.gothic(16, bold: true))
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 6)
+        VStack(spacing: 0) {
+            Rule()
+            Button {
+                draft = .new(at: newKakeraDate())
+            } label: {
+                Text("書く").font(Theme.gothic(14, weight: .semibold))
+            }
+            .buttonStyle(CTAButtonStyle(fullWidth: true))
+            .disabled(!API.shared.isConfigured(.kakera))
+            .accessibilityIdentifier("write")
+            .padding(.horizontal, 18)
+            .padding(.top, 10)
+            .padding(.bottom, 6)
         }
-        .buttonStyle(.borderedProminent)
-        .tint(Theme.accent)
-        .padding(.horizontal, 20)
-        .padding(.top, 10)
-        .padding(.bottom, 6)
-        // 下に流れる付箋と重ならないよう、紙色で薄く受ける
-        .background(LinearGradient(colors: [Theme.paper.opacity(0), Theme.paper.opacity(0.95), Theme.paper],
-                                   startPoint: .top, endPoint: .center).ignoresSafeArea())
-        .disabled(!API.shared.isConfigured(.kakera))
-        .accessibilityIdentifier("write")
+        .background(Theme.paper.ignoresSafeArea(edges: .bottom))
     }
 
     /// 今日なら今。過去の日なら、その日の最後のかけらの1分後（無ければ 12:00）。後で直せる
@@ -179,7 +191,7 @@ struct DayView: View {
         if !API.shared.isConfigured(.minato) {
             Text("港につなぐ設定がありません").font(Theme.gothic(13)).foregroundStyle(Theme.muted)
         } else if let e = minato.error {
-            Text(e).font(Theme.gothic(13)).foregroundStyle(Theme.accent).paperCard()
+            Text(e).font(Theme.gothic(13)).foregroundStyle(Theme.accent).padding(.vertical, 4)
         } else if minato.loaded && minato.sortedGroups.isEmpty {
             Text("港にこの日の材料はまだありません").font(Theme.gothic(13)).foregroundStyle(Theme.muted)
                 .padding(.vertical, 4)
@@ -253,36 +265,35 @@ struct DayView: View {
     }
 }
 
-/// かけら（紙片のカード。時刻は小さく朱色）
+/// かけらの一行（.frag-row: 時刻は灰 11pt の等幅で本文の左。本文 16pt 行間 1.6。写真は 52pt の罫枠サムネイル）
 struct KakeraRow: View {
     let kakera: Kakera
 
     var body: some View {
         let photos = KakeraBody.photoURLs(kakera.body)
         let text = KakeraBody.text(kakera.body)
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Text(JST.time(kakera.writtenDate))
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(Theme.accent)
-                if kakera.katachiId != nil {
-                    Text("かたち").font(Theme.gothic(10)).foregroundStyle(Theme.muted)
-                        .padding(.horizontal, 5).padding(.vertical, 1)
-                        .overlay(Capsule().strokeBorder(Theme.line, lineWidth: 0.75))
+        HStack(alignment: .top, spacing: 10) {
+            Text(JST.time(kakera.writtenDate))
+                .font(Theme.mono(11))
+                .foregroundStyle(Theme.muted)
+                .padding(.top, 4)
+            VStack(alignment: .leading, spacing: 8) {
+                if !text.isEmpty {
+                    Text(text).font(Theme.gothic(16)).foregroundStyle(Theme.ink).lineSpacing(5)
+                        .lineLimit(8).frame(maxWidth: .infinity, alignment: .leading)
+                        .multilineTextAlignment(.leading)
                 }
-            }
-            if !text.isEmpty {
-                Text(text).font(Theme.gothic(15)).foregroundStyle(Theme.ink).lineSpacing(4)
-                    .lineLimit(8).frame(maxWidth: .infinity, alignment: .leading)
-                    .multilineTextAlignment(.leading)
-            }
-            if !photos.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) { ForEach(photos, id: \.self) { RemotePhoto(path: $0) } }
+                if !photos.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) { ForEach(photos, id: \.self) { RemotePhoto(path: $0, side: 52) } }
+                    }
                 }
+                if kakera.katachiId != nil { Mark(text: "かたち") }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .paperCard()
+        .padding(.vertical, 14).padding(.horizontal, 2)
+        .frame(minHeight: 44)
         .contentShape(Rectangle())
     }
 }

@@ -95,22 +95,23 @@ struct PhotosNote: View {
     private let columns = [GridItem(.adaptive(minimum: 76, maximum: 120), spacing: 3)]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             NoteHeading(title: "写真", count: photos.assets.count)
+                .padding(.bottom, -10)
             switch photos.status {
             case .notDetermined:
                 VStack(alignment: .leading, spacing: 8) {
                     Text("その日に撮った写真を並べるには、写真へのアクセスを許可してください。")
                         .font(Theme.gothic(13)).foregroundStyle(Theme.muted).lineSpacing(4)
                     Button("写真へのアクセスを許可する") { Task { await photos.requestAccess() } }
-                        .font(Theme.gothic(14)).foregroundStyle(Theme.accent)
+                        .buttonStyle(LinkButtonStyle(color: Theme.accent))
                 }
             case .denied, .restricted:
                 VStack(alignment: .leading, spacing: 8) {
                     Text("写真へのアクセスが許可されていません。設定アプリの「かけら帳」→「写真」で許可すると、その日の写真が並びます。")
                         .font(Theme.gothic(13)).foregroundStyle(Theme.muted).lineSpacing(4)
                     Button("設定を開く") { if let u = URL(string: UIApplication.openSettingsURLString) { openURL(u) } }
-                        .font(Theme.gothic(14)).foregroundStyle(Theme.accent)
+                        .buttonStyle(LinkButtonStyle(color: Theme.accent))
                 }
             default:
                 if photos.status == .limited {
@@ -126,17 +127,18 @@ struct PhotosNote: View {
                         onMake(picked)
                         selected = []
                     } label: {
-                        Label(selected.isEmpty ? "写真を選ぶとかけらにできます" : "かけらにする（\(selected.count)枚）", systemImage: "square.and.pencil")
-                            .font(Theme.gothic(13, bold: !selected.isEmpty))
+                        if selected.isEmpty {
+                            Text("写真を選ぶとかけらにできます")
+                        } else {
+                            HStack(spacing: 6) { Text("かけらにする"); Text("\(selected.count)枚").font(Theme.mono(11)) }
+                        }
                     }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(selected.isEmpty ? Theme.muted : Theme.accent)
+                    .buttonStyle(CTAButtonStyle())
                     .disabled(selected.isEmpty || busy)
                     .accessibilityIdentifier("makeFromPhotos")
                 }
             }
         }
-        .paperCard(padding: 12)
         .onChange(of: photos.day) { selected = [] }
     }
 
@@ -152,30 +154,36 @@ struct PhotosNote: View {
                         AssetThumb(asset: a, side: g.size.width)
                     }
                     .aspectRatio(1, contentMode: .fit)
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.radius))
                     .overlay(alignment: .topTrailing) {
-                        if isSelected {
-                            Image(systemName: "checkmark.circle.fill")
-                                .font(.title3).foregroundStyle(.white, Theme.accent).padding(4)
+                        // 選んだ順の番号（朱の文字と枠。塗らない）
+                        if let n = selected.firstIndex(of: id) {
+                            Text("\(n + 1)").font(Theme.mono(11, weight: .semibold)).foregroundStyle(Theme.accent)
+                                .frame(minWidth: 18, minHeight: 18)
+                                .background(Theme.paper, in: RoundedRectangle(cornerRadius: 1))
+                                .overlay(RoundedRectangle(cornerRadius: 1).strokeBorder(Theme.accent, lineWidth: Theme.hairline))
+                                .padding(4)
                         }
                     }
                     .overlay(alignment: .topLeading) {
                         if used.photos.contains(id) {
-                            Text("かけらにした").font(.caption2.bold()).lineLimit(1).fixedSize()
+                            Text("かけらにした").font(Theme.mono(9.5)).lineLimit(1).fixedSize()
                                 .padding(.horizontal, 4).padding(.vertical, 1)
-                                .background(.black.opacity(0.6), in: Capsule()).foregroundStyle(.white)
+                                .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 1)).foregroundStyle(.white)
                                 .padding(3)
                         }
                     }
                     .overlay(alignment: .bottomLeading) {
                         if let d = a.creationDate {
-                            Text(JST.time(d)).font(.caption2).lineLimit(1).fixedSize()
+                            Text(JST.time(d)).font(Theme.mono(10)).lineLimit(1).fixedSize()
                                 .padding(.horizontal, 4).padding(.vertical, 1)
-                                .background(.black.opacity(0.45), in: Capsule()).foregroundStyle(.white)
+                                .background(.black.opacity(0.45), in: RoundedRectangle(cornerRadius: 1)).foregroundStyle(.white)
                                 .padding(3)
                         }
                     }
                     .overlay {
-                        if isSelected { RoundedRectangle(cornerRadius: 2).strokeBorder(Theme.accent, lineWidth: 3) }
+                        RoundedRectangle(cornerRadius: Theme.radius)
+                            .strokeBorder(isSelected ? Theme.accent : Theme.line, lineWidth: isSelected ? 2 : Theme.hairline)
                     }
                 }
                 .buttonStyle(.plain)
