@@ -22,6 +22,8 @@ interface Env {
   DATA_GITHUB_TOKEN?: string;
   /** Access アプリの Application Audience (AUD) タグ。関所に渡す */
   CF_ACCESS_AUD?: string;
+  /** 通す Access サービストークンの Client ID（カンマ区切り・小文字で照合）。未設定なら iOS は全部 403 */
+  ACCESS_SERVICE_CLIENT_IDS?: string;
 
   // ローカル開発だけ。本番ビルドでは middleware の分岐ごと消える
   DEV_BYPASS_AUTH?: string;
@@ -29,6 +31,7 @@ interface Env {
 
 declare namespace App {
   interface Locals extends Runtime {
+    /** ブラウザはメール、サービストークン（iOS）は `service:<Client ID の先頭8文字>` */
     user?: { email: string };
   }
 }

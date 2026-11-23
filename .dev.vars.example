@@ -12,6 +12,9 @@ DATA_GITHUB_TOKEN=
 # （チームドメインと入れるメールは関所の側で持つ）
 CF_ACCESS_AUD=
 
+# 通す Access サービストークンの Client ID（カンマ区切り）。iOS アプリ用。未設定なら1本も通さない
+ACCESS_SERVICE_CLIENT_IDS=
+
 # ローカル開発でだけ認証を迂回する。本番では絶対に設定しない。
 # （そもそも本番ビルドではこの分岐がコードから消える。src/middleware.ts を見ること）
 DEV_BYPASS_AUTH=1

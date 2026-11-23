@@ -13,7 +13,8 @@
 
 - 実装: Astro SSR / Cloudflare Workers / Preact / zod / octokit
 - 認証: Cloudflare Access。JWT の検証は関所（`sekisho`・認証 Worker）に Service Binding `SEKISHO` の RPC で聞く（2026-11-05〜・`src/lib/auth/sekisho.ts`）。
-  かけら帳が持つのは `CF_ACCESS_AUD` だけ。許可メールは関所の secret `ALLOWED_EMAILS`。関所が答えない・null・3 秒超は 401（fail-closed）
+  かけら帳が持つのは `CF_ACCESS_AUD` だけ。許可メールは関所の secret `ALLOWED_EMAILS`。関所が答えない・null・3 秒超は 401（fail-closed）。
+  iOS アプリ（`ios/`）は Access のサービストークンで来る。関所を `allowServiceTokens: true` で呼び、Client ID が secret `ACCESS_SERVICE_CLIENT_IDS`（カンマ区切り・小文字で照合・未設定なら1本も通さない）に入っていれば通す。リスト外は 403
 - 原本の真実: **D1**（`kakera` / `katachi` / `katachi_kakera`（置き場所） / `nikki` / `nikki_kakera`（書き出しの記録） / `device`）
 - 原本の控え: **`kakera-data`（private）** に Markdown（保存の都度・`waitUntil` で裏に回す）
 - 公開先: **`astro-blog`** の `src/content/diary/YYYY-MM-DD.md` へ octokit で直接 commit
@@ -32,7 +33,7 @@
 
 1. GitHub の細粒度 PAT を2本（`kechiiiiin/astro-blog` 用・`kechiiiiin/kakera-data` 用、どちらも Contents: Read and write）
 2. 一度 `npx wrangler deploy` して Worker を作る（`secret put` の置き場ができる）
-3. `npx wrangler secret put` で `BLOG_GITHUB_TOKEN` / `DATA_GITHUB_TOKEN` / `CF_ACCESS_AUD`
+3. `npx wrangler secret put` で `BLOG_GITHUB_TOKEN` / `DATA_GITHUB_TOKEN` / `CF_ACCESS_AUD` / `ACCESS_SERVICE_CLIENT_IDS`（iOS アプリのサービストークンの Client ID・カンマ区切り）
    （当初は `ALLOWED_EMAILS` / `CF_ACCESS_TEAM_DOMAIN` も入れていたが、2026-11-05 に検証を関所へ移して不要になった。関所を先にデプロイしておくこと）
 4. Cloudflare Access の Self-hosted アプリを `kakera.kechiiiiin.com` に（Google ログイン・メール allowlist）
 5. Custom Domain `kakera.kechiiiiin.com`（いまは `wrangler.toml` の `[[routes]]` にあり、deploy だけで揃う）

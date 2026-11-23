@@ -37,6 +37,18 @@ export async function listNagare(db: D1Database): Promise<Kakera[]> {
   return results ?? [];
 }
 
+/**
+ * その日（JST の 'YYYY-MM-DD'）に書いたかけら全部（かたちの中のものも含む・書いた順）。iOS の日ごとの画面用。
+ * written_at は必ず +09:00 で保存してあるので、先頭10文字がそのまま JST の日付になる。
+ */
+export async function listKakeraOn(db: D1Database, date: string): Promise<Kakera[]> {
+  const { results } = await db
+    .prepare(`${KAKERA_SELECT} WHERE k.written_at >= ? AND k.written_at < ? ORDER BY ${WRITTEN_ORDER}`)
+    .bind(`${date}T00:00`, `${date}T24:00`)
+    .all<Kakera>();
+  return results ?? [];
+}
+
 export async function getKakera(db: D1Database, id: string): Promise<Kakera | null> {
   return await db.prepare(`${KAKERA_SELECT} WHERE k.id = ?`).bind(id).first<Kakera>();
 }

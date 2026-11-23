@@ -5,8 +5,8 @@ import { verifyAccess } from './lib/auth/sekisho';
 // ホスト全体を Access で保護し、middleware は Cf-Access-Jwt-Assertion を
 // 関所（sekisho・認証 Worker）に Service Binding の RPC で確かめてもらう（src/lib/auth/sekisho.ts）。**fail-closed**。
 //
-// Bearer 経路（iOS）は第二段。Access と Bearer は素直に組むと両立しないので、
-// ここでは作らない。device テーブルだけは最初から用意してある。
+// iOS アプリは Access のサービストークン（CF-Access-Client-Id / Secret）で来る。Access がそれを JWT に替えるので、
+// 同じ Cf-Access-Jwt-Assertion を関所に見せ、{ kind: 'service' } なら ACCESS_SERVICE_CLIENT_IDS と照合する。
 
 /**
  * ローカル開発でだけ認証を迂回する。
@@ -33,12 +33,13 @@ export const onRequest = defineMiddleware(async (context, next) => {
     return next();
   }
 
-  // 不正・期限切れ・許可メール外・関所の不調・設定漏れは 401、サービストークンは 403（他の経路へフォールスルーしない）
+  // 不正・期限切れ・許可メール外・関所の不調・設定漏れは 401、許可リスト外のサービストークンは 403（他の経路へフォールスルーしない）
   const auth = await verifyAccess(request, env);
   if (!auth.ok) {
     return new Response(auth.status === 403 ? 'Forbidden' : 'Unauthorized', { status: auth.status });
   }
 
+  // ブラウザはメール、サービストークンは service:<Client ID の先頭8文字>（名乗りとしてだけ使う）
   locals.user = { email: auth.email };
   return next();
 });

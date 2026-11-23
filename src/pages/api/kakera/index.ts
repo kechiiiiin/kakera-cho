@@ -1,9 +1,9 @@
 import type { APIRoute } from 'astro';
 import { ApiError, handle, json, readJson } from '../../../lib/http';
 import { ctxOf } from '../../../lib/ctx';
-import { cardsForBodies, insertKakera, listNagare } from '../../../lib/kakera/db';
+import { cardsForBodies, insertKakera, listKakeraOn, listNagare } from '../../../lib/kakera/db';
 import { isUlid } from '../../../lib/ulid';
-import { isWrittenAt, normalizeToJst } from '../../../lib/time';
+import { isDateKey, isWrittenAt, normalizeToJst } from '../../../lib/time';
 import { backupKakera, dataRepo } from '../../../lib/backup/kakera-data';
 import { ensureCards } from '../../../lib/card/ensure';
 
@@ -11,12 +11,15 @@ export const prerender = false;
 
 /**
  * GET /api/kakera?unassigned=1 — 流れ（未かたちのみ・新しい順）＋リンクカード
+ * GET /api/kakera?date=YYYY-MM-DD — その日（JST）に書いたかけら全部（かたちの中も含む・書いた順）＋リンクカード（iOS の日ごとの画面）
  * ⚠️ カードは同じ戻りに同梱する（往復を足さない＝トップの即表示を崩さない）。増えるのは D1 の1クエリだけ。
  */
-export const GET: APIRoute = ({ locals }) =>
+export const GET: APIRoute = ({ locals, url }) =>
   handle(async () => {
     const { env } = ctxOf(locals);
-    const kakera = await listNagare(env.DB);
+    const date = url.searchParams.get('date');
+    if (date !== null && !isDateKey(date)) throw new ApiError(400, 'date は YYYY-MM-DD で送ってください');
+    const kakera = date !== null ? await listKakeraOn(env.DB, date) : await listNagare(env.DB);
     const cards = await cardsForBodies(env.DB, kakera.map((k) => k.body));
     return json({ kakera, cards });
   });
