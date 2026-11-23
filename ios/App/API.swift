@@ -136,6 +136,7 @@ enum JSONValue: Decodable, Hashable {
 }
 
 private struct KakeraList: Decodable { let kakera: [Kakera] }
+private struct CardsEnvelope: Decodable { let cards: LinkCards? }
 private struct KakeraEnvelope: Decodable { let kakera: Kakera }
 private struct PhotoUploaded: Decodable { let key: String; let url: String }
 
@@ -175,9 +176,16 @@ final class API: @unchecked Sendable {
     // MARK: かけら帳
 
     /// その日（JST）に書いたかけら全部（かたちの中も含む・書いた順）
-    func kakera(on day: String) async throws -> [Kakera] {
-        let r: KakeraList = try await call(.kakera, "GET", "/api/kakera", query: [URLQueryItem(name: "date", value: day)])
-        return r.kakera
+    /// cards は本文の中の URL のリンクカード（正規化 URL → カード）。⚠️ キーが URL なので snake_case 変換を通さない別の decoder で読む
+    func kakera(on day: String) async throws -> (kakera: [Kakera], cards: LinkCards) {
+        let data = try await raw(.kakera, "GET", "/api/kakera", query: [URLQueryItem(name: "date", value: day)])
+        do {
+            let list = try decoder.decode(KakeraList.self, from: data)
+            let cards = (try? JSONDecoder().decode(CardsEnvelope.self, from: data))?.cards ?? [:]
+            return (list.kakera, cards)
+        } catch {
+            throw APIError.transport("応答を読めませんでした")
+        }
     }
 
     /// 新しいかけら。id は端末で採番した ULID、writtenAt は +09:00 付き

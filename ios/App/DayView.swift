@@ -6,6 +6,7 @@ import SwiftUI
 struct DayView: View {
     @State private var day = JST.todayKey
     @State private var kakera: [Kakera] = []
+    @State private var cards: LinkCards = [:]
     @State private var kakeraError: String?
     @State private var loadedKakera = false
     @State private var photos = PhotoMaterials()
@@ -150,9 +151,11 @@ struct DayView: View {
             Text("この日のかけらはまだありません").font(Theme.gothic(14)).foregroundStyle(Theme.muted)
                 .padding(.vertical, 6)
         }
+        // 行を押すと直す画面。⚠️ Button にすると中のリンク・リンクカードが押せないので、行は onTapGesture で開く
         ForEach(kakera) { k in
-            Button { draft = .edit(k) } label: { KakeraRow(kakera: k) }
-                .buttonStyle(.plain)
+            KakeraRow(kakera: k, cards: cards)
+                .onTapGesture { draft = .edit(k) }
+                .accessibilityAddTraits(.isButton)
                 .ruledRow(last: k.id == kakera.last?.id)
         }
     }
@@ -207,13 +210,13 @@ struct DayView: View {
         let target = day
         photos.load(target)
         places.load(day: target, assets: photos.assets)
-        async let k: Result<[Kakera], Error> = capture { try await API.shared.kakera(on: target) }
+        async let k: Result<(kakera: [Kakera], cards: LinkCards), Error> = capture { try await API.shared.kakera(on: target) }
         async let m: Void = minato.load(target)
         let (kr, _) = await (k, m)
         guard target == day else { return } // 読み込み中に日付が変わった
         switch kr {
-        case .success(let list): kakera = list; kakeraError = nil
-        case .failure(let e): kakera = []; kakeraError = API.shared.isConfigured(.kakera) ? e.localizedDescription : nil
+        case .success(let r): kakera = r.kakera; cards = r.cards; kakeraError = nil
+        case .failure(let e): kakera = []; cards = [:]; kakeraError = API.shared.isConfigured(.kakera) ? e.localizedDescription : nil
         }
         loadedKakera = true
     }
@@ -265,32 +268,26 @@ struct DayView: View {
     }
 }
 
-/// かけらの一行（.frag-row: 時刻は灰 11pt の等幅で本文の左。本文 16pt 行間 1.6。写真は 52pt の罫枠サムネイル）
+/// かけらの一行（.frag-row: 本文が左で幅いっぱい・全文、時刻は灰 11pt の等幅で右。gap 10・上下 14）。
+/// 本文は Web の RichText と同じ規則で描く（写真は幅いっぱい・行として独立した URL はリンクカード）。
+/// Web の流れにはかたち入りのかけらは出ないが、iOS の日の画面は全部出すので、時刻の下に灰の等幅で小さく「かたち」と添える
 struct KakeraRow: View {
     let kakera: Kakera
+    let cards: LinkCards
 
     var body: some View {
-        let photos = KakeraBody.photoURLs(kakera.body)
-        let text = KakeraBody.text(kakera.body)
         HStack(alignment: .top, spacing: 10) {
-            Text(JST.time(kakera.writtenDate))
-                .font(Theme.mono(11))
-                .foregroundStyle(Theme.muted)
-                .padding(.top, 4)
-            VStack(alignment: .leading, spacing: 8) {
-                if !text.isEmpty {
-                    Text(text).font(Theme.gothic(16)).foregroundStyle(Theme.ink).lineSpacing(5)
-                        .lineLimit(8).frame(maxWidth: .infinity, alignment: .leading)
-                        .multilineTextAlignment(.leading)
+            RichTextView(kakera.body, cards: cards)
+            VStack(alignment: .trailing, spacing: 3) {
+                Text(JST.time(kakera.writtenDate))
+                    .font(Theme.mono(11))
+                    .foregroundStyle(Theme.muted)
+                if kakera.katachiId != nil {
+                    Text("かたち").font(Theme.mono(9.5)).foregroundStyle(Theme.muted.opacity(0.8))
                 }
-                if !photos.isEmpty {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) { ForEach(photos, id: \.self) { RemotePhoto(path: $0, side: 52) } }
-                    }
-                }
-                if kakera.katachiId != nil { Mark(text: "かたち") }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, 4)
+            .fixedSize()
         }
         .padding(.vertical, 14).padding(.horizontal, 2)
         .frame(minHeight: 44)

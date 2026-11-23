@@ -94,16 +94,6 @@ extension SectionHead where Trailing == EmptyView {
     }
 }
 
-/// 小さな印（「かたち」など。罫枠・灰の小さな文字）
-struct Mark: View {
-    let text: String
-    var body: some View {
-        Text(text).font(Theme.gothic(10)).foregroundStyle(Theme.muted).lineLimit(1).fixedSize()
-            .padding(.horizontal, 5).padding(.vertical, 1)
-            .overlay(RoundedRectangle(cornerRadius: 1).strokeBorder(Theme.line, lineWidth: Theme.hairline))
-    }
-}
-
 extension View {
     /// 節の見出しの字（11pt・600・灰・字間 .06em）
     func sectionHeading() -> some View {
