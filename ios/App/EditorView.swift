@@ -14,10 +14,13 @@ struct Draft: Identifiable {
     /// 保存できたら「かけらにした」印を付けるもの
     var photoAssetIDs: [String] = []
     var tayoriItemID: Int?
+    /// 港の材料・行った場所の印の鍵（「出どころ|id」）
+    var materialKey: String?
 
-    static func new(body: String = "", at date: Date, photoAssetIDs: [String] = [], tayoriItemID: Int? = nil, id: String = ULID.make()) -> Draft {
+    static func new(body: String = "", at date: Date, photoAssetIDs: [String] = [], tayoriItemID: Int? = nil, materialKey: String? = nil,
+                    id: String = ULID.make()) -> Draft {
         Draft(id: id, body: body, writtenAt: date, photoWrittenAt: JST.writtenAt(date), original: nil,
-              photoAssetIDs: photoAssetIDs, tayoriItemID: tayoriItemID)
+              photoAssetIDs: photoAssetIDs, tayoriItemID: tayoriItemID, materialKey: materialKey)
     }
 
     static func edit(_ k: Kakera) -> Draft {
@@ -62,52 +65,71 @@ struct EditorView: View {
                     TextEditor(text: $draft.body)
                         .focused($focused)
                         .frame(minHeight: 220)
-                        .font(.body)
+                        .font(Theme.gothic(16))
+                        .foregroundStyle(Theme.ink)
+                        .lineSpacing(3)
+                        .scrollContentBackground(.hidden)
                         .accessibilityIdentifier("bodyEditor")
                 } footer: {
-                    Text("Markdown のまま書けます。URL だけの行はリンクカードになります。")
+                    Text("Markdown のまま書けます。URL だけの行はリンクカードになります。").font(Theme.gothic(11)).foregroundStyle(Theme.muted).lineSpacing(3)
                 }
+                .listRowBackground(Theme.sheet)
 
                 let urls = KakeraBody.photoURLs(draft.body)
-                Section("写真") {
+                Section {
                     if !urls.isEmpty {
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 6) { ForEach(urls, id: \.self) { RemotePhoto(path: $0, side: 84) } }
                         }
                     }
                     if let uploading {
-                        HStack { ProgressView(); Text(uploading).font(.subheadline) }
+                        HStack { ProgressView(); Text(uploading).font(Theme.gothic(14)) }
                     } else {
                         PhotosPicker(selection: $picks, maxSelectionCount: 10, matching: .images, photoLibrary: .shared()) {
-                            Label("写真を添える", systemImage: "photo.badge.plus")
+                            Label("写真を添える", systemImage: "photo.badge.plus").font(Theme.gothic(15)).foregroundStyle(Theme.accent)
                         }
                     }
+                } header: {
+                    Text("写真").font(Theme.mincho(14, bold: true)).foregroundStyle(Theme.ink)
                 }
+                .listRowBackground(Theme.sheet)
 
                 Section {
-                    DatePicker("書いた日時", selection: $draft.writtenAt, in: ...Date().addingTimeInterval(60), displayedComponents: [.date, .hourAndMinute])
-                        .environment(\.timeZone, JST.timeZone)
-                        .accessibilityIdentifier("writtenAt")
+                    DatePicker(selection: $draft.writtenAt, in: ...Date().addingTimeInterval(60), displayedComponents: [.date, .hourAndMinute]) {
+                        Text("書いた日時").font(Theme.gothic(15)).foregroundStyle(Theme.ink)
+                    }
+                    .environment(\.timeZone, JST.timeZone)
+                    .accessibilityIdentifier("writtenAt")
                 }
+                .listRowBackground(Theme.sheet)
 
                 if let error {
-                    Section { Text(error).foregroundStyle(.red).font(.subheadline) }
+                    Section { Text(error).foregroundStyle(Theme.accent).font(Theme.gothic(14)) }
+                        .listRowBackground(Theme.sheet)
                 }
 
                 if !isNew {
                     Section {
                         Button("このかけらを消す", role: .destructive) { confirmDelete = true }
+                            .font(Theme.gothic(15))
                             .disabled(saving)
                     } footer: {
                         if draft.original?.katachiId != nil {
-                            Text("このかけらは、かたちの中にあります。消すと、かたちからも消えます。")
+                            Text("このかけらは、かたちの中にあります。消すと、かたちからも消えます。").font(Theme.gothic(11)).foregroundStyle(Theme.muted).lineSpacing(3)
                         }
                     }
+                    .listRowBackground(Theme.sheet)
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(Theme.paper.ignoresSafeArea())
             .navigationTitle(isNew ? "かけらを書く" : "かけらを直す")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(Theme.paper, for: .navigationBar)
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text(isNew ? "かけらを書く" : "かけらを直す").font(Theme.mincho(17, bold: true, relativeTo: .headline)).foregroundStyle(Theme.ink)
+                }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("やめる") { if dirty { confirmDiscard = true } else { dismiss() } }
                         .disabled(saving)
@@ -117,6 +139,7 @@ struct EditorView: View {
                         ProgressView()
                     } else {
                         Button("保存") { Task { await save() } }
+                            .fontWeight(.semibold)
                             .disabled(trimmed.isEmpty || uploading != nil)
                             .accessibilityIdentifier("save")
                     }
@@ -175,6 +198,7 @@ struct EditorView: View {
             }
             if !draft.photoAssetIDs.isEmpty { UsedMarks.shared.markPhotos(draft.photoAssetIDs) }
             if let item = draft.tayoriItemID { UsedMarks.shared.markItem(item) }
+            if let key = draft.materialKey { UsedMarks.shared.markMaterial(key) }
             onDone()
             dismiss()
         } catch {

@@ -30,22 +30,114 @@ struct Kakera: Codable, Identifiable, Hashable {
     var writtenDate: Date { JST.parse(writtenAt) ?? .distantPast }
 }
 
-/// 便りの既読記事（GET /api/items/read-on の1件）
-struct ReadItem: Codable, Identifiable, Hashable {
+/// 港（minato）の材料1件（GET /api/materials の items の1件）。detail は出どころごとに形が違う JSON
+struct Material: Decodable, Identifiable, Hashable {
     let id: Int
+    let source: String
+    let externalId: String
+    /// +09:00 付き。日単位のもの（天気・からだ帳の一日・読んだ日・vault の log）は nil
+    let occurredAt: String?
+    let date: String
     let title: String
     let url: String?
-    let feedTitle: String
-    let readAt: String
-    let comment: String?
+    let detail: JSONValue
 
-    var readDate: Date? { JST.parse(readAt) }
+    var occurredDate: Date? { occurredAt.flatMap(JST.parse) }
+    /// 「かけらにした」印の鍵（出どころ＋出どころの中の id。港の行 id は入れ替えで変わるので使わない）
+    var markKey: String { "\(source)|\(externalId)" }
+    /// 便りの記事なら便りの item id（港の external_id は `item:<id>`）。第一弾の印（便りの id）と同じ数
+    var tayoriItemID: Int? {
+        guard source == "tayori", externalId.hasPrefix("item:") else { return nil }
+        return Int(externalId.dropFirst(5))
+    }
+}
+
+struct MaterialGroup: Decodable, Hashable {
+    let source: String
+    let label: String
+    let count: Int
+    let items: [Material]
+}
+
+/// 出どころごとのその日の最後の集め（ok / skipped / error）
+struct MaterialStatus: Decodable, Hashable {
+    let source: String
+    let label: String
+    let status: String
+    let count: Int
+    let reason: String?
+    let runAt: String?
+    let trigger: String?
+}
+
+struct MaterialsResponse: Decodable {
+    let date: String
+    let groups: [MaterialGroup]
+    let status: [MaterialStatus]
+}
+
+struct CollectResult: Decodable, Hashable {
+    let source: String
+    let label: String
+    let status: String
+    let count: Int
+    let reason: String?
+}
+
+struct CollectResponse: Decodable {
+    let date: String
+    let results: [CollectResult]
+}
+
+/// 形の決まっていない JSON（材料の detail）
+enum JSONValue: Decodable, Hashable {
+    case string(String)
+    case number(Double)
+    case bool(Bool)
+    case object([String: JSONValue])
+    case array([JSONValue])
+    case null
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.singleValueContainer()
+        if c.decodeNil() { self = .null }
+        else if let b = try? c.decode(Bool.self) { self = .bool(b) }
+        else if let n = try? c.decode(Double.self) { self = .number(n) }
+        else if let s = try? c.decode(String.self) { self = .string(s) }
+        else if let a = try? c.decode([JSONValue].self) { self = .array(a) }
+        else if let o = try? c.decode([String: JSONValue].self) { self = .object(o) }
+        else { self = .null }
+    }
+
+    /// 鍵は snake_case で書く。デコーダの convertFromSnakeCase が辞書の鍵も camelCase にすることがあるので両方見る
+    subscript(key: String) -> JSONValue? {
+        guard case .object(let o) = self else { return nil }
+        if let v = o[key] { return v }
+        let parts = key.split(separator: "_")
+        guard parts.count > 1 else { return nil }
+        let camel = String(parts[0]) + parts.dropFirst().map { $0.prefix(1).uppercased() + $0.dropFirst() }.joined()
+        return o[camel]
+    }
+
+    var string: String? {
+        if case .string(let s) = self, !s.isEmpty { return s }
+        return nil
+    }
+
+    var number: Double? {
+        if case .number(let n) = self { return n }
+        return nil
+    }
+
+    var array: [JSONValue] {
+        if case .array(let a) = self { return a }
+        return []
+    }
 }
 
 private struct KakeraList: Decodable { let kakera: [Kakera] }
 private struct KakeraEnvelope: Decodable { let kakera: Kakera }
 private struct PhotoUploaded: Decodable { let key: String; let url: String }
-private struct ReadItemList: Decodable { let items: [ReadItem] }
 
 // MARK: - 下まわり
 
@@ -56,7 +148,7 @@ private final class NoRedirect: NSObject, URLSessionTaskDelegate {
     }
 }
 
-/// かけら帳と便りの Worker を叩く。サービストークンは本番の二つのホストにだけ付ける（ServerConfig.mayCarryToken）
+/// かけら帳と港の Worker を叩く。サービストークンは本番の二つのホストにだけ付ける（ServerConfig.mayCarryToken）
 final class API: @unchecked Sendable {
     static let shared = API()
 
@@ -132,12 +224,16 @@ final class API: @unchecked Sendable {
         return try await raw(.kakera, "GET", path)
     }
 
-    // MARK: 便り
+    // MARK: 港
 
-    /// その日（JST）に既読にした記事（read_at 昇順）
-    func readOn(_ day: String) async throws -> [ReadItem] {
-        let r: ReadItemList = try await call(.tayori, "GET", "/api/items/read-on", query: [URLQueryItem(name: "date", value: day)])
-        return r.items
+    /// その日（JST）の材料を出どころごとに。status は出どころごとの最後の集め
+    func materials(on day: String) async throws -> MaterialsResponse {
+        try await call(.minato, "GET", "/api/materials", query: [URLQueryItem(name: "date", value: day)])
+    }
+
+    /// 今すぐ集める（その日の分）。Mac から送るもの（vault の log・Mac の作業）は次の送り出しを待つ
+    func collect(on day: String) async throws -> CollectResponse {
+        try await call(.minato, "POST", "/api/collect", json: ["date": day])
     }
 
     // MARK: 共通

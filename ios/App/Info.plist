@@ -30,15 +30,15 @@
 		<true/>
 	</dict>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>その日に撮った写真を「思い出す材料」として並べ、選んだ写真をかけらに添えるために使います。</string>
+	<string>その日に撮った写真と、写真の位置情報から分かる行った場所を「思い出す材料」として並べ、選んだ写真をかけらに添えるために使います（位置情報は端末の中で地名にするだけで、サーバーへは送りません）。</string>
 	<key>KakeraAccessClientID</key>
 	<string>$(KAKERA_ACCESS_CLIENT_ID)</string>
 	<key>KakeraAccessClientSecret</key>
 	<string>$(KAKERA_ACCESS_CLIENT_SECRET)</string>
 	<key>KakeraServerURL</key>
 	<string>$(KAKERA_SERVER_URL)</string>
-	<key>TayoriServerURL</key>
-	<string>$(TAYORI_SERVER_URL)</string>
+	<key>MinatoServerURL</key>
+	<string>$(MINATO_SERVER_URL)</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

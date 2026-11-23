@@ -2,7 +2,10 @@
 #
 #   make generate   xcodegen で .xcodeproj を作る（生成物はコミットしない）
 #   make sim        シミュレータ向けにビルドだけ通す（Team ID 不要・アドホック署名）
-#   make run-local  シミュレータで起動し、ローカルの Worker（かけら帳 astro dev :4321・便り wrangler dev :8792）に向ける
+#   make run-local  シミュレータで起動し、ローカルの Worker（かけら帳 astro dev :4321・港 ~/work/minato の npm run dev :8793）に向ける
+#                   読んだ記事は港の tayori から読む（アプリは便りを直接呼ばない）。港をローカルで回すと出どころの秘密が無いので
+#                   cron の材料はスキップになる（vault-log は MINATO_URL=http://127.0.0.1:8793 node scripts/send-to-minato.mjs で入る）
+#   make run-local-minato-prod  かけら帳はローカル・港は本番（読むだけ。トークンはアプリのキーチェーンに入っていること）
 #   make archive    TestFlight 向けアーカイブ（Release・自動署名）。サービストークンをこの Mac のキーチェーンから埋め込む
 #   make export-testflight  .ipa を build/export/ に書き出す（送らない）
 #   make upload     API キーで App Store Connect へ上げる（Release.local.env と .p8 が要る）
@@ -20,7 +23,7 @@ export KAKERA_TEAM_ID = $(TEAM)
 PHONE_SIM  = Kakera-iPhone
 PHONE_TYPE = iPhone 17
 LOCAL_KAKERA = http://127.0.0.1:4321
-LOCAL_TAYORI = http://127.0.0.1:8792
+LOCAL_MINATO = http://127.0.0.1:8793
 APP     = build-sim/Build/Products/Debug-iphonesimulator/Kakera.app
 
 ARCHIVE = build/Kakera.xcarchive
@@ -28,7 +31,7 @@ ARCHIVE = build/Kakera.xcarchive
 KC_SERVICE ?= kakera-token
 SECRETS = Secrets.xcconfig
 
-.PHONY: generate sim run-local icon clean archive upload export-testflight release require-team require-asc-key
+.PHONY: generate sim run-local run-local-minato-prod icon clean archive upload export-testflight release require-team require-asc-key
 
 generate:
 	xcodegen generate
@@ -44,7 +47,14 @@ run-local: sim
 	@xcrun simctl list devices | grep -q "$(PHONE_SIM) (" || xcrun simctl create "$(PHONE_SIM)" "$(PHONE_TYPE)" > /dev/null
 	@xcrun simctl boot "$(PHONE_SIM)" 2>/dev/null || true
 	xcrun simctl install "$(PHONE_SIM)" $(APP)
-	xcrun simctl launch --terminate-running-process "$(PHONE_SIM)" $(BUNDLE) -kakeraBaseURL $(LOCAL_KAKERA) -tayoriBaseURL $(LOCAL_TAYORI)
+	xcrun simctl launch --terminate-running-process "$(PHONE_SIM)" $(BUNDLE) -kakeraBaseURL $(LOCAL_KAKERA) -minatoBaseURL $(LOCAL_MINATO)
+
+# 港は本番（minato.kechiiiiin.com・トークン付き）を読む。かけらの書き込みはローカルのかけら帳へ
+run-local-minato-prod: sim
+	@xcrun simctl list devices | grep -q "$(PHONE_SIM) (" || xcrun simctl create "$(PHONE_SIM)" "$(PHONE_TYPE)" > /dev/null
+	@xcrun simctl boot "$(PHONE_SIM)" 2>/dev/null || true
+	xcrun simctl install "$(PHONE_SIM)" $(APP)
+	xcrun simctl launch --terminate-running-process "$(PHONE_SIM)" $(BUNDLE) -kakeraBaseURL $(LOCAL_KAKERA) -minatoBaseURL reset
 
 # ---------------- TestFlight ----------------
 # 署名は API キー＋ -allowProvisioningUpdates の自動署名（便り・縁側・家族掲示板と同形）。

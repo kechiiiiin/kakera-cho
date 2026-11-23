@@ -64,7 +64,7 @@ struct AssetThumb: View {
 
     var body: some View {
         ZStack {
-            Rectangle().fill(Color(uiColor: .secondarySystemFill))
+            Rectangle().fill(Theme.line)
             if let image { Image(uiImage: image).resizable().scaledToFill() }
         }
         .frame(width: side, height: side)
@@ -83,7 +83,7 @@ struct AssetThumb: View {
 }
 
 /// 写真の材料の区画: 許可・グリッド・複数選択・「かけらにする」
-struct PhotoMaterialsSection: View {
+struct PhotosNote: View {
     @Bindable var photos: PhotoMaterials
     let used: UsedMarks
     let busy: Bool
@@ -95,27 +95,30 @@ struct PhotoMaterialsSection: View {
     private let columns = [GridItem(.adaptive(minimum: 76, maximum: 120), spacing: 3)]
 
     var body: some View {
-        Section {
+        VStack(alignment: .leading, spacing: 8) {
+            NoteHeading(title: "写真", count: photos.assets.count)
             switch photos.status {
             case .notDetermined:
                 VStack(alignment: .leading, spacing: 8) {
                     Text("その日に撮った写真を並べるには、写真へのアクセスを許可してください。")
-                        .font(.subheadline).foregroundStyle(.secondary)
+                        .font(Theme.gothic(13)).foregroundStyle(Theme.muted).lineSpacing(4)
                     Button("写真へのアクセスを許可する") { Task { await photos.requestAccess() } }
+                        .font(Theme.gothic(14)).foregroundStyle(Theme.accent)
                 }
             case .denied, .restricted:
                 VStack(alignment: .leading, spacing: 8) {
                     Text("写真へのアクセスが許可されていません。設定アプリの「かけら帳」→「写真」で許可すると、その日の写真が並びます。")
-                        .font(.subheadline).foregroundStyle(.secondary)
+                        .font(Theme.gothic(13)).foregroundStyle(Theme.muted).lineSpacing(4)
                     Button("設定を開く") { if let u = URL(string: UIApplication.openSettingsURLString) { openURL(u) } }
+                        .font(Theme.gothic(14)).foregroundStyle(Theme.accent)
                 }
             default:
                 if photos.status == .limited {
                     Text("選んだ写真だけが見えています（設定で「すべての写真」にできます）")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(Theme.gothic(11)).foregroundStyle(Theme.muted)
                 }
                 if photos.assets.isEmpty {
-                    Text("この日に撮った写真はありません").font(.subheadline).foregroundStyle(.secondary)
+                    Text("この日に撮った写真はありません").font(Theme.gothic(13)).foregroundStyle(Theme.muted).lineSpacing(4)
                 } else {
                     grid
                     Button {
@@ -124,14 +127,16 @@ struct PhotoMaterialsSection: View {
                         selected = []
                     } label: {
                         Label(selected.isEmpty ? "写真を選ぶとかけらにできます" : "かけらにする（\(selected.count)枚）", systemImage: "square.and.pencil")
+                            .font(Theme.gothic(13, bold: !selected.isEmpty))
                     }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(selected.isEmpty ? Theme.muted : Theme.accent)
                     .disabled(selected.isEmpty || busy)
                     .accessibilityIdentifier("makeFromPhotos")
                 }
             }
-        } header: {
-            Text("写真")
         }
+        .paperCard(padding: 12)
         .onChange(of: photos.day) { selected = [] }
     }
 
@@ -177,6 +182,5 @@ struct PhotoMaterialsSection: View {
                 .accessibilityIdentifier("photo-\(photos.assets.firstIndex(of: a) ?? 0)")
             }
         }
-        .listRowInsets(EdgeInsets(top: 6, leading: 6, bottom: 6, trailing: 6))
     }
 }

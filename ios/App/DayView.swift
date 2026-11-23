@@ -1,15 +1,16 @@
 import Photos
 import SwiftUI
 
-/// 日ごとの画面: 日付を左右で移る（既定は今日）。その日のかけら（時刻順）と、下に「思い出す材料」（写真・読んだ記事）
+/// 日ごとの画面: 日付を左右で移る（既定は今日）。その日のかけら（時刻順・紙片のカード）と、下に「思い出す材料」
+/// （写真・行った場所・港の材料を付箋の塊で）
 struct DayView: View {
     @State private var day = JST.todayKey
     @State private var kakera: [Kakera] = []
     @State private var kakeraError: String?
     @State private var loadedKakera = false
-    @State private var reads: [ReadItem] = []
-    @State private var readsError: String?
     @State private var photos = PhotoMaterials()
+    @State private var places = PlaceMaterials()
+    @State private var minato = MinatoMaterials()
     @State private var used = UsedMarks.shared
     @State private var draft: Draft?
     @State private var busy: String?
@@ -22,20 +23,29 @@ struct DayView: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                kakeraSection
-                PhotoMaterialsSection(photos: photos, used: used, busy: busy != nil) { makeFromPhotos($0) }
-                readsSection
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 12) {
+                    dateHeader
+                    kakeraSection
+                    MaterialsHeader(minato: minato, canCollect: API.shared.isConfigured(.minato)) {
+                        Task { await minato.collectNow() }
+                    }
+                    PhotosNote(photos: photos, used: used, busy: busy != nil) { makeFromPhotos($0) }
+                    PlacesNote(places: places, used: used) { makeFromPlace($0) }
+                    minatoSection
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 24)
             }
-            .listStyle(.insetGrouped)
+            .background(Theme.paper.ignoresSafeArea())
             .refreshable { await reload() }
             .simultaneousGesture(DragGesture(minimumDistance: 40).onEnded { v in
                 guard abs(v.translation.width) > 90, abs(v.translation.width) > abs(v.translation.height) * 2 else { return }
                 move(v.translation.width > 0 ? -1 : 1)
             })
             .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(Theme.paper, for: .navigationBar)
             .toolbar {
-                ToolbarItem(placement: .principal) { dateBar }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showSettings = true } label: { Image(systemName: "gearshape") }
                         .accessibilityLabel("設定")
@@ -49,12 +59,18 @@ struct DayView: View {
             .safeAreaInset(edge: .bottom) { writeBar }
             .overlay {
                 if let busy {
-                    VStack(spacing: 10) { ProgressView(); Text(busy).font(.subheadline) }
+                    VStack(spacing: 10) { ProgressView(); Text(busy).font(Theme.gothic(14)) }
                         .padding(20).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
                 }
             }
             .task(id: "\(day)#\(configVersion)") { await reload() }
-            .onChange(of: scenePhase) { _, p in if p == .active { photos.load(day) } }
+            .onChange(of: scenePhase) { _, p in
+                if p == .active {
+                    photos.load(day)
+                    places.load(day: day, assets: photos.assets)
+                }
+            }
+            .onChange(of: photos.status) { _, _ in places.load(day: day, assets: photos.assets) }
             .sheet(item: $draft) { d in
                 EditorView(draft: d) { Task { await reload() } }
             }
@@ -69,15 +85,32 @@ struct DayView: View {
 
     // MARK: 日付
 
-    private var dateBar: some View {
-        HStack(spacing: 14) {
-            Button { move(-1) } label: { Image(systemName: "chevron.left") }
-                .accessibilityLabel("前の日").accessibilityIdentifier("prevDay")
-            Text(JST.title(day)).font(.headline).monospacedDigit().accessibilityIdentifier("dayTitle")
-            Button { move(1) } label: { Image(systemName: "chevron.right") }
-                .disabled(isToday)
-                .accessibilityLabel("次の日").accessibilityIdentifier("nextDay")
+    /// 明朝の日付と、その下にその日の天気・気温・歩数（港の weather・health。無ければ出さない）
+    private var dateHeader: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 4) {
+                Button { move(-1) } label: { Image(systemName: "chevron.left").frame(width: 32, height: 36) }
+                    .accessibilityLabel("前の日").accessibilityIdentifier("prevDay")
+                Text(JST.title(day))
+                    .font(Theme.mincho(26, bold: true, relativeTo: .title))
+                    .foregroundStyle(Theme.ink)
+                    .lineLimit(1).minimumScaleFactor(0.7)
+                    .accessibilityIdentifier("dayTitle")
+                Button { move(1) } label: { Image(systemName: "chevron.right").frame(width: 32, height: 36) }
+                    .disabled(isToday)
+                    .accessibilityLabel("次の日").accessibilityIdentifier("nextDay")
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(Theme.accent)
+            if let s = minato.daySummary {
+                Text(s).font(Theme.gothic(13)).foregroundStyle(Theme.muted)
+                    .lineLimit(1).minimumScaleFactor(0.8)
+                    .padding(.leading, 36)
+                    .accessibilityIdentifier("daySummary")
+            }
+            Rectangle().fill(Theme.accent.opacity(0.55)).frame(height: 0.75).padding(.top, 4)
         }
+        .padding(.top, 4)
     }
 
     private func move(_ days: Int) {
@@ -88,24 +121,25 @@ struct DayView: View {
 
     // MARK: かけら
 
+    @ViewBuilder
     private var kakeraSection: some View {
-        Section {
-            if !API.shared.isConfigured(.kakera) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("かけら帳につなぐサービストークンが入っていません。").font(.subheadline)
-                    Button("設定を開く") { showSettings = true }
-                }
-            } else if let kakeraError {
-                Text(kakeraError).font(.subheadline).foregroundStyle(.red)
-            } else if loadedKakera && kakera.isEmpty {
-                Text("この日のかけらはまだありません").font(.subheadline).foregroundStyle(.secondary)
+        Text("かけら").font(Theme.mincho(17, bold: true, relativeTo: .headline)).foregroundStyle(Theme.ink)
+            .padding(.top, 4)
+        if !API.shared.isConfigured(.kakera) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("かけら帳につなぐサービストークンが入っていません。").font(Theme.gothic(14)).foregroundStyle(Theme.ink)
+                Button("設定を開く") { showSettings = true }.font(Theme.gothic(14))
             }
-            ForEach(kakera) { k in
-                Button { draft = .edit(k) } label: { KakeraRow(kakera: k) }
-                    .buttonStyle(.plain)
-            }
-        } header: {
-            Text("かけら")
+            .paperCard()
+        } else if let kakeraError {
+            Text(kakeraError).font(Theme.gothic(13)).foregroundStyle(Theme.accent).paperCard()
+        } else if loadedKakera && kakera.isEmpty {
+            Text("この日のかけらはまだありません").font(Theme.gothic(14)).foregroundStyle(Theme.muted)
+                .padding(.vertical, 6)
+        }
+        ForEach(kakera) { k in
+            Button { draft = .edit(k) } label: { KakeraRow(kakera: k) }
+                .buttonStyle(.plain)
         }
     }
 
@@ -114,13 +148,18 @@ struct DayView: View {
             draft = .new(at: newKakeraDate())
         } label: {
             Label("書く", systemImage: "square.and.pencil")
-                .font(.headline)
+                .font(Theme.gothic(16, bold: true))
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 6)
         }
         .buttonStyle(.borderedProminent)
+        .tint(Theme.accent)
         .padding(.horizontal, 20)
+        .padding(.top, 10)
         .padding(.bottom, 6)
+        // 下に流れる付箋と重ならないよう、紙色で薄く受ける
+        .background(LinearGradient(colors: [Theme.paper.opacity(0), Theme.paper.opacity(0.95), Theme.paper],
+                                   startPoint: .top, endPoint: .center).ignoresSafeArea())
         .disabled(!API.shared.isConfigured(.kakera))
         .accessibilityIdentifier("write")
     }
@@ -133,24 +172,20 @@ struct DayView: View {
         return r.start.addingTimeInterval(12 * 3600)
     }
 
-    // MARK: 読んだ記事
+    // MARK: 港の材料
 
-    private var readsSection: some View {
-        Section {
-            if !API.shared.isConfigured(.tayori) {
-                Text("便りにつなぐ設定がありません").font(.subheadline).foregroundStyle(.secondary)
-            } else if let readsError {
-                Text(readsError).font(.subheadline).foregroundStyle(.red)
-            } else if reads.isEmpty {
-                Text("この日に読んだ記事はありません").font(.subheadline).foregroundStyle(.secondary)
-            }
-            ForEach(reads) { item in
-                Button { makeFromRead(item) } label: { ReadRow(item: item, used: used.items.contains(item.id)) }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("read-\(item.id)")
-            }
-        } header: {
-            Text("読んだ記事")
+    @ViewBuilder
+    private var minatoSection: some View {
+        if !API.shared.isConfigured(.minato) {
+            Text("港につなぐ設定がありません").font(Theme.gothic(13)).foregroundStyle(Theme.muted)
+        } else if let e = minato.error {
+            Text(e).font(Theme.gothic(13)).foregroundStyle(Theme.accent).paperCard()
+        } else if minato.loaded && minato.sortedGroups.isEmpty {
+            Text("港にこの日の材料はまだありません").font(Theme.gothic(13)).foregroundStyle(Theme.muted)
+                .padding(.vertical, 4)
+        }
+        ForEach(minato.sortedGroups, id: \.source) { g in
+            MaterialGroupNote(group: g, used: used) { makeFromMaterial($0) }
         }
     }
 
@@ -159,19 +194,16 @@ struct DayView: View {
     private func reload() async {
         let target = day
         photos.load(target)
+        places.load(day: target, assets: photos.assets)
         async let k: Result<[Kakera], Error> = capture { try await API.shared.kakera(on: target) }
-        async let r: Result<[ReadItem], Error> = capture { try await API.shared.readOn(target) }
-        let (kr, rr) = await (k, r)
+        async let m: Void = minato.load(target)
+        let (kr, _) = await (k, m)
         guard target == day else { return } // 読み込み中に日付が変わった
         switch kr {
         case .success(let list): kakera = list; kakeraError = nil
         case .failure(let e): kakera = []; kakeraError = API.shared.isConfigured(.kakera) ? e.localizedDescription : nil
         }
         loadedKakera = true
-        switch rr {
-        case .success(let list): reads = list; readsError = nil
-        case .failure(let e): reads = []; readsError = API.shared.isConfigured(.tayori) ? e.localizedDescription : nil
-        }
     }
 
     private func capture<T>(_ f: () async throws -> T) async -> Result<T, Error> {
@@ -205,31 +237,44 @@ struct DayView: View {
         }
     }
 
-    /// URL を一行に置いた書きかけを開く（便りのコメントがあれば添える）。時刻は既読時刻
-    private func makeFromRead(_ item: ReadItem) {
-        var body = item.url ?? item.title
-        if let c = item.comment, !c.isEmpty { body += "\n\n" + c }
-        body += "\n"
-        draft = .new(body: body, at: item.readDate ?? Date(), tayoriItemID: item.id)
+    /// 港の材料から書きかけを開く。時刻は材料の時刻、無ければ書いた時刻（いま）
+    private func makeFromMaterial(_ m: Material) {
+        let at = m.occurredDate ?? Date()
+        if let item = m.tayoriItemID {
+            draft = .new(body: MinatoMaterials.body(m), at: at, tayoriItemID: item)
+        } else {
+            draft = .new(body: MinatoMaterials.body(m), at: at, materialKey: m.markKey)
+        }
+    }
+
+    /// 地名を本文にした書きかけ。時刻はその場所の最初の一枚
+    private func makeFromPlace(_ p: Place) {
+        draft = .new(body: p.name + "\n", at: p.firstAt, materialKey: p.markKey)
     }
 }
 
+/// かけら（紙片のカード。時刻は小さく朱色）
 struct KakeraRow: View {
     let kakera: Kakera
 
     var body: some View {
         let photos = KakeraBody.photoURLs(kakera.body)
         let text = KakeraBody.text(kakera.body)
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
-                Text(JST.time(kakera.writtenDate)).font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                Text(JST.time(kakera.writtenDate))
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(Theme.accent)
                 if kakera.katachiId != nil {
-                    Text("かたち").font(.caption2).padding(.horizontal, 5).padding(.vertical, 1)
-                        .background(Color(uiColor: .secondarySystemFill), in: Capsule())
+                    Text("かたち").font(Theme.gothic(10)).foregroundStyle(Theme.muted)
+                        .padding(.horizontal, 5).padding(.vertical, 1)
+                        .overlay(Capsule().strokeBorder(Theme.line, lineWidth: 0.75))
                 }
             }
             if !text.isEmpty {
-                Text(text).font(.body).lineLimit(8).frame(maxWidth: .infinity, alignment: .leading)
+                Text(text).font(Theme.gothic(15)).foregroundStyle(Theme.ink).lineSpacing(4)
+                    .lineLimit(8).frame(maxWidth: .infinity, alignment: .leading)
+                    .multilineTextAlignment(.leading)
             }
             if !photos.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -237,32 +282,7 @@ struct KakeraRow: View {
                 }
             }
         }
-        .padding(.vertical, 2)
-        .contentShape(Rectangle())
-    }
-}
-
-struct ReadRow: View {
-    let item: ReadItem
-    let used: Bool
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(item.title).font(.subheadline.weight(.medium)).lineLimit(2)
-            HStack(spacing: 6) {
-                if let d = item.readDate { Text(JST.time(d)).monospacedDigit() }
-                Text(item.feedTitle).lineLimit(1)
-                if used {
-                    Text("かけらにした").font(.caption2.bold()).padding(.horizontal, 5).padding(.vertical, 1)
-                        .background(Theme.accent.opacity(0.15), in: Capsule()).foregroundStyle(Theme.accent)
-                }
-            }
-            .font(.caption).foregroundStyle(.secondary)
-            if let c = item.comment, !c.isEmpty {
-                Text(c).font(.caption).foregroundStyle(.secondary).lineLimit(3)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .paperCard()
         .contentShape(Rectangle())
     }
 }

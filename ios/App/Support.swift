@@ -114,22 +114,37 @@ enum KakeraBody {
     }
 }
 
-/// 「かけらにした」印（端末の中だけ・アプリを開き直しても残る）。写真は PHAsset の localIdentifier、記事は便りの item id
+/// 「かけらにした」印（端末の中だけ・アプリを開き直しても残る）。
+/// 写真は PHAsset の localIdentifier、記事は便りの item id（第一弾と同じ鍵。港の tayori の external_id `item:<id>` から引く）、
+/// それ以外の港の材料と行った場所は「出どころ|id」の文字列
 @Observable
 final class UsedMarks {
     static let shared = UsedMarks()
 
     private static let photoKey = "usedPhotoAssets"
     private static let itemKey = "usedTayoriItems"
+    private static let materialKey = "usedMaterials"
     private let defaults: UserDefaults
 
     private(set) var photos: Set<String>
     private(set) var items: Set<Int>
+    private(set) var materials: Set<String>
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         photos = Set(defaults.stringArray(forKey: Self.photoKey) ?? [])
         items = Set((defaults.array(forKey: Self.itemKey) as? [Int]) ?? [])
+        materials = Set(defaults.stringArray(forKey: Self.materialKey) ?? [])
+    }
+
+    func isUsed(_ m: Material) -> Bool {
+        if let id = m.tayoriItemID { return items.contains(id) }
+        return materials.contains(m.markKey)
+    }
+
+    func markMaterial(_ key: String) {
+        materials.insert(key)
+        defaults.set(Array(materials), forKey: Self.materialKey)
     }
 
     func markPhotos(_ ids: [String]) {
@@ -194,11 +209,11 @@ struct RemotePhoto: View {
 
     var body: some View {
         ZStack {
-            Rectangle().fill(Color(uiColor: .secondarySystemFill))
+            Rectangle().fill(Theme.line)
             if let image {
                 Image(uiImage: image).resizable().scaledToFill()
             } else if failed {
-                Image(systemName: "photo").foregroundStyle(.secondary)
+                Image(systemName: "photo").foregroundStyle(Theme.muted)
             } else {
                 ProgressView()
             }
@@ -212,6 +227,4 @@ struct RemotePhoto: View {
     }
 }
 
-enum Theme {
-    static let accent = Color(red: 0xB0 / 255, green: 0x3A / 255, blue: 0x2E / 255)
-}
+

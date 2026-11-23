@@ -19,22 +19,34 @@ struct SettingsView: View {
                         .textInputAutocapitalization(.never).autocorrectionDisabled()
                     Button("保存") { save() }
                         .disabled(clientID.trimmingCharacters(in: .whitespaces).isEmpty || clientSecret.trimmingCharacters(in: .whitespaces).isEmpty)
-                    if let message { Text(message).font(.footnote).foregroundStyle(.secondary) }
+                    if let message { Text(message).font(Theme.gothic(12)).foregroundStyle(Theme.muted) }
                 } header: {
-                    Text("Access のサービストークン")
+                    Text("Access のサービストークン").font(Theme.mincho(14, bold: true)).foregroundStyle(Theme.ink)
                 } footer: {
-                    Text("かけら帳と便りの両方に同じトークンを付けます。ビルドに入っている値より、ここで入れた値が優先されます。")
+                    Text("かけら帳と港の両方に同じトークンを付けます。ビルドに入っている値より、ここで入れた値が優先されます。")
+                        .font(Theme.gothic(11)).foregroundStyle(Theme.muted).lineSpacing(3)
                 }
+                .listRowBackground(Theme.sheet)
 
-                Section("つなぎ先") {
+                Section {
                     ForEach(Service.allCases, id: \.self) { s in
                         LabeledContent(s.name, value: ServerConfig.baseURL(s)?.absoluteString ?? "なし")
                     }
+                } header: {
+                    Text("つなぎ先").font(Theme.mincho(14, bold: true)).foregroundStyle(Theme.ink)
                 }
+                .listRowBackground(Theme.sheet)
             }
+            .font(Theme.gothic(15))
+            .scrollContentBackground(.hidden)
+            .background(Theme.paper.ignoresSafeArea())
             .navigationTitle("設定")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(Theme.paper, for: .navigationBar)
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text("設定").font(Theme.mincho(17, bold: true, relativeTo: .headline)).foregroundStyle(Theme.ink)
+                }
                 ToolbarItem(placement: .confirmationAction) { Button("閉じる") { dismiss() } }
             }
         }

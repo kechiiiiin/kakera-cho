@@ -1,6 +1,6 @@
 name: kakera
 
-# かけら帳（kakera-cho）iOS — 第一弾（設計: jinsei vault hestia/projects/blog-cms-design/かけら帳iOS構想.md §2）
+# かけら帳（kakera-cho）iOS — 第一弾・第二弾（設計: jinsei vault hestia/projects/blog-cms-design/かけら帳iOS構想.md §2・§3.2）
 # `*.xcodeproj` は生成物でコミットしない。必ず `xcodegen generate`（make generate）が先
 # iPhone だけ（TARGETED_DEVICE_FAMILY 1）。PC は今までどおりブラウザで Web 版
 
@@ -29,9 +29,10 @@ settings:
     # 有料チーム（Apple Developer Program）の Team ID。環境変数 KAKERA_TEAM_ID から入れる
     # （Makefile が ~/.config/kazoku-keijiban/team-id を読む。便りと同じチーム）
     DEVELOPMENT_TEAM: "${KAKERA_TEAM_ID}"
-    # Worker の URL（秘密ではない）。同じサービストークンをこの2つのホストにだけ付ける
+    # Worker の URL（秘密ではない）。同じサービストークンをこの2つのホストにだけ付ける。
+    # 読んだ記事は第二弾から港（minato）の tayori を読む（便りを直接呼ばない）
     KAKERA_SERVER_URL: "https://kakera.kechiiiiin.com"
-    TAYORI_SERVER_URL: "https://tayori.kechiiiiin.com"
+    MINATO_SERVER_URL: "https://minato.kechiiiiin.com"
 
 targets:
   Kakera:

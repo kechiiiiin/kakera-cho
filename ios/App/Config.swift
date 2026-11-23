@@ -1,19 +1,20 @@
 import Foundation
 import Security
 
-/// つなぐ先は二つ: かけら帳（かけらの読み書き・写真）と便り（読んだ記事）
+/// つなぐ先は二つ: かけら帳（かけらの読み書き・写真）と港（その日の材料。読んだ記事も港の tayori から）。
+/// 第一弾は便りを直接呼んでいたが、第二弾で港へ寄せた（便りは港の cron が呼ぶ）
 enum Service: String, CaseIterable {
     case kakera
-    case tayori
+    case minato
 
-    var name: String { self == .kakera ? "かけら帳" : "便り" }
-    fileprivate var infoKey: String { self == .kakera ? "KakeraServerURL" : "TayoriServerURL" }
-    fileprivate var debugKey: String { self == .kakera ? "debugKakeraBaseURL" : "debugTayoriBaseURL" }
-    fileprivate var launchFlag: String { self == .kakera ? "-kakeraBaseURL" : "-tayoriBaseURL" }
+    var name: String { self == .kakera ? "かけら帳" : "港" }
+    fileprivate var infoKey: String { self == .kakera ? "KakeraServerURL" : "MinatoServerURL" }
+    fileprivate var debugKey: String { self == .kakera ? "debugKakeraBaseURL" : "debugMinatoBaseURL" }
+    fileprivate var launchFlag: String { self == .kakera ? "-kakeraBaseURL" : "-minatoBaseURL" }
 }
 
 enum ServerConfig {
-    /// 本番。Info.plist の KakeraServerURL / TayoriServerURL（project.yml の KAKERA_SERVER_URL / TAYORI_SERVER_URL から入る）
+    /// 本番。Info.plist の KakeraServerURL / MinatoServerURL（project.yml の KAKERA_SERVER_URL / MINATO_SERVER_URL から入る）
     static func productionURL(_ s: Service) -> URL? {
         guard let str = Bundle.main.object(forInfoDictionaryKey: s.infoKey) as? String,
               let url = URL(string: str), url.scheme == "https", url.host?.isEmpty == false else { return nil }
@@ -22,7 +23,7 @@ enum ServerConfig {
 
     #if DEBUG
     /// **DEBUG ビルドだけ**: シミュレータでローカルの Worker を見る。
-    /// 起動引数 `-kakeraBaseURL http://127.0.0.1:4321 -tayoriBaseURL http://127.0.0.1:8792` を覚える（`-kakeraBaseURL reset` で消す）
+    /// 起動引数 `-kakeraBaseURL http://127.0.0.1:4321 -minatoBaseURL http://127.0.0.1:8793` を覚える（`-kakeraBaseURL reset` で消す）
     static func applyLaunchOverride() {
         let args = ProcessInfo.processInfo.arguments
         for s in Service.allCases {
@@ -56,7 +57,7 @@ enum ServerConfig {
         #endif
     }
 
-    /// サービストークンを付けてよい先か。**本番の二つのホスト（https）だけ**。それ以外へは秘密を送らない
+    /// サービストークンを付けてよい先か。**本番の二つのホスト（かけら帳・港。https）だけ**。それ以外へは秘密を送らない
     static func mayCarryToken(_ url: URL) -> Bool {
         guard url.scheme == "https", let host = url.host?.lowercased() else { return false }
         return Service.allCases.contains { productionURL($0)?.host?.lowercased() == host }
@@ -97,7 +98,7 @@ struct KeychainSecret {
 }
 
 /// Cloudflare Access のサービストークン「kakera-ios」（`CF-Access-Client-Id` / `CF-Access-Client-Secret`）。
-/// かけら帳と便りの両方の Access アプリに入れてあり、同じ値を両方へ付ける。
+/// かけら帳と港の両方の Access アプリに入れてあり、同じ値を両方へ付ける。
 /// 読む順: Keychain（設定画面や tmp/ から入れた上書き値）→ ビルドに埋め込んだ値（Info.plist。`make archive` が Mac のキーチェーンから入れる。Debug では空）
 enum AccessTokenStore {
     static let clientID = KeychainSecret(account: "cf-access-client-id")

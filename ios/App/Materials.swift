@@ -1,0 +1,302 @@
+import SwiftUI
+
+/// 港（minato）の材料: その日の分を読んで、種類ごとの塊（付箋）で並べる。押すと書きかけのかけらになる
+@MainActor
+@Observable
+final class MinatoMaterials {
+    private(set) var groups: [MaterialGroup] = []
+    private(set) var status: [MaterialStatus] = []
+    private(set) var error: String?
+    private(set) var loaded = false
+    private(set) var collecting = false
+    /// 「今すぐ集める」の結果のうち、うまくいかなかったもの（小さく理由を出す）
+    private(set) var collectNotes: [String] = []
+    private(set) var collectedDay: String?
+    private var day = ""
+
+    /// 並べる順（本人の挙げた順）。ここに無いものは後ろに港の順で
+    static let order = ["tayori", "nobu", "health", "weather", "vault-log", "ambient", "hevy"]
+
+    static func title(_ g: MaterialGroup) -> String {
+        switch g.source {
+        case "tayori": return "読んだ記事"
+        case "nobu": return "本"
+        case "health": return "からだ帳"
+        case "weather": return "天気"
+        case "vault-log": return "ヘスティアとのやりとり"
+        case "ambient": return "Mac の作業"
+        case "hevy": return "筋トレ（Hevy）"
+        default: return g.label
+        }
+    }
+
+    var sortedGroups: [MaterialGroup] {
+        groups.filter { !$0.items.isEmpty }.sorted { a, b in
+            (Self.order.firstIndex(of: a.source) ?? 99) < (Self.order.firstIndex(of: b.source) ?? 99)
+        }
+    }
+
+    /// 港の最後の集めで error になった出どころ（材料が欠けている理由）
+    var errors: [MaterialStatus] { status.filter { $0.status == "error" } }
+
+    func load(_ day: String) async {
+        if self.day != day {
+            self.day = day
+            groups = []
+            status = []
+            loaded = false
+            error = nil
+            if collectedDay != day { collectNotes = [] }
+        }
+        guard API.shared.isConfigured(.minato) else {
+            loaded = true
+            return
+        }
+        do {
+            let r = try await API.shared.materials(on: day)
+            guard r.date == self.day else { return }
+            groups = r.groups
+            status = r.status
+            error = nil
+        } catch {
+            guard day == self.day else { return }
+            groups = []
+            self.error = error.localizedDescription
+        }
+        loaded = true
+    }
+
+    /// 今すぐ集める → 読み込み直す
+    func collectNow() async {
+        let target = day
+        collecting = true
+        defer { collecting = false }
+        do {
+            let r = try await API.shared.collect(on: target)
+            collectedDay = target
+            collectNotes = r.results.filter { $0.status != "ok" }.map { res in
+                let what = res.status == "skipped" ? "見送り" : "失敗"
+                return "\(res.label): \(what)" + (res.reason.map { "（\($0)）" } ?? "")
+            }
+            collectNotes.append("Mac から送るもの（ヘスティアとのやりとり・Mac の作業）は次の送り出しで入ります")
+        } catch {
+            collectedDay = target
+            collectNotes = ["集められませんでした: \(error.localizedDescription)"]
+        }
+        await load(target)
+    }
+
+    // MARK: その日の一行（天気・気温・歩数）
+
+    /// 例「霧雨　15.2℃ / 6℃　19,138歩」。どれも無ければ nil
+    var daySummary: String? {
+        var parts: [String] = []
+        if let w = groups.first(where: { $0.source == "weather" })?.items.first {
+            let label = w.title.split(separator: "・").first.map(String.init)
+            var s = label ?? ""
+            if let hi = w.detail["temperature_max"]?.number, let lo = w.detail["temperature_min"]?.number {
+                s += (s.isEmpty ? "" : "　") + "\(Self.temp(hi)) / \(Self.temp(lo))"
+            }
+            if !s.isEmpty { parts.append(s) }
+        }
+        if let day = groups.first(where: { $0.source == "health" })?.items.first(where: { $0.detail["kind"]?.string == "day" }),
+           let steps = day.detail["metrics"]?.array.first(where: { $0["metric"]?.string == "steps" })?["value"]?.number {
+            parts.append("\(Self.grouped(Int(steps.rounded())))歩")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: "　")
+    }
+
+    private static func temp(_ v: Double) -> String {
+        v == v.rounded() ? "\(Int(v))℃" : String(format: "%.1f℃", v)
+    }
+
+    private static func grouped(_ n: Int) -> String {
+        let f = NumberFormatter()
+        f.numberStyle = .decimal
+        f.locale = Locale(identifier: "en_US")
+        return f.string(from: NSNumber(value: n)) ?? String(n)
+    }
+
+    // MARK: 材料 → かけら
+
+    /// 一覧に出す小さな添え書き
+    static func sub(_ m: Material) -> String? {
+        switch m.source {
+        case "tayori": return m.detail["feed_title"]?.string
+        case "vault-log": return m.detail["kind"]?.string
+        case "health":
+            if let k = m.detail["kcal"]?.number { return "\(Int(k.rounded()))kcal" }
+            return nil
+        case "hevy":
+            let names = m.detail["exercises"]?.array.compactMap { $0["title"]?.string } ?? []
+            return names.isEmpty ? nil : names.prefix(4).joined(separator: "・") + (names.count > 4 ? " ほか" : "")
+        default: return nil
+        }
+    }
+
+    static func displayTitle(_ m: Material) -> String {
+        if m.source == "vault-log", let t = m.detail["title"]?.string { return t }
+        return m.title
+    }
+
+    /// 書きかけの本文
+    static func body(_ m: Material) -> String {
+        switch m.source {
+        case "tayori":
+            // 第一弾と同じ: URL を一行に置き（リンクカードになる）、便りのコメントがあれば添える
+            var b = m.url ?? m.title
+            if let c = m.detail["comment"]?.string { b += "\n\n" + c }
+            return b + "\n"
+        case "hevy":
+            let lines = (m.detail["exercises"]?.array ?? []).compactMap { e -> String? in
+                guard let t = e["title"]?.string else { return nil }
+                let sets = e["sets"]?.array.count ?? 0
+                return sets > 0 ? "- \(t)（\(sets)セット）" : "- \(t)"
+            }
+            return ([m.title] + lines).joined(separator: "\n") + "\n"
+        default:
+            var b = displayTitle(m)
+            if let u = m.url { b += "\n" + u }
+            return b + "\n"
+        }
+    }
+}
+
+// MARK: - 画面の部品
+
+/// 付箋の見出し（明朝）と件数
+struct NoteHeading: View {
+    let title: String
+    var count: Int? = nil
+    var note: String? = nil
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(title).sectionHeading()
+            if let count, count > 0 {
+                Text("\(count)").font(.caption2.monospacedDigit()).foregroundStyle(Theme.muted)
+            }
+            Spacer(minLength: 4)
+            if let note {
+                Text(note).font(Theme.gothic(10.5)).foregroundStyle(Theme.muted).lineLimit(1)
+            }
+        }
+    }
+}
+
+/// 材料の一行（時刻・題・添え書き・使った印）
+struct MaterialLine: View {
+    let time: Date?
+    let title: String
+    var sub: String? = nil
+    var extra: String? = nil
+    var used = false
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(time.map(JST.time) ?? "")
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(Theme.accent)
+                .frame(width: 36, alignment: .leading)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(Theme.gothic(14)).foregroundStyle(Theme.ink).lineLimit(2).lineSpacing(3)
+                    .multilineTextAlignment(.leading)
+                if sub != nil || used {
+                    HStack(spacing: 6) {
+                        if let sub { Text(sub).lineLimit(1) }
+                        if used { UsedBadge() }
+                    }
+                    .font(Theme.gothic(11)).foregroundStyle(Theme.muted)
+                }
+                if let extra {
+                    Text(extra).font(Theme.gothic(12)).foregroundStyle(Theme.muted).lineLimit(3).lineSpacing(2)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 3)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .opacity(used ? 0.72 : 1)
+    }
+}
+
+struct UsedBadge: View {
+    var body: some View {
+        Text("かけらにした").font(.system(size: 10, weight: .semibold)).lineLimit(1).fixedSize()
+            .padding(.horizontal, 5).padding(.vertical, 1)
+            .overlay(Capsule().strokeBorder(Theme.accent.opacity(0.6), lineWidth: 0.5))
+            .foregroundStyle(Theme.accent)
+    }
+}
+
+/// 港の一つの塊（付箋）。長い塊は畳む
+struct MaterialGroupNote: View {
+    let group: MaterialGroup
+    let used: UsedMarks
+    let onMake: (Material) -> Void
+    @State private var expanded = false
+
+    private static let foldAt = 6
+
+    var body: some View {
+        let items = expanded ? group.items : Array(group.items.prefix(Self.foldAt))
+        VStack(alignment: .leading, spacing: 6) {
+            NoteHeading(title: MinatoMaterials.title(group), count: group.items.count)
+            ForEach(items) { m in
+                Button { onMake(m) } label: {
+                    MaterialLine(time: m.occurredDate, title: MinatoMaterials.displayTitle(m), sub: MinatoMaterials.sub(m),
+                                 extra: m.source == "tayori" ? m.detail["comment"]?.string : nil, used: used.isUsed(m))
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("material-\(m.source)-\(m.externalId)")
+            }
+            if group.items.count > Self.foldAt {
+                Button(expanded ? "畳む" : "ほか \(group.items.count - Self.foldAt) 件を見る") {
+                    withAnimation(.easeOut(duration: 0.2)) { expanded.toggle() }
+                }
+                .font(Theme.gothic(12)).foregroundStyle(Theme.accent)
+                .padding(.leading, 44)
+            }
+        }
+        .stickyNote(group.source)
+    }
+}
+
+/// 「思い出す材料」の見出しと「今すぐ集める」
+struct MaterialsHeader: View {
+    let minato: MinatoMaterials
+    let canCollect: Bool
+    let onCollect: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("思い出す材料").font(Theme.mincho(17, bold: true, relativeTo: .headline)).foregroundStyle(Theme.ink)
+                Spacer()
+                if minato.collecting {
+                    HStack(spacing: 4) { ProgressView().controlSize(.mini); Text("集めています") }
+                        .font(Theme.gothic(11)).foregroundStyle(Theme.muted)
+                } else {
+                    Button(action: onCollect) {
+                        Label("今すぐ集める", systemImage: "arrow.clockwise").font(Theme.gothic(12))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Theme.accent)
+                    .disabled(!canCollect)
+                    .opacity(canCollect ? 1 : 0.4)
+                    .accessibilityIdentifier("collectNow")
+                }
+            }
+            ForEach(minato.collectNotes, id: \.self) { n in
+                Text(n).font(Theme.gothic(10.5)).foregroundStyle(Theme.muted).lineSpacing(2).fixedSize(horizontal: false, vertical: true)
+            }
+            ForEach(minato.errors, id: \.source) { s in
+                Text("\(s.label): 前の集めで失敗" + (s.reason.map { "（\($0)）" } ?? ""))
+                    .font(Theme.gothic(10.5)).foregroundStyle(Theme.accent.opacity(0.85))
+                    .lineSpacing(2).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.top, 10)
+    }
+}
