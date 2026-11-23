@@ -139,7 +139,8 @@ struct DayView: View {
 
     @ViewBuilder
     private var kakeraSection: some View {
-        SectionHead(title: "かけら", count: kakera.count)
+        MajorHead(title: "かけら", count: kakera.count, top: 32)
+            .padding(.bottom, kakera.isEmpty ? 10 : 0)
         if !API.shared.isConfigured(.kakera) {
             VStack(alignment: .leading, spacing: 8) {
                 Text("かけら帳につなぐサービストークンが入っていません。").font(Theme.gothic(14)).foregroundStyle(Theme.ink)
@@ -156,7 +157,7 @@ struct DayView: View {
             KakeraRow(kakera: k, cards: cards)
                 .onTapGesture { draft = .edit(k) }
                 .accessibilityAddTraits(.isButton)
-                .ruledRow(last: k.id == kakera.last?.id)
+                .ruledRow(first: k.id == kakera.first?.id, last: k.id == kakera.last?.id)
         }
     }
 

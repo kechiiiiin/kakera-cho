@@ -164,18 +164,31 @@ final class MinatoMaterials {
 
 // MARK: - 画面の部品
 
-/// 材料の塊の見出し（.section-head と同じ字）と件数・右の添え書き
+/// 材料の塊の見出し（写真・行った場所・読んだ記事…）。塊の頭に灰（#86837c）の 1pt 罫を置き、行の罫（#e4e1da）と区別する。
+/// 見出しは黒 12.5pt 600・件数は灰の等幅。塊と塊の間は 30pt 空ける
 struct NoteHeading: View {
     let title: String
     var count: Int? = nil
     var note: String? = nil
+    /// 塊の上の余白。大きな節の黒罫の直後の最初の塊（写真）だけ詰める
+    var top: CGFloat = 30
 
     var body: some View {
-        SectionHead(title: title, count: count) {
-            if let note {
-                Text(note).font(Theme.gothic(10.5)).foregroundStyle(Theme.muted).lineLimit(1)
+        VStack(alignment: .leading, spacing: 0) {
+            Rectangle().fill(Theme.muted).frame(height: Theme.hairline)
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(title).font(Theme.gothic(12.5, weight: .semibold)).foregroundStyle(Theme.ink)
+                if let count, count > 0 {
+                    Text("\(count)").font(Theme.mono(11)).foregroundStyle(Theme.muted)
+                }
+                Spacer(minLength: 4)
+                if let note {
+                    Text(note).font(Theme.gothic(10.5)).foregroundStyle(Theme.muted).lineLimit(1)
+                }
             }
+            .padding(.top, 10).padding(.bottom, 8)
         }
+        .padding(.top, top)
     }
 }
 
@@ -274,7 +287,7 @@ struct MaterialsHeader: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            SectionHead(title: "思い出す材料") {
+            MajorHead(title: "思い出す材料", top: 52) {
                 if minato.collecting {
                     HStack(spacing: 4) { ProgressView().controlSize(.mini); Text("集めています") }
                         .font(Theme.gothic(11)).foregroundStyle(Theme.muted)
@@ -286,7 +299,6 @@ struct MaterialsHeader: View {
                         .accessibilityIdentifier("collectNow")
                 }
             }
-            .padding(.top, 16)
             ForEach(minato.collectNotes, id: \.self) { n in
                 Text(n).font(Theme.gothic(11)).foregroundStyle(Theme.muted).lineSpacing(3).fixedSize(horizontal: false, vertical: true)
             }

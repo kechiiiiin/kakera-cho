@@ -96,8 +96,8 @@ struct PhotosNote: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            NoteHeading(title: "写真", count: photos.assets.count)
-                .padding(.bottom, -10)
+            NoteHeading(title: "写真", count: photos.assets.count, top: 18)
+                .padding(.bottom, -10) // 見出しの下の余白は NoteHeading が持つ
             switch photos.status {
             case .notDetermined:
                 VStack(alignment: .leading, spacing: 8) {
@@ -122,20 +122,21 @@ struct PhotosNote: View {
                     Text("この日に撮った写真はありません").font(Theme.gothic(13)).foregroundStyle(Theme.muted).lineSpacing(4)
                 } else {
                     grid
-                    Button {
-                        let picked = photos.assets.filter { selected.contains($0.localIdentifier) }
-                        onMake(picked)
-                        selected = []
-                    } label: {
-                        if selected.isEmpty {
-                            Text("写真を選ぶとかけらにできます")
-                        } else {
+                    if selected.isEmpty {
+                        // 案内文（ボタンに見せない。.page-sub 程度の灰の小さな文字）
+                        Text("写真を選ぶとかけらにできます").pageSub()
+                    } else {
+                        Button {
+                            let picked = photos.assets.filter { selected.contains($0.localIdentifier) }
+                            onMake(picked)
+                            selected = []
+                        } label: {
                             HStack(spacing: 6) { Text("かけらにする"); Text("\(selected.count)枚").font(Theme.mono(11)) }
                         }
+                        .buttonStyle(CTAButtonStyle())
+                        .disabled(busy)
+                        .accessibilityIdentifier("makeFromPhotos")
                     }
-                    .buttonStyle(CTAButtonStyle())
-                    .disabled(selected.isEmpty || busy)
-                    .accessibilityIdentifier("makeFromPhotos")
                 }
             }
         }

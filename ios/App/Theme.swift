@@ -88,6 +88,38 @@ struct SectionHead<Trailing: View>: View {
     }
 }
 
+/// 大きな節の見出し（「かけら」「思い出す材料」）。黒 14pt 700・上に広い余白・下に黒の 1pt 罫
+/// （Web のタブの「選ばれている」下線と同じ黒の線の使い方。行の罫 #e4e1da・塊の頭の灰の罫と区別する）
+struct MajorHead<Trailing: View>: View {
+    let title: String
+    var count: Int? = nil
+    var top: CGFloat = 44
+    @ViewBuilder var trailing: () -> Trailing
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .center, spacing: 8) {
+                Text(title).font(Theme.gothic(14, weight: .bold)).tracking(14 * 0.04).foregroundStyle(Theme.ink)
+                if let count, count > 0 {
+                    Text("\(count)").font(Theme.mono(11.5)).foregroundStyle(Theme.muted)
+                }
+                Spacer(minLength: 4)
+                trailing()
+            }
+            .frame(minHeight: 36)
+            .padding(.bottom, 6)
+            Rectangle().fill(Theme.ink).frame(height: Theme.hairline)
+        }
+        .padding(.top, top)
+    }
+}
+
+extension MajorHead where Trailing == EmptyView {
+    init(title: String, count: Int? = nil, top: CGFloat = 44) {
+        self.init(title: title, count: count, top: top) { EmptyView() }
+    }
+}
+
 extension SectionHead where Trailing == EmptyView {
     init(title: String, count: Int? = nil) {
         self.init(title: title, count: count) { EmptyView() }
@@ -106,9 +138,9 @@ extension View {
     }
 
     /// 罫で区切った並びの一行（上に罫。最後の行は lastRule で下にも罫）
-    func ruledRow(last: Bool = false) -> some View {
+    func ruledRow(first: Bool = false, last: Bool = false) -> some View {
         VStack(spacing: 0) {
-            Rule()
+            if !first { Rule() }
             self
             if last { Rule() }
         }
