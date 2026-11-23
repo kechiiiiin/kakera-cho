@@ -1,6 +1,7 @@
 # かけら帳（kakera-cho）iOS — よく使う手順（便り tayori/ios と同じ組み立て）
 #
-#   make generate   xcodegen で .xcodeproj を作る（生成物はコミットしない）
+#   make editor-web 書く欄の k-editor（ios/editor-web/）を App/EditorWeb/kedit.* に束ねる（npm run build:ios-editor。生成物はコミットする）
+#   make generate   xcodegen で .xcodeproj を作る（生成物はコミットしない）。先に editor-web を束ね直す
 #   make sim        シミュレータ向けにビルドだけ通す（Team ID 不要・アドホック署名）
 #   make run-local  シミュレータで起動し、ローカルの Worker（かけら帳 astro dev :4321・港 ~/work/minato の npm run dev :8793）に向ける
 #                   読んだ記事は港の tayori から読む（アプリは便りを直接呼ばない）。港をローカルで回すと出どころの秘密が無いので
@@ -31,9 +32,13 @@ ARCHIVE = build/Kakera.xcarchive
 KC_SERVICE ?= kakera-token
 SECRETS = Secrets.xcconfig
 
-.PHONY: generate sim run-local run-local-minato-prod icon clean archive upload export-testflight release require-team require-asc-key
+.PHONY: editor-web generate sim run-local run-local-minato-prod icon clean archive upload export-testflight release require-team require-asc-key
 
-generate:
+# 書く欄（WKWebView の k-editor）。kakera-cho の node_modules の esbuild で1本に束ねる（ネットから読まない）
+editor-web:
+	cd .. && npm run --silent build:ios-editor
+
+generate: editor-web
 	xcodegen generate
 
 sim: generate

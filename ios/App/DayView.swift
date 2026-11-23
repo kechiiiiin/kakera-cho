@@ -65,7 +65,7 @@ struct DayView: View {
             }
             .onChange(of: photos.status) { _, _ in places.load(day: day, assets: photos.assets) }
             .sheet(item: $draft) { d in
-                EditorView(draft: d) { Task { await reload() } }
+                EditorView(draft: d, cards: cards) { Task { await reload() } }
             }
             .sheet(isPresented: $showSettings, onDismiss: { configVersion += 1 }) { SettingsView() }
             .alert("うまくいきませんでした", isPresented: Binding(get: { alert != nil }, set: { if !$0 { alert = nil } })) {

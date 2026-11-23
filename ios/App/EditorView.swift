@@ -28,27 +28,29 @@ struct Draft: Identifiable {
     }
 }
 
-/// かけらを書く・直す・消す。本文はプレーンなテキスト（Markdown のまま）。
-/// **保存はボタンだけ**（TextEditor の Return は改行。日本語入力の確定の Enter で保存しない）
+/// かけらを書く・直す・消す。本文欄は Web 版と同じ k-editor（WKWebView・KEditorView.swift）。保存の形は今までどおり Markdown。
+/// 日時・保存・やめる・消すはネイティブ。並びは Web の書く欄と同じ 本文 → 道具 → 日時と保存 → やめる／消す。
+/// **保存はボタンだけ**（日本語入力の確定の Enter で保存しない。k-editor も確定の Enter を送信にしない）
 struct EditorView: View {
     @State var draft: Draft
+    /// その日のリンクカード（本文の URL の行をカードで見せる。無い URL は URL のまま）
+    let cards: LinkCards
     /// 保存・削除が済んだら呼ぶ（一覧を読み直す）
     let onDone: () -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @StateObject private var editor = KEditorController()
     @State private var saving = false
-    @State private var uploading: String?
     @State private var error: String?
     @State private var confirmDelete = false
     @State private var confirmDiscard = false
-    @State private var picks: [PhotosPickerItem] = []
-    @FocusState private var focused: Bool
 
     private let initialBody: String
     private let initialDate: Date
 
-    init(draft: Draft, onDone: @escaping () -> Void) {
+    init(draft: Draft, cards: LinkCards = [:], onDone: @escaping () -> Void) {
         _draft = State(initialValue: draft)
+        self.cards = cards
         self.onDone = onDone
         initialBody = draft.body
         initialDate = draft.writtenAt
@@ -60,97 +62,60 @@ struct EditorView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    // .page-date（17pt の題）と .page-sub
-                    Text(isNew ? "かけらを書く" : "かけらを直す")
-                        .font(Theme.gothic(17, weight: .medium)).foregroundStyle(Theme.ink)
-                        .padding(.bottom, 4)
-                    Text("Markdown のまま書けます。URL だけの行はリンクカードになります。")
-                        .pageSub().lineSpacing(3).fixedSize(horizontal: false, vertical: true)
-                        .padding(.bottom, 18)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(isNew ? "かけらを書く" : "かけらを直す")
+                    .font(Theme.gothic(17, weight: .medium)).foregroundStyle(Theme.ink)
+                    .padding(.horizontal, 18).padding(.top, 20).padding(.bottom, 12)
 
-                    // 本文欄（.frag-edit textarea: 罫 1pt・角丸 2pt・内側 10pt）
-                    TextEditor(text: $draft.body)
-                        .focused($focused)
-                        .frame(minHeight: 220)
-                        .font(Theme.gothic(16))
-                        .foregroundStyle(Theme.ink)
-                        .lineSpacing(5)
-                        .scrollContentBackground(.hidden)
-                        .padding(.horizontal, 5).padding(.vertical, 2)
-                        .padding(5)
-                        .overlay(RoundedRectangle(cornerRadius: Theme.radius).strokeBorder(Theme.line, lineWidth: Theme.hairline))
-                        .accessibilityIdentifier("bodyEditor")
+                // 本文と道具（k-editor）。道具は本文の枠の直下、キーボードが出ればその上に乗る
+                KEditorView(controller: editor)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .accessibilityIdentifier("bodyEditor")
 
-                    let urls = KakeraBody.photoURLs(draft.body)
-                    if !urls.isEmpty {
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 8) { ForEach(urls, id: \.self) { RemotePhoto(path: $0, side: 52) } }
-                        }
-                        .padding(.top, 10)
-                    }
+                if let error {
+                    Text(error).font(Theme.gothic(13)).foregroundStyle(Theme.accent)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 18).padding(.top, 8)
+                }
 
-                    // 道具（.icon-btn）と書いた日時
-                    HStack(spacing: 8) {
-                        if let uploading {
-                            HStack(spacing: 6) { ProgressView().controlSize(.small); Text(uploading).font(Theme.gothic(12)).foregroundStyle(Theme.muted) }
-                                .frame(minHeight: 36)
-                        } else {
-                            PhotosPicker(selection: $picks, maxSelectionCount: 10, matching: .images, photoLibrary: .shared()) {
-                                Text("写真")
-                            }
-                            .buttonStyle(GhostButtonStyle())
-                            .accessibilityIdentifier("addPhoto")
-                        }
-                        Spacer(minLength: 4)
-                        pickerChip(JST.dayKey(draft.writtenAt), components: .date)
-                            .accessibilityIdentifier("writtenAt")
-                        pickerChip(JST.time(draft.writtenAt), components: .hourAndMinute)
-                    }
-                    .padding(.top, 10)
-
-                    if let error {
-                        Text(error).font(Theme.gothic(13)).foregroundStyle(Theme.accent)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .padding(.top, 12)
-                    }
-
-                    // 下に罫を挟んで、保存（黒塗り）・やめる・消す（.frag-edit-actions）
-                    Rule().padding(.top, 14)
-                    HStack(spacing: 8) {
-                        if saving {
-                            ProgressView().frame(minWidth: 60, minHeight: 38)
-                        } else {
-                            Button("保存") { Task { await save() } }
-                                .buttonStyle(PrimaryButtonStyle())
-                                .disabled(trimmed.isEmpty || uploading != nil)
-                                .accessibilityIdentifier("save")
-                        }
-                        Button("やめる") { if dirty { confirmDiscard = true } else { dismiss() } }
-                            .buttonStyle(GhostButtonStyle())
-                            .disabled(saving)
-                        Spacer(minLength: 4)
-                        if !isNew {
-                            Button("消す") { confirmDelete = true }
-                                .buttonStyle(DangerButtonStyle())
-                                .disabled(saving)
-                                .accessibilityIdentifier("delete")
-                        }
-                    }
-                    .padding(.top, 14)
-                    if !isNew && draft.original?.katachiId != nil {
-                        Text("このかけらは、かたちの中にあります。消すと、かたちからも消えます。")
-                            .font(Theme.gothic(11)).foregroundStyle(Theme.muted).lineSpacing(3)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .padding(.top, 10)
+                // .composer-actions: 書いた日時（左）と保存（右）。罫を挟む
+                Rule().padding(.horizontal, 18).padding(.top, 8)
+                HStack(spacing: 8) {
+                    pickerChip(JST.dayKey(draft.writtenAt), components: .date)
+                        .accessibilityIdentifier("writtenAt")
+                    pickerChip(JST.time(draft.writtenAt), components: .hourAndMinute)
+                    Spacer(minLength: 4)
+                    if saving {
+                        ProgressView().frame(minWidth: 60, minHeight: 38)
+                    } else {
+                        Button("保存") { Task { await save() } }
+                            .buttonStyle(PrimaryButtonStyle())
+                            .disabled(trimmed.isEmpty)
+                            .accessibilityIdentifier("save")
                     }
                 }
-                .padding(.horizontal, 18)
-                .padding(.top, 20)
-                .padding(.bottom, 40)
+                .padding(.horizontal, 18).padding(.top, 10)
+
+                // その下に やめる／消す（Web のその場編集の 取消／削除）
+                HStack(spacing: 8) {
+                    Button("やめる") { if dirty { confirmDiscard = true } else { dismiss() } }
+                        .buttonStyle(GhostButtonStyle())
+                        .disabled(saving)
+                    if !isNew && draft.original?.katachiId != nil {
+                        Text("かたちの中のかけらです。消すと、かたちからも消えます。")
+                            .font(Theme.gothic(10.5)).foregroundStyle(Theme.muted).lineSpacing(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 4)
+                    if !isNew {
+                        Button("消す") { confirmDelete = true }
+                            .buttonStyle(DangerButtonStyle())
+                            .disabled(saving)
+                            .accessibilityIdentifier("delete")
+                    }
+                }
+                .padding(.horizontal, 18).padding(.top, 8).padding(.bottom, 10)
             }
-            .scrollDismissesKeyboard(.interactively)
             .background(Theme.paper.ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
             .interactiveDismissDisabled(dirty || saving)
@@ -160,12 +125,14 @@ struct EditorView: View {
             .confirmationDialog("このかけらを消しますか（元に戻せません）", isPresented: $confirmDelete, titleVisibility: .visible) {
                 Button("消す", role: .destructive) { Task { await remove() } }
             }
-            .onChange(of: picks) { _, items in
-                guard !items.isEmpty else { return }
-                picks = []
-                Task { await attach(items) }
+            .onAppear {
+                editor.kakeraId = draft.id
+                editor.photoWrittenAt = draft.photoWrittenAt
+                editor.onChange = { md in draft.body = md }
+                editor.onError = { m in error = m }
+                // 新しいかけら（材料からの書きかけも）は開いたらすぐ書けるように
+                editor.start(markdown: draft.body, cards: cards, focus: isNew)
             }
-            .onAppear { if isNew && draft.body.isEmpty { focused = true } }
         }
     }
 
@@ -185,29 +152,13 @@ struct EditorView: View {
             .clipped()
     }
 
-    private func attach(_ items: [PhotosPickerItem]) async {
-        error = nil
-        var urls: [String] = []
-        let start = KakeraBody.photoURLs(draft.body).count
-        for (i, item) in items.enumerated() {
-            uploading = "写真を上げています（\(i + 1)/\(items.count)）"
-            do {
-                guard let data = try await item.loadTransferable(type: Data.self) else { throw APIError.transport("写真を読めませんでした") }
-                let jpeg = try JPEG.make(from: data)
-                urls.append(try await API.shared.uploadPhoto(jpeg: jpeg, kakeraId: draft.id, writtenAt: draft.photoWrittenAt, n: start + i + 1))
-            } catch {
-                self.error = "写真を上げられませんでした: \(error.localizedDescription)"
-                break
-            }
-        }
-        draft.body = KakeraBody.appendingPhotos(draft.body, urls)
-        uploading = nil
-    }
-
     private func save() async {
         saving = true
         error = nil
         defer { saving = false }
+        // 変更の知らせを待たず、保存の直前に k-editor から取り直す（打った直後に押しても取りこぼさない）
+        if let md = await editor.currentMarkdown() { draft.body = md }
+        guard !trimmed.isEmpty else { return }
         do {
             if let original = draft.original {
                 let bodyChanged = trimmed != original.body
