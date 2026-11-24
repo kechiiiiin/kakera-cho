@@ -165,8 +165,8 @@ private struct AppWebRepresentable: UIViewRepresentable {
     func updateUIView(_ uiView: WKWebView, context: Context) {}
 }
 
-/// 全画面で開く Web の画面。「閉じる」は Web の上の帯（.topbar の「かけら帳」の行）の右に重ねる。
-/// 見た目は app.css §9・Theme.swift の .btn-ghost（1pt の罫の枠・灰の文字・塗らない）。常にライト
+/// 全画面で開く Web の画面。Web の上の帯とタブは隠し（editor-web/app.css）、アプリの帯（左に「‹ かけら」・下に罫）を置いて
+/// 日ごとの画面から続いて見えるようにする（2026-11-24 本人「別サイトに行っているような違和感」）。常にライト
 struct AppWebScreen: View {
     @StateObject private var controller: AppWebController
     @Environment(\.dismiss) private var dismiss
@@ -176,15 +176,28 @@ struct AppWebScreen: View {
     }
 
     var body: some View {
-        AppWebRepresentable(controller: controller)
-            .background(Theme.paper.ignoresSafeArea())
-            .overlay(alignment: .topTrailing) {
-                Button("閉じる") { dismiss() }
-                    .buttonStyle(GhostButtonStyle())
-                    .padding(.top, 6)
-                    .padding(.trailing, 18)
+        VStack(spacing: 0) {
+            VStack(spacing: 0) {
+                HStack(spacing: 0) {
+                    Button { dismiss() } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "chevron.left").font(.system(size: 14, weight: .regular))
+                            Text("かけら").font(Theme.gothic(15, weight: .medium))
+                        }
+                        .frame(minHeight: 36)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(LinkButtonStyle(color: Theme.ink))
                     .accessibilityIdentifier("closeWeb")
+                    Spacer()
+                }
+                .padding(.horizontal, 14).padding(.top, 4).padding(.bottom, 6)
+                Rule()
             }
+            .background(Theme.paper.ignoresSafeArea(edges: .top))
+            AppWebRepresentable(controller: controller)
+        }
+        .background(Theme.paper.ignoresSafeArea())
             .preferredColorScheme(.light)
     }
 }

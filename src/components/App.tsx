@@ -187,7 +187,7 @@ export default function App({ start = 'write' }: { start?: StartView } = {}): JS
   }, []);
 
   return (
-    <div id="app" class={isReadWorld(view) ? 'mode-read' : undefined}>
+    <div id="app" class={isReadWorld(view) ? 'mode-read' : undefined} data-view={view.t}>
       <header class="topbar" ref={topbarRef}>
         <div class="topbar-row">
           <span class="brand">かけら帳</span>
