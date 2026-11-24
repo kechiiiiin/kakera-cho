@@ -244,7 +244,69 @@ final class API: @unchecked Sendable {
         try await call(.minato, "POST", "/api/collect", json: ["date": day])
     }
 
+    // MARK: Web の画面（WKWebView の同梱）からの中継
+
+    struct Relayed {
+        let status: Int
+        let contentType: String?
+        let data: Data
+    }
+
+    /// WebView（ios/editor-web/app-entry.tsx の App.tsx）からの /api/* を、かけら帳へサービストークンをつけてそのまま中継する。
+    /// メソッド・本文・Content-Type を渡し、ステータスと Content-Type と本文を返す（2xx 以外も投げない。画面がエラーの文を読む）。
+    /// ⚠️ 鍵はここで付けるだけで WebView には返さない。Access のログインへの転送（3xx）と 401/403 は、画面が読める JSON の 401 にする
+    func relay(method: String, path: String, query: String?, body: Data?, contentType: String?) async throws -> Relayed {
+        guard path.hasPrefix("/api/"), !path.contains("..") else { throw APIError.http(400, "中継できるのは /api/ だけです") }
+        let s = Service.kakera
+        guard let base = ServerConfig.baseURL(s), var comps = URLComponents(url: base, resolvingAgainstBaseURL: false) else {
+            throw APIError.notConfigured(s)
+        }
+        comps.path = path
+        comps.percentEncodedQuery = query?.isEmpty == false ? query : nil
+        guard let url = comps.url else { throw APIError.notConfigured(s) }
+
+        var req = URLRequest(url: url)
+        req.httpMethod = method
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        try authorize(&req, s, method: method, base: base)
+        if let body, method != "GET", method != "HEAD" {
+            req.httpBody = body
+            if let contentType { req.setValue(contentType, forHTTPHeaderField: "Content-Type") }
+        }
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: req, delegate: noRedirect)
+        } catch {
+            throw APIError.transport((error as NSError).localizedDescription)
+        }
+        guard let http = response as? HTTPURLResponse else { throw APIError.transport("応答がありません") }
+        if (300..<400).contains(http.statusCode) || http.statusCode == 401 || http.statusCode == 403 {
+            let msg = APIError.unauthorized(s).errorDescription ?? ""
+            let json = (try? JSONSerialization.data(withJSONObject: ["error": msg])) ?? Data()
+            return Relayed(status: 401, contentType: "application/json; charset=utf-8", data: json)
+        }
+        return Relayed(status: http.statusCode, contentType: http.value(forHTTPHeaderField: "Content-Type"), data: data)
+    }
+
     // MARK: 共通
+
+    /// サービストークン（本番の二つのホストだけ）と、かけら帳の GET 以外に要る Origin を付ける
+    private func authorize(_ req: inout URLRequest, _ s: Service, method: String, base: URL) throws {
+        guard let url = req.url else { throw APIError.notConfigured(s) }
+        if ServerConfig.mayCarryToken(url) {
+            guard let id = AccessTokenStore.idValue, let secret = AccessTokenStore.secretValue else { throw APIError.notConfigured(s) }
+            req.setValue(id, forHTTPHeaderField: "CF-Access-Client-Id")
+            req.setValue(secret, forHTTPHeaderField: "CF-Access-Client-Secret")
+        } else if !ServerConfig.isLocalDev(s) {
+            throw APIError.notConfigured(s)
+        }
+        // かけら帳（Astro）は GET 以外で Origin を見る（checkOrigin）。自分の origin を名乗る
+        if s == .kakera, method != "GET", let scheme = base.scheme, let host = base.host {
+            req.setValue("\(scheme)://\(host)\(base.port.map { ":\($0)" } ?? "")", forHTTPHeaderField: "Origin")
+        }
+    }
 
     private func call<T: Decodable>(_ s: Service, _ method: String, _ path: String, query: [URLQueryItem] = [], json: [String: Any]? = nil) async throws -> T {
         let body = try json.map { try JSONSerialization.data(withJSONObject: $0) }
@@ -267,17 +329,7 @@ final class API: @unchecked Sendable {
         var req = URLRequest(url: url)
         req.httpMethod = method
         req.setValue("application/json", forHTTPHeaderField: "Accept")
-        if ServerConfig.mayCarryToken(url) {
-            guard let id = AccessTokenStore.idValue, let secret = AccessTokenStore.secretValue else { throw APIError.notConfigured(s) }
-            req.setValue(id, forHTTPHeaderField: "CF-Access-Client-Id")
-            req.setValue(secret, forHTTPHeaderField: "CF-Access-Client-Secret")
-        } else if !ServerConfig.isLocalDev(s) {
-            throw APIError.notConfigured(s)
-        }
-        // かけら帳（Astro）は GET 以外で Origin を見る（checkOrigin）。自分の origin を名乗る
-        if s == .kakera, method != "GET", let scheme = base.scheme, let host = base.host {
-            req.setValue("\(scheme)://\(host)\(base.port.map { ":\($0)" } ?? "")", forHTTPHeaderField: "Origin")
-        }
+        try authorize(&req, s, method: method, base: base)
         if let body {
             req.httpBody = body
             if let contentType { req.setValue(contentType, forHTTPHeaderField: "Content-Type") }

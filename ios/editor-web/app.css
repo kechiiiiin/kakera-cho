@@ -1,0 +1,5 @@
+/* iOS アプリの同梱（kapp.html）だけに足す見た目。Web 版の src/styles/app.css はそのまま読み、ここでは上書きを最小にする。
+ *   - 上の帯（.topbar）の右に、ネイティブの「閉じる」が重なる（ios/App/AppWebView.swift）。その分だけ右を空ける
+ *   - WebView の上下の安全域は SwiftUI 側で避けている
+ */
+.topbar-row { padding-right: 64px; min-height: 24px; }

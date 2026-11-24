@@ -31,6 +31,14 @@ type View =
 
 type Tab = 'write' | 'katachi' | 'nikki' | 'words';
 
+/**
+ * 初めに開く画面。Web 版は指定しない（かけら）。iOS アプリの同梱（ios/editor-web/app-entry.tsx）が
+ * URL の hash から渡し、押した入口の画面から開く。
+ */
+export type StartView = 'write' | 'compose' | 'katachi' | 'nikki' | 'words';
+
+export const START_VIEWS: readonly StartView[] = ['write', 'compose', 'katachi', 'nikki', 'words'];
+
 function tabOf(view: View): Tab {
   if (view.t === 'katachi' || view.t === 'read') return 'katachi';
   if (view.t === 'nikki' || view.t === 'namemap') return 'nikki';
@@ -50,8 +58,8 @@ function isReadWorld(view: View): boolean {
   return view.t === 'katachi' || view.t === 'read';
 }
 
-export default function App(): JSX.Element {
-  const [view, setView] = useState<View>({ t: 'write' });
+export default function App({ start = 'write' }: { start?: StartView } = {}): JSX.Element {
+  const [view, setView] = useState<View>({ t: start });
   const [nagare, setNagare] = useState<Kakera[]>([]);
   const [nagareCards, setNagareCards] = useState<LinkCards>({});
   const [nagareLoaded, setNagareLoaded] = useState(false);

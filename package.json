@@ -9,6 +9,8 @@
     "check": "astro check",
     "test": "vitest run",
     "build:ios-editor": "esbuild ios/editor-web/entry.ts --bundle --minify --format=iife --target=safari17 --entry-names=kedit --outdir=ios/App/EditorWeb --log-level=warning && cp ios/editor-web/kedit.html ios/App/EditorWeb/kedit.html",
+    "build:ios-app": "esbuild ios/editor-web/app-entry.tsx --bundle --minify --format=iife --target=safari17 --entry-names=kapp --outdir=ios/App/EditorWeb --log-level=warning && cp ios/editor-web/kapp.html ios/App/EditorWeb/kapp.html",
+    "build:ios-web": "npm run --silent build:ios-editor && npm run --silent build:ios-app",
     "preview": "astro build && wrangler dev",
     "deploy": "npm run build && wrangler deploy",
     "db:local": "wrangler d1 execute kakera --local --file=./schema.sql",

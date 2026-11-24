@@ -32,7 +32,7 @@ final class KEditorController: NSObject, ObservableObject {
 
     override init() {
         let config = WKWebViewConfiguration()
-        let handler = PhotoSchemeHandler()
+        let handler = BundleSchemeHandler(relayAPI: false)
         config.setURLSchemeHandler(handler, forURLScheme: Self.scheme)
         config.websiteDataStore = .nonPersistent()
         config.dataDetectorTypes = []
@@ -242,14 +242,22 @@ extension KEditorController: WKNavigationDelegate, WKUIDelegate {
     }
 }
 
-/// kakera-editor://app/ の中継。同梱の kedit.* と、/api/photo/...（写真・カードの画像）だけを返す
-final class PhotoSchemeHandler: NSObject, WKURLSchemeHandler {
+/// kakera-editor://app/ の中継。同梱の kedit.*・kapp.*（Web の画面）と、/api/photo/...（写真・カードの画像）を返す。
+/// relayAPI のとき（Web の画面の同梱・AppWebView.swift）は、ほかの /api/* も全メソッドでかけら帳へ中継する（API.relay）。
+/// ⚠️ サービストークンは Swift の中で付けるだけ。WebView には返さない
+final class BundleSchemeHandler: NSObject, WKURLSchemeHandler {
+    private let relayAPI: Bool
     private var stopped = Set<ObjectIdentifier>()
+
+    init(relayAPI: Bool) {
+        self.relayAPI = relayAPI
+    }
 
     func webView(_ webView: WKWebView, start task: any WKURLSchemeTask) {
         guard let url = task.request.url else { return }
         let path = url.path
-        if path.hasPrefix("/api/photo/") {
+        let method = (task.request.httpMethod ?? "GET").uppercased()
+        if path.hasPrefix("/api/photo/"), method == "GET" {
             let id = ObjectIdentifier(task)
             Task { @MainActor in
                 do {
@@ -267,10 +275,14 @@ final class PhotoSchemeHandler: NSObject, WKURLSchemeHandler {
             }
             return
         }
+        if relayAPI, path.hasPrefix("/api/") {
+            relay(task, url: url, method: method)
+            return
+        }
         let name = (path as NSString).lastPathComponent
         let ext = (name as NSString).pathExtension
         let types = ["html": "text/html; charset=utf-8", "js": "text/javascript; charset=utf-8", "css": "text/css; charset=utf-8"]
-        guard name.hasPrefix("kedit."), let type = types[ext],
+        guard name.hasPrefix("kedit.") || name.hasPrefix("kapp."), let type = types[ext],
               let file = Bundle.main.url(forResource: (name as NSString).deletingPathExtension, withExtension: ext),
               let data = try? Data(contentsOf: file) else {
             task.didFailWithError(URLError(.fileDoesNotExist))
@@ -283,6 +295,49 @@ final class PhotoSchemeHandler: NSObject, WKURLSchemeHandler {
 
     func webView(_ webView: WKWebView, stop task: any WKURLSchemeTask) {
         stopped.insert(ObjectIdentifier(task))
+    }
+
+    /// /api/* をそのまま中継する。本文は httpBody（無ければ httpBodyStream を読み切る）。
+    /// 返すのはステータス・Content-Type・本文だけ（応答の他のヘッダ・Cookie は渡さない）
+    private func relay(_ task: any WKURLSchemeTask, url: URL, method: String) {
+        let id = ObjectIdentifier(task)
+        let request = task.request
+        let body = request.httpBody ?? request.httpBodyStream.map(Self.readAll)
+        let contentType = request.value(forHTTPHeaderField: "Content-Type")
+        let query = url.query(percentEncoded: true)
+        Task { @MainActor in
+            do {
+                let r = try await API.shared.relay(method: method, path: url.path, query: query, body: body, contentType: contentType)
+                guard !self.stopped.contains(id) else { return }
+                var headers = ["Cache-Control": "no-store"]
+                if let t = r.contentType { headers["Content-Type"] = t }
+                task.didReceive(HTTPURLResponse(url: url, statusCode: r.status, httpVersion: "HTTP/1.1", headerFields: headers)!)
+                task.didReceive(r.data)
+                task.didFinish()
+            } catch {
+                guard !self.stopped.contains(id) else { return }
+                // 通信できない・設定が無いときも、画面がエラーの文を出せるよう JSON で返す（fetch を落とさない）
+                let msg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                let json = (try? JSONSerialization.data(withJSONObject: ["error": msg])) ?? Data()
+                task.didReceive(HTTPURLResponse(url: url, statusCode: 502, httpVersion: "HTTP/1.1",
+                                                headerFields: ["Content-Type": "application/json; charset=utf-8"])!)
+                task.didReceive(json)
+                task.didFinish()
+            }
+        }
+    }
+
+    private static func readAll(_ stream: InputStream) -> Data {
+        stream.open()
+        defer { stream.close() }
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 64 * 1024)
+        while true {
+            let n = stream.read(&buffer, maxLength: buffer.count)
+            if n <= 0 { break }
+            data.append(buffer, count: n)
+        }
+        return data
     }
 
     private static func imageType(_ d: Data) -> String {
