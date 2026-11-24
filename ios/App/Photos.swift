@@ -96,7 +96,7 @@ struct PhotosNote: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            NoteHeading(title: "写真", count: photos.assets.count, top: 14, rule: false)
+            NoteHeading(title: "写真", count: photos.assets.count, top: 14)
                 .padding(.bottom, -10) // 見出しの下の余白は NoteHeading が持つ
             switch photos.status {
             case .notDetermined:
