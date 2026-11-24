@@ -108,7 +108,7 @@ struct MajorHead<Trailing: View>: View {
             }
             .frame(minHeight: 36)
             .padding(.bottom, 6)
-            Rectangle().fill(Theme.ink).frame(height: Theme.hairline)
+            Rectangle().fill(Theme.muted).frame(height: Theme.hairline)
         }
         .padding(.top, top)
     }

@@ -164,18 +164,20 @@ final class MinatoMaterials {
 
 // MARK: - 画面の部品
 
-/// 材料の塊の見出し（写真・行った場所・読んだ記事…）。塊の頭に灰（#86837c）の 1pt 罫を置き、行の罫（#e4e1da）と区別する。
+/// 材料の塊の見出し（写真・行った場所・読んだ記事…）。塊の頭に行と同じ薄い罫（#e4e1da）を置き、見出しの黒字と塊の間の余白で区切る（2026-11-24 本人「区切りの印象が強い」で灰罫から弱めた）。
 /// 見出しは黒 12.5pt 600・件数は灰の等幅。塊と塊の間は 30pt 空ける
 struct NoteHeading: View {
     let title: String
     var count: Int? = nil
     var note: String? = nil
-    /// 塊の上の余白。大きな節の黒罫の直後の最初の塊（写真）だけ詰める
+    /// 塊の上の余白。大きな節の罫の直後の最初の塊（写真）だけ詰める
     var top: CGFloat = 30
+    /// 頭の罫を引くか。大きな節の罫の直後の最初の塊は二重線になるので引かない
+    var rule: Bool = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Rectangle().fill(Theme.muted).frame(height: Theme.hairline)
+            if rule { Rectangle().fill(Theme.line).frame(height: Theme.hairline) }
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(title).font(Theme.gothic(12.5, weight: .semibold)).foregroundStyle(Theme.ink)
                 if let count, count > 0 {
