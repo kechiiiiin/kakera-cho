@@ -93,7 +93,16 @@ final class DayPageTsukiShots: XCTestCase {
         XCTAssertTrue(d15.label.contains("書いた日"), d15.label)
         XCTAssertFalse(d12.label.contains("書いた日"), d12.label)
         for d in [d27, d15, d12] { XCTAssertFalse(d.label.contains("気分"), d.label) }
-        XCTAssertFalse(app.buttons["cal-2026-11-29"].isEnabled, "未来の日は押せない")
+        // 未来の日（明日。月末なら次の月なので見ない）は押せない。日付を固定すると、その日が来たとき落ちる
+        var jst = Calendar(identifier: .gregorian)
+        jst.timeZone = TimeZone(identifier: "Asia/Tokyo")!
+        let tomorrow = jst.date(byAdding: .day, value: 1, to: Date())!
+        let f = DateFormatter()
+        f.calendar = jst; f.timeZone = jst.timeZone; f.locale = Locale(identifier: "en_US_POSIX"); f.dateFormat = "yyyy-MM-dd"
+        let tomorrowKey = f.string(from: tomorrow)
+        if tomorrowKey.hasPrefix("2026-11") {
+            XCTAssertFalse(app.buttons["cal-\(tomorrowKey)"].isEnabled, "未来の日は押せない")
+        }
         XCTAssertFalse(app.buttons["nextMonth"].isEnabled)
         sleep(1)
         shot("1-month")
@@ -108,7 +117,7 @@ final class DayPageTsukiShots: XCTestCase {
         shot("3-picked-day")
 
         // 検索: かけらと場所名が日付つきで出る。押すとその日へ
-        app.buttons["openSearch"].tap()
+        app.tapMenu("openSearch", label: "さがす")
         let field = app.textFields["daySearchField"]
         XCTAssertTrue(field.waitForExistence(timeout: 10))
         field.typeText("銀杏")
@@ -123,7 +132,7 @@ final class DayPageTsukiShots: XCTestCase {
         shot("5-search-picked")
 
         // かたち一覧の既存の検索も動く（results を読む）
-        app.buttons["open-katachi"].tap()
+        app.tapMenu("open-katachi", label: "かたち")
         let katachiSearch = app.textFields["search"]
         XCTAssertTrue(katachiSearch.waitForExistence(timeout: 20))
         katachiSearch.tap()
@@ -135,8 +144,7 @@ final class DayPageTsukiShots: XCTestCase {
 
     func testExportShareSheet() throws {
         app.launch()
-        XCTAssertTrue(app.buttons["openSettings"].waitForExistence(timeout: 30))
-        app.buttons["openSettings"].tap()
+        app.tapMenu("openSettings", label: "設定")
         let export = app.buttons["exportAll"]
         XCTAssertTrue(export.waitForExistence(timeout: 10))
         shot("7-settings")

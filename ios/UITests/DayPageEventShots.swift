@@ -74,8 +74,7 @@ final class DayPageEventShots: XCTestCase {
         resetHidden(day: day)
         resetHidden(day: "2026-11-28")
         app.launch()
-        XCTAssertTrue(app.buttons["prevDay"].waitForExistence(timeout: 30))
-        app.buttons["prevDay"].tap()
+        app.goToDay("2026-11-27") // 検証の日（前の日のボタンに頼らない）
         XCTAssertTrue(text("06:40").waitForExistence(timeout: 60))
 
         // 権限: 理由を出してから求める。許可の前もかけら・写真は出ている
@@ -94,13 +93,13 @@ final class DayPageEventShots: XCTestCase {
         XCTAssertTrue(bus.exists && morning.exists)
         XCTAssertLessThan(allDay.frame.minY, bus.frame.minY)
         XCTAssertLessThan(bus.frame.minY, morning.frame.minY)
-        XCTAssertTrue(bus.label.contains("前日から〜01:30"), bus.label)
+        XCTAssertTrue(bus.label.contains("前日から・01:30まで"), bus.label)
 
         // 場所つき
         let meeting = yotei("打ち合わせ")
         scrollToShow(meeting)
         XCTAssertTrue(meeting.label.contains("東京駅"), meeting.label)
-        XCTAssertTrue(meeting.label.contains("10:00〜11:30"), meeting.label)
+        XCTAssertTrue(meeting.label.contains("11:30まで"), meeting.label)
 
         // 同じ分（12:30）は 予定→写真→かけら
         let lunchEvent = yotei("昼の約束"), photo = any("label == %@", "写真 12:30"), lunch = text("昼ごはん")
@@ -111,7 +110,7 @@ final class DayPageEventShots: XCTestCase {
         shot("3-noon")
         let night = yotei("夜の勉強会")
         scrollToShow(night)
-        XCTAssertTrue(night.label.contains("22:00〜翌日まで"), night.label)
+        XCTAssertTrue(night.label.contains("翌日まで"), night.label)
 
         // × で繰り返しのこの回だけ外す
         toTop()
@@ -127,9 +126,11 @@ final class DayPageEventShots: XCTestCase {
         toTop()
         app.buttons["nextDay"].tap()
         XCTAssertTrue(yotei("朝の散歩").waitForExistence(timeout: 20), "繰り返しの他の回は残る")
-        XCTAssertTrue(yotei("夜の勉強会").label.contains("前日から〜01:00"))
         sleep(1)
         shot("5-next-day")
+        // 同じ題の回がその日の夜にもあることがある（検証のカレンダーに別の日の種が残る）ので、どれかが前日からの回なら良い
+        let nights = app.descendants(matching: .any).matching(identifier: "yotei-夜の勉強会").allElementsBoundByIndex.map(\.label)
+        XCTAssertTrue(nights.contains { $0.contains("前日から・01:00まで") }, nights.joined(separator: " / "))
         // 戻っても外したまま
         app.buttons["prevDay"].tap()
         XCTAssertTrue(yotei("打ち合わせ").waitForExistence(timeout: 20))
@@ -139,8 +140,7 @@ final class DayPageEventShots: XCTestCase {
     /// make shots-events がカレンダーの許可を取り消してから呼ぶ: 一行と「設定」だけで、他の行は出る
     func testDenied() throws {
         app.launch()
-        XCTAssertTrue(app.buttons["prevDay"].waitForExistence(timeout: 30))
-        app.buttons["prevDay"].tap()
+        app.goToDay("2026-11-27") // 検証の日（前の日のボタンに頼らない）
         XCTAssertTrue(text("06:40").waitForExistence(timeout: 60))
         XCTAssertTrue(app.staticTexts["eventsDenied"].waitForExistence(timeout: 10))
         XCTAssertFalse(yotei("打ち合わせ").exists)

@@ -90,8 +90,7 @@ final class DayPageChizuShots: XCTestCase {
         seedPlaces()
         // 擬似の訪問を2回（同じ訪問）。端末の溜めと送り済みの鍵は空から
         launch(["-kakeraResetVisits", "-kakeraFakeVisit", visitA, "-kakeraFakeVisit", visitB])
-        XCTAssertTrue(app.buttons["prevDay"].waitForExistence(timeout: 30))
-        app.buttons["prevDay"].tap()
+        app.goToDay("2026-11-27") // 検証の日（前の日のボタンに頼らない）
         XCTAssertTrue(any("label CONTAINS %@", "06:40").waitForExistence(timeout: 60))
         // 写真の許可がまだなら、理由の案内から許可する（位置つきの写真もピンにするため）
         let askPhotos = app.buttons["allowTimelinePhotos"]
@@ -120,7 +119,7 @@ final class DayPageChizuShots: XCTestCase {
         shot("2-visit-row")
 
         // 地図: 一覧の番号と地図のピンの番号が一致
-        let map = app.descendants(matching: .any)["chizu"]
+        let map = app.descendants(matching: .any).matching(identifier: "chizu").firstMatch
         scrollToShow(map)
         XCTAssertTrue(map.waitForExistence(timeout: 10))
         sleep(4) // 地図の絵が出るのを待つ
@@ -155,8 +154,7 @@ final class DayPageChizuShots: XCTestCase {
     /// 設定の「行った場所を自動で残す」: 理由 → 使用中のみ → 常に
     func testVisitSettingAsksWithReason() throws {
         launch(["-kakeraResetVisits"])
-        XCTAssertTrue(app.buttons["openSettings"].waitForExistence(timeout: 30))
-        app.buttons["openSettings"].tap()
+        app.tapMenu("openSettings", label: "設定")
         let toggle = app.switches["visitToggle"]
         XCTAssertTrue(toggle.waitForExistence(timeout: 10))
         if (toggle.value as? String) == "1" { toggle.switches.firstMatch.tap(); sleep(1) }

@@ -15,6 +15,7 @@
 #   make shots-chizu  段階4（地図・訪問）の実画面。位置の許可を取り消してから回す（build/stage4-*.png・stage4-google-url.txt）
 #   make shots-tsuki  段階5（月カレンダー・検索・書き出し）の実画面（build/stage5-*.png）
 #   make shots-kiseki  移動の軌跡の実画面。擬似の軌跡（福岡〜北九州・福岡市内）を送って地図の線・全画面・下の一行を見る（build/track-*.png）
+#   make shots-c2   見た目の刷新「C 丸 時間の帳」の実画面。写真・予定・場所・かけら・軌跡の日、何も無い日、下の帯、☰、月、ほかの画面（build/c2-*.png）
 #   make run-local-minato-prod  かけら帳はローカル・港は本番（読むだけ。トークンはアプリのキーチェーンに入っていること）
 #   make archive    TestFlight 向けアーカイブ（Release・自動署名）。サービストークンをこの Mac のキーチェーンから埋め込む
 #   make export-testflight  .ipa を build/export/ に書き出す（送らない）
@@ -41,7 +42,7 @@ ARCHIVE = build/Kakera.xcarchive
 KC_SERVICE ?= kakera-token
 SECRETS = Secrets.xcconfig
 
-.PHONY: shots shots-photos shots-events shots-chizu shots-tsuki shots-kiseki generate test fixtures roundtrip sim run-local run-local-minato-prod icon clean archive upload export-testflight release require-team require-asc-key
+.PHONY: shots shots-photos shots-events shots-chizu shots-tsuki shots-kiseki shots-c2 generate test fixtures roundtrip sim run-local run-local-minato-prod icon clean archive upload export-testflight release require-team require-asc-key
 
 generate:
 	xcodegen generate
@@ -136,6 +137,15 @@ shots-kiseki: generate
 	@xcrun simctl boot "$(PHONE_SIM)" 2>/dev/null || true
 	@set -o pipefail; $(SHOTS_TEST) -only-testing:KakeraUITests/DayPageKisekiShots test 2>&1 | tee build/shots-kiseki.log | \
 	  grep -E "(error):|Executed [0-9]+ tests|TEST (SUCCEEDED|FAILED)"
+
+shots-c2: generate
+	@mkdir -p build
+	@xcrun simctl boot "$(PHONE_SIM)" 2>/dev/null || true
+	@test -f build/stage2-media/.added || { xcrun simctl addmedia "$(PHONE_SIM)" build/stage2-media/*.jpg && touch build/stage2-media/.added; }
+	-@xcrun simctl privacy "$(PHONE_SIM)" grant calendar $(BUNDLE) 2>/dev/null
+	-@xcrun simctl privacy "$(PHONE_SIM)" grant photos $(BUNDLE) 2>/dev/null
+	@set -o pipefail; $(SHOTS_TEST) -only-testing:KakeraUITests/DayPageC2Shots test 2>&1 | tee build/shots-c2.log | \
+	  grep -E "(error):|XCTAssert|Executed [0-9]+ tests|TEST (SUCCEEDED|FAILED)"
 
 # 港は本番（minato.kechiiiiin.com・トークン付き）を読む。かけらの書き込みはローカルのかけら帳へ
 run-local-minato-prod: sim

@@ -69,8 +69,7 @@ final class DayPagePhotoShots: XCTestCase {
     }
 
     func testPhotos() throws {
-        XCTAssertTrue(app.buttons["prevDay"].waitForExistence(timeout: 30))
-        app.buttons["prevDay"].tap()
+        app.goToDay("2026-11-27") // 検証の日（前の日のボタンに頼らない）
         XCTAssertTrue(text("06:40").waitForExistence(timeout: 60))
 
         // 権限: 理由を出してから求める。許可の前もかけら・場所は出ている
@@ -121,10 +120,13 @@ final class DayPagePhotoShots: XCTestCase {
         try pickInPicker()
         sleep(4)
         shot("6c-after-done")
-        XCTAssertTrue(waitFor(30) { self.photo("17:20").exists && self.photo("10:10").exists })
+        XCTAssertTrue(waitFor(30) { self.photo("17:20").exists }, "外した 17:20 が戻る")
+        // 足した 11/20 の写真（10:10）は一覧の上の方。行は遅延で描くので上へ送って探す
         scrollToShow(photo("10:10"), up: false)
+        XCTAssertTrue(photo("10:10").exists, "別の日の写真が足される")
         sleep(1)
         shot("7-added")
+        for _ in 0..<8 where !(text("11/20").exists && text("11/20").isHittable) { app.swipeDown() }
         XCTAssertTrue(text("11/20").exists, "別の日の写真に撮った日を添える")
     }
 

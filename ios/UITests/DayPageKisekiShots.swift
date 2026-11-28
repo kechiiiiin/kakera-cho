@@ -10,7 +10,7 @@ final class DayPageKisekiShots: XCTestCase {
     private let base = "http://127.0.0.1:4321"
     private let longDay = "2026-11-25"
     private let shortDay = "2026-11-26"
-    private let noTrackDay = "2026-11-27"
+    private let noTrackDay = "2026-11-15" // 11/27 は C 丸の実画面（shots-c2）で東京の擬似軌跡を入れる
     private let longCount = 40
     private let shortCount = 30
 
@@ -163,7 +163,7 @@ final class DayPageKisekiShots: XCTestCase {
         XCTAssertEqual(trackCount(shortDay), shortCount, "二重にならない")
 
         // 設定の文言
-        app.buttons["openSettings"].tap()
+        app.tapMenu("openSettings", label: "設定")
         let toggle = app.switches["visitToggle"]
         XCTAssertTrue(toggle.waitForExistence(timeout: 10))
         XCTAssertTrue(toggle.label.contains("行った場所と軌跡を自動で残す"), toggle.label)
