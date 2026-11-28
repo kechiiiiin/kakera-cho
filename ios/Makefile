@@ -10,6 +10,7 @@
 #                   読んだ記事は港の tayori から読む（アプリは便りを直接呼ばない）。港をローカルで回すと出どころの秘密が無いので
 #                   cron の材料はスキップになる（vault-log は MINATO_URL=http://127.0.0.1:8793 node scripts/send-to-minato.mjs で入る）
 #   make shots      1日のページを実画面で通す UI テスト（ローカルのかけら帳 :4321 が要る）。スクリーンショットは build/stage1-*.png
+#   make shots-photos  段階2（写真）の実画面。写真の許可を取り消し、build/stage2-media の写真を入れてから回す（build/stage2-*.png）
 #   make run-local-minato-prod  かけら帳はローカル・港は本番（読むだけ。トークンはアプリのキーチェーンに入っていること）
 #   make archive    TestFlight 向けアーカイブ（Release・自動署名）。サービストークンをこの Mac のキーチェーンから埋め込む
 #   make export-testflight  .ipa を build/export/ に書き出す（送らない）
@@ -36,7 +37,7 @@ ARCHIVE = build/Kakera.xcarchive
 KC_SERVICE ?= kakera-token
 SECRETS = Secrets.xcconfig
 
-.PHONY: shots generate test fixtures roundtrip sim run-local run-local-minato-prod icon clean archive upload export-testflight release require-team require-asc-key
+.PHONY: shots shots-photos generate test fixtures roundtrip sim run-local run-local-minato-prod icon clean archive upload export-testflight release require-team require-asc-key
 
 generate:
 	xcodegen generate
@@ -85,7 +86,18 @@ shots: generate
 	-@xcrun simctl privacy "$(PHONE_SIM)" grant photos $(BUNDLE) 2>/dev/null
 	@set -o pipefail; TEST_RUNNER_KAKERA_SHOTS="$(CURDIR)/build" xcodebuild -project $(PROJECT) -scheme KakeraShots \
 	  -destination 'platform=iOS Simulator,name=$(PHONE_SIM)' -configuration Debug -derivedDataPath build-sim CODE_SIGN_IDENTITY=- \
-	  test 2>&1 | tee build/shots.log | grep -E "(error):|XCTAssert|Executed [0-9]+ tests|TEST (SUCCEEDED|FAILED)"
+	  -only-testing:KakeraUITests/DayPageShots test 2>&1 | tee build/shots.log | grep -E "(error):|XCTAssert|Executed [0-9]+ tests|TEST (SUCCEEDED|FAILED)"
+
+# 写真は検証用のもの（撮影日時と位置を EXIF に入れた JPEG・build/stage2-media/*.jpg）。シミュレータのライブラリに足す
+shots-photos: generate
+	@mkdir -p build
+	@xcrun simctl list devices | grep -q "$(PHONE_SIM) (" || xcrun simctl create "$(PHONE_SIM)" "$(PHONE_TYPE)" > /dev/null
+	@xcrun simctl boot "$(PHONE_SIM)" 2>/dev/null || true
+	@test -f build/stage2-media/.added || { xcrun simctl addmedia "$(PHONE_SIM)" build/stage2-media/*.jpg && touch build/stage2-media/.added; }
+	-@xcrun simctl privacy "$(PHONE_SIM)" reset photos $(BUNDLE) 2>/dev/null
+	@set -o pipefail; TEST_RUNNER_KAKERA_SHOTS="$(CURDIR)/build" xcodebuild -project $(PROJECT) -scheme KakeraShots \
+	  -destination 'platform=iOS Simulator,name=$(PHONE_SIM)' -configuration Debug -derivedDataPath build-sim CODE_SIGN_IDENTITY=- \
+	  -only-testing:KakeraUITests/DayPagePhotoShots test 2>&1 | tee build/shots-photos.log | grep -E "(error):|XCTAssert|Executed [0-9]+ tests|TEST (SUCCEEDED|FAILED)"
 
 # 港は本番（minato.kechiiiiin.com・トークン付き）を読む。かけらの書き込みはローカルのかけら帳へ
 run-local-minato-prod: sim
