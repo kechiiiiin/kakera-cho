@@ -172,13 +172,13 @@ struct EditorView: View {
         }
     }
 
-    /// 書いた日時の欄。見えるのは等幅の数字と罫の枠（.icon-btn の形）。押すと端末の日時の選び方が開く
-    /// （システムの DatePicker を透明にして重ねる。丸いカプセルを出さないため）
+    /// 書いた日時の欄。見えるのは等幅の数字と丸い罫の枠（丸い棒）。押すと端末の日時の選び方が開く
+    /// （システムの DatePicker を透明にして重ねる。システムの灰の塗りのカプセルを出さないため）
     private func pickerChip(_ label: String, components: DatePickerComponents) -> some View {
         Text(label)
             .font(Theme.mono(12.5)).foregroundStyle(Theme.ink)
-            .padding(.horizontal, 12).frame(minHeight: 36)
-            .overlay(RoundedRectangle(cornerRadius: Theme.radius).strokeBorder(Theme.line, lineWidth: Theme.hairline))
+            .padding(.horizontal, 14).frame(minHeight: 36)
+            .overlay(Capsule().strokeBorder(Theme.line, lineWidth: Theme.hairline))
             .overlay {
                 DatePicker("書いた日時", selection: $draft.writtenAt, in: ...Date().addingTimeInterval(60), displayedComponents: components)
                     .labelsHidden()

@@ -666,7 +666,7 @@ struct LinkCardView: View {
                 }
             }
             .frame(width: 80, height: 80)
-            .clipShape(RoundedRectangle(cornerRadius: 3))
+            .clipShape(RoundedRectangle(cornerRadius: Theme.radiusSmall))
             VStack(alignment: .leading, spacing: 2) {
                 if !card.domain.isEmpty {
                     Text(card.domain).font(Theme.mono(11.5)).foregroundStyle(Theme.muted).lineLimit(1).truncationMode(.tail)
@@ -682,7 +682,7 @@ struct LinkCardView: View {
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Theme.line, lineWidth: Theme.hairline))
+        .overlay(RoundedRectangle(cornerRadius: Theme.radius).strokeBorder(Theme.line, lineWidth: Theme.hairline))
         .contentShape(Rectangle())
         .padding(.vertical, 2)
         .task(id: imageSrc) {
@@ -697,7 +697,7 @@ struct LinkCardView: View {
     }
 }
 
-/// 写真（.assembled-photo: 幅いっぱい・角丸 2pt）。縦長（高さ÷幅 > 2）は横幅と同じ高さで切り、下を薄くして「全体を見る」
+/// 写真（.assembled-photo: 幅いっぱい・角丸 Theme.radius）。縦長（高さ÷幅 > 2）は横幅と同じ高さで切り、下を薄くして「全体を見る」
 struct AssembledPhoto: View {
     let path: String
     var clipTall = true
@@ -733,8 +733,8 @@ struct AssembledPhoto: View {
                                 .font(Theme.mono(12.5)).tracking(12.5 * 0.06)
                                 .foregroundStyle(Theme.ink)
                                 .padding(.horizontal, 14).padding(.vertical, 6)
-                                .background(Theme.paper, in: RoundedRectangle(cornerRadius: Theme.radius))
-                                .overlay(RoundedRectangle(cornerRadius: Theme.radius).strokeBorder(Theme.line, lineWidth: Theme.hairline))
+                                .background(Theme.paper, in: Capsule())
+                                .overlay(Capsule().strokeBorder(Theme.line, lineWidth: Theme.hairline))
                                 .buttonStyle(.plain)
                                 .padding(.bottom, 12)
                         }
@@ -785,7 +785,7 @@ struct EmbedCardView: View {
                 Image(systemName: icon).font(.system(size: 22, weight: .light)).foregroundStyle(Theme.muted)
             }
             .frame(width: 56, height: 56)
-            .clipShape(RoundedRectangle(cornerRadius: 3))
+            .clipShape(RoundedRectangle(cornerRadius: Theme.radiusSmall))
             VStack(alignment: .leading, spacing: 2) {
                 Text(domain).font(Theme.mono(11.5)).foregroundStyle(Theme.muted).lineLimit(1)
                 Text(embed.title).font(Theme.gothic(14.5, weight: .semibold)).foregroundStyle(Theme.ink).lineLimit(1)
@@ -795,7 +795,7 @@ struct EmbedCardView: View {
             Image(systemName: "arrow.up.forward").font(.system(size: 12)).foregroundStyle(Theme.muted)
         }
         .padding(10)
-        .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Theme.line, lineWidth: Theme.hairline))
+        .overlay(RoundedRectangle(cornerRadius: Theme.radius).strokeBorder(Theme.line, lineWidth: Theme.hairline))
         .contentShape(Rectangle())
         .padding(.vertical, 2)
 

@@ -260,9 +260,7 @@ struct KatachiListScreen: View {
 /// 「日記あり」（.badge-published: 朱の小さな札）
 struct NikkiBadge: View {
     var body: some View {
-        Text("日記あり").font(Theme.gothic(10.5, weight: .medium)).foregroundStyle(Theme.accent)
-            .padding(.horizontal, 6).padding(.vertical, 2)
-            .overlay(RoundedRectangle(cornerRadius: Theme.radius).strokeBorder(Theme.accent, lineWidth: Theme.hairline))
+        Fuda(text: "日記あり", accent: true, size: 10.5)
     }
 }
 

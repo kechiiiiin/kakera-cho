@@ -2,8 +2,10 @@ import SwiftUI
 import UIKit
 
 /// Web 版の書く側（src/styles/app.css 冒頭 §9「素っ気ない道具」）に揃えた見た目。
-///   ゴシック（ヒラギノ角ゴ）。カードと影を使わず罫線だけで区切る。角丸 2pt 以下。
-///   塗りの主ボタンは書く画面の「保存」だけ（黒の塗りに白文字）。ほかは 1pt の罫の枠・灰の文字か、文字だけのリンク。
+///   ゴシック（ヒラギノ角ゴ）。カードと影を使わず罫線だけで区切る。
+///   角は丸く（2026-11-28 見た目の刷新・C 丸「時間の帳」）: ボタンと札は丸い棒（Capsule）、入力欄・写真・箱は radius（12pt）、
+///   絵の上の小さな札やチェックは radiusSmall。iOS だけの変更（Web の角丸 2px はそのまま）。
+///   塗りの主ボタンは書く画面の「保存」と、1日のページの下の帯の朱の丸い ＋ だけ。ほかは 1pt の罫の枠・灰の文字か、文字だけのリンク。
 ///   取り返しのつかない操作（削除）は朱の文字と枠。差し色は朱ひとつだけ（リンクと行動）。絵文字を使わない。
 ///   等幅は数字・記号・ラベルだけ。ダークモード対応はしない（アプリは常にライト）。
 /// 色は #app の変数と同じ値: --bg #fdfdfc・--fg #17171a・--muted #86837c・--line #e4e1da・--accent #b03a2e
@@ -21,8 +23,10 @@ enum Theme {
 
     /// 罫の太さ（Web の 1px）
     static let hairline: CGFloat = 1
-    /// 角丸（Web の 2px）
-    static let radius: CGFloat = 2
+    /// 角丸（入力欄・写真・箱）。2026-11-28 に 2 → 12（C 丸）
+    static let radius: CGFloat = 12
+    /// 小さな角丸（絵の上の小さな札・チェック）
+    static let radiusSmall: CGFloat = 6
 
     // MARK: 書体
 
@@ -162,7 +166,7 @@ struct PrimaryButtonStyle: ButtonStyle {
             .font(Theme.gothic(12, weight: .bold)).tracking(12 * 0.02)
             .foregroundStyle(Theme.paper)
             .padding(.horizontal, 18).frame(minHeight: 38)
-            .background(Theme.ink, in: RoundedRectangle(cornerRadius: Theme.radius))
+            .background(Theme.ink, in: Capsule())
             .opacity(enabled ? (configuration.isPressed ? 0.8 : 1) : 0.35)
     }
 }
@@ -177,9 +181,9 @@ struct CTAButtonStyle: ButtonStyle {
             .foregroundStyle(enabled ? Theme.accent : Theme.muted)
             .padding(.horizontal, 18).frame(minHeight: 38)
             .frame(maxWidth: fullWidth ? .infinity : nil)
-            .background(Theme.paper, in: RoundedRectangle(cornerRadius: Theme.radius))
-            .overlay(RoundedRectangle(cornerRadius: Theme.radius).strokeBorder(enabled ? Theme.accent : Theme.line, lineWidth: Theme.hairline))
-            .contentShape(Rectangle())
+            .background(Theme.paper, in: Capsule())
+            .overlay(Capsule().strokeBorder(enabled ? Theme.accent : Theme.line, lineWidth: Theme.hairline))
+            .contentShape(Capsule())
             .opacity(configuration.isPressed ? 0.7 : 1)
     }
 }
@@ -195,8 +199,8 @@ struct GhostButtonStyle: ButtonStyle {
             .foregroundStyle(Theme.muted)
             .padding(.horizontal, compact ? 0 : 14).frame(minWidth: 36, minHeight: 36)
             .frame(maxWidth: fullWidth ? .infinity : nil)
-            .overlay(RoundedRectangle(cornerRadius: Theme.radius).strokeBorder(Theme.line, lineWidth: Theme.hairline))
-            .contentShape(Rectangle())
+            .overlay(Capsule().strokeBorder(Theme.line, lineWidth: Theme.hairline))
+            .contentShape(Capsule())
             .opacity(enabled ? (configuration.isPressed ? 0.7 : 1) : 0.4)
     }
 }
@@ -209,8 +213,8 @@ struct DangerButtonStyle: ButtonStyle {
             .font(Theme.gothic(12, weight: .medium))
             .foregroundStyle(Theme.accent)
             .padding(.horizontal, 14).frame(minHeight: 36)
-            .overlay(RoundedRectangle(cornerRadius: Theme.radius).strokeBorder(Theme.accent, lineWidth: Theme.hairline))
-            .contentShape(Rectangle())
+            .overlay(Capsule().strokeBorder(Theme.accent, lineWidth: Theme.hairline))
+            .contentShape(Capsule())
             .opacity(enabled ? (configuration.isPressed ? 0.7 : 1) : 0.4)
     }
 }
@@ -226,5 +230,46 @@ struct LinkButtonStyle: ButtonStyle {
             .frame(minHeight: 38)
             .contentShape(Rectangle())
             .opacity(configuration.isPressed ? 0.6 : 1)
+    }
+}
+
+/// 朱の塗りの丸い ＋（1日のページの下の帯だけ。C 丸の .go）
+struct RoundAddButtonStyle: ButtonStyle {
+    var side: CGFloat = 40
+    @Environment(\.isEnabled) private var enabled
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: side * 0.45, weight: .light))
+            .foregroundStyle(Theme.paper)
+            .frame(width: side, height: side)
+            .background(Theme.accent, in: Circle())
+            .contentShape(Circle())
+            .opacity(enabled ? (configuration.isPressed ? 0.75 : 1) : 0.35)
+    }
+}
+
+// MARK: - 札（丸い札）
+
+/// 丸い札（「予定」「場所」「日記あり」など）。1pt の罫の枠と小さな字。accent なら朱の枠と字
+struct Fuda: View {
+    let text: String
+    var accent = false
+    var size: CGFloat = 10
+
+    var body: some View {
+        Text(text).font(Theme.gothic(size, weight: .medium))
+            .foregroundStyle(accent ? Theme.accent : Theme.muted)
+            .lineLimit(1).fixedSize()
+            .padding(.horizontal, 7).padding(.vertical, 1.5)
+            .overlay(Capsule().strokeBorder(accent ? Theme.accent : Theme.line, lineWidth: Theme.hairline))
+    }
+}
+
+extension View {
+    /// 案内の箱（権限の案内など）: 罫の色を薄く敷いた角丸の面。色は増やさない（罫の色の薄め）
+    func noteBox() -> some View {
+        self.padding(.horizontal, 14).padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.line.opacity(0.32), in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
     }
 }

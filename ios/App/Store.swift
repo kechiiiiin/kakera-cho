@@ -140,9 +140,9 @@ struct CheckBox: View {
     let checked: Bool
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: Theme.radius)
+            RoundedRectangle(cornerRadius: Theme.radiusSmall)
                 .fill(checked ? Theme.ink : Theme.paper)
-            RoundedRectangle(cornerRadius: Theme.radius)
+            RoundedRectangle(cornerRadius: Theme.radiusSmall)
                 .strokeBorder(checked ? Theme.ink : Theme.muted.opacity(0.6), lineWidth: Theme.hairline)
             if checked { Image(systemName: "checkmark").font(.system(size: 11, weight: .bold)).foregroundStyle(Theme.paper) }
         }

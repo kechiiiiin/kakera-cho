@@ -161,24 +161,24 @@ struct PhotosNote: View {
                         if let n = selected.firstIndex(of: id) {
                             Text("\(n + 1)").font(Theme.mono(11, weight: .semibold)).foregroundStyle(Theme.accent)
                                 .frame(minWidth: 18, minHeight: 18)
-                                .background(Theme.paper, in: RoundedRectangle(cornerRadius: 1))
-                                .overlay(RoundedRectangle(cornerRadius: 1).strokeBorder(Theme.accent, lineWidth: Theme.hairline))
+                                .background(Theme.paper, in: Capsule())
+                                .overlay(Capsule().strokeBorder(Theme.accent, lineWidth: Theme.hairline))
                                 .padding(4)
                         }
                     }
                     .overlay(alignment: .topLeading) {
                         if used.photos.contains(id) {
                             Text("かけらにした").font(Theme.mono(9.5)).lineLimit(1).fixedSize()
-                                .padding(.horizontal, 4).padding(.vertical, 1)
-                                .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 1)).foregroundStyle(.white)
+                                .padding(.horizontal, 6).padding(.vertical, 1)
+                                .background(.black.opacity(0.55), in: Capsule()).foregroundStyle(.white)
                                 .padding(3)
                         }
                     }
                     .overlay(alignment: .bottomLeading) {
                         if let d = a.creationDate {
                             Text(JST.time(d)).font(Theme.mono(10)).lineLimit(1).fixedSize()
-                                .padding(.horizontal, 4).padding(.vertical, 1)
-                                .background(.black.opacity(0.45), in: RoundedRectangle(cornerRadius: 1)).foregroundStyle(.white)
+                                .padding(.horizontal, 6).padding(.vertical, 1)
+                                .background(.black.opacity(0.45), in: Capsule()).foregroundStyle(.white)
                                 .padding(3)
                         }
                     }

@@ -97,7 +97,7 @@ struct SettingsView: View {
         }
     }
 
-    /// 罫 1pt・角丸 2pt の入力欄（Return で保存しない）
+    /// 罫 1pt・角丸 Theme.radius の入力欄（Return で保存しない）
     private func field(_ placeholder: String, text: Binding<String>) -> some View {
         SecureField(placeholder, text: text)
             .font(Theme.mono(13))

@@ -228,8 +228,8 @@ struct PhotoSwitch: View {
                 Text("日記に出す").font(Theme.gothic(12.5)).foregroundStyle(Theme.ink)
                 if off {
                     Text("日記に出さない").font(Theme.gothic(10.5)).foregroundStyle(Theme.muted)
-                        .padding(.horizontal, 5).padding(.vertical, 1)
-                        .overlay(RoundedRectangle(cornerRadius: Theme.radius).strokeBorder(Theme.line, lineWidth: Theme.hairline))
+                        .padding(.horizontal, 7).padding(.vertical, 1)
+                        .overlay(Capsule().strokeBorder(Theme.line, lineWidth: Theme.hairline))
                 }
             }
             .frame(minHeight: 34)
@@ -459,10 +459,11 @@ struct ConvertScreen: View {
         HStack(spacing: 0) {
             ForEach([("marks", "印つき"), ("plain", "公開される姿"), ("md", "Markdown")], id: \.0) { m, label in
                 Button { mode = m } label: {
-                    Text(label).font(Theme.gothic(12.5, weight: mode == m ? .bold : .regular))
-                        .foregroundStyle(mode == m ? Theme.ink : Theme.muted)
+                    // 丸い切り替え（C 丸の .seg: 選んでいる方は墨の塗りに地の字）
+                    Text(label).font(Theme.gothic(12.5, weight: mode == m ? .semibold : .regular))
+                        .foregroundStyle(mode == m ? Theme.paper : Theme.muted)
                         .frame(maxWidth: .infinity, minHeight: 38)
-                        .overlay(alignment: .bottom) { if mode == m { Rectangle().fill(Theme.ink).frame(height: 2) } }
+                        .background(mode == m ? Theme.ink : Color.clear)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -470,7 +471,8 @@ struct ConvertScreen: View {
                 if m != "md" { Rectangle().fill(Theme.line).frame(width: 1, height: 38) }
             }
         }
-        .overlay(RoundedRectangle(cornerRadius: Theme.radius).strokeBorder(Theme.line, lineWidth: Theme.hairline))
+        .clipShape(Capsule())
+        .overlay(Capsule().strokeBorder(Theme.line, lineWidth: Theme.hairline))
     }
 
     private func tally(_ v: ConvertView) -> some View {
@@ -538,8 +540,8 @@ struct ConvertScreen: View {
                 label(s.fullLabel)
                 if s.hasPub {
                     Text("日記用に直しています").font(Theme.gothic(10.5)).foregroundStyle(Theme.muted)
-                        .padding(.horizontal, 5).padding(.vertical, 1)
-                        .overlay(RoundedRectangle(cornerRadius: Theme.radius).strokeBorder(Theme.line, lineWidth: Theme.hairline))
+                        .padding(.horizontal, 7).padding(.vertical, 1)
+                        .overlay(Capsule().strokeBorder(Theme.line, lineWidth: Theme.hairline))
                 }
             }
             if let e = s.error {

@@ -320,7 +320,7 @@ final class MarkdownTextView: UITextView {
         case .photo(let url):
             let box = UIView()
             box.clipsToBounds = true
-            box.layer.cornerRadius = 2
+            box.layer.cornerRadius = 12 // Theme.radius（C 丸）
             box.backgroundColor = UIColor(hex: 0xE4E1DA).withAlphaComponent(0.5)
             let iv = UIImageView()
             iv.contentMode = .scaleAspectFill
@@ -334,7 +334,7 @@ final class MarkdownTextView: UITextView {
             close.titleLabel?.font = .systemFont(ofSize: 17, weight: .medium)
             close.tintColor = MarkdownStyler.ink
             close.backgroundColor = UIColor(hex: 0xFDFDFC).withAlphaComponent(0.92)
-            close.layer.cornerRadius = 2
+            close.layer.cornerRadius = 16 // 丸い ×
             close.frame = CGRect(x: 0, y: 8, width: 32, height: 32)
             close.autoresizingMask = [.flexibleLeftMargin]
             close.accessibilityLabel = "この写真を外す"
