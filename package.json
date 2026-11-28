@@ -35,7 +35,9 @@
     "db:migrate:photo-face:local": "wrangler d1 execute kakera --local --file=./migrations/0011_photo_face.sql",
     "db:migrate:photo-face:remote": "wrangler d1 execute kakera --remote --file=./migrations/0011_photo_face.sql",
     "db:migrate:show-time:local": "wrangler d1 execute kakera --local --file=./migrations/0012_show_time.sql",
-    "db:migrate:show-time:remote": "wrangler d1 execute kakera --remote --file=./migrations/0012_show_time.sql"
+    "db:migrate:show-time:remote": "wrangler d1 execute kakera --remote --file=./migrations/0012_show_time.sql",
+    "db:migrate:day-place:local": "wrangler d1 execute kakera --local --file=./migrations/0013_day_place.sql",
+    "db:migrate:day-place:remote": "wrangler d1 execute kakera --remote --file=./migrations/0013_day_place.sql"
   },
   "dependencies": {
     "@astrojs/cloudflare": "^12.6.10",
