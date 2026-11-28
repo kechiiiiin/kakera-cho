@@ -17,8 +17,8 @@ struct DayView: View {
     @State private var busy: String?
     @State private var alert: String?
     @State private var showSettings = false
-    /// Web の画面（かたち・日記・ことば・かたちにする）を全画面で開いているとき
-    @State private var web: WebStart?
+    /// かたち・日記・ことば・かたちにする（ネイティブの画面・AppScreens.swift）を全画面で開いているとき
+    @State private var web: AppStart?
     @State private var configVersion = 0
     @Environment(\.scenePhase) private var scenePhase
 
@@ -72,14 +72,15 @@ struct DayView: View {
             .sheet(isPresented: $showSettings, onDismiss: { configVersion += 1 }) { SettingsView() }
             // 閉じたら、かたちの札が付いた・外れたかけらを読み直す
             .fullScreenCover(item: $web, onDismiss: { Task { await reload() } }) { start in
-                AppWebScreen(start: start)
+                AppScreens(start: start)
             }
+            .toastOverlay()
             #if DEBUG
             .onAppear {
-                // 検査: 起動引数 -kakeraOpenWeb katachi などで、その画面の Web を開いた状態で始める
+                // 検査: 起動引数 -kakeraOpen katachi などで、その画面を開いた状態で始める
                 let args = ProcessInfo.processInfo.arguments
-                if let i = args.firstIndex(of: "-kakeraOpenWeb"), args.index(after: i) < args.endIndex {
-                    web = WebStart(rawValue: args[args.index(after: i)])
+                if let i = args.firstIndex(of: "-kakeraOpen"), args.index(after: i) < args.endIndex {
+                    web = AppStart(rawValue: args[args.index(after: i)])
                 }
             }
             #endif
@@ -98,15 +99,15 @@ struct DayView: View {
             HStack(alignment: .center, spacing: 8) {
                 Text("かけら帳").font(Theme.gothic(16, weight: .semibold)).tracking(16 * 0.02).foregroundStyle(Theme.ink)
                 Spacer()
-                // Web の画面へ（App.tsx の同梱）。Web のタブ（nav.tabs: 灰 12.5pt・500）と同じ字で
-                ForEach([(WebStart.katachi, "かたち"), (.nikki, "日記"), (.words, "ことば")], id: \.0) { start, label in
+                // かたち・日記・ことばへ。Web のタブ（nav.tabs: 灰 12.5pt・500）と同じ字で
+                ForEach([(AppStart.katachi, "かたち"), (.nikki, "日記"), (.words, "ことば")], id: \.0) { start, label in
                     Button { web = start } label: {
                         Text(label).font(Theme.gothic(12.5, weight: .medium)).tracking(12.5 * 0.02)
                             .padding(.horizontal, 5).frame(minHeight: 36)
                     }
                     .buttonStyle(LinkButtonStyle(color: Theme.muted))
                     .disabled(!API.shared.isConfigured(.kakera))
-                    .accessibilityIdentifier("web-\(start.rawValue)")
+                    .accessibilityIdentifier("open-\(start.rawValue)")
                 }
                 Button { showSettings = true } label: {
                     Image(systemName: "gearshape").font(.system(size: 15, weight: .regular))
@@ -165,11 +166,11 @@ struct DayView: View {
     @ViewBuilder
     private var kakeraSection: some View {
         MajorHead(title: "かけら", count: kakera.count, top: 32) {
-            // Web の「かたちにする」（.link-btn・黒の文字だけ）。かけらたちから選んで並べる
+            // Web の「かたちにする」（.link-btn・黒の文字だけ）。かけらたちから選んで並べる（ComposeScreen）
             Button("かたちにする") { web = .compose }
                 .buttonStyle(LinkButtonStyle())
                 .disabled(!API.shared.isConfigured(.kakera))
-                .accessibilityIdentifier("web-compose")
+                .accessibilityIdentifier("open-compose")
         }
             .padding(.bottom, kakera.isEmpty ? 10 : 0)
         if !API.shared.isConfigured(.kakera) {

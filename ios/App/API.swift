@@ -139,6 +139,25 @@ private struct KakeraList: Decodable { let kakera: [Kakera] }
 private struct CardsEnvelope: Decodable { let cards: LinkCards? }
 private struct KakeraEnvelope: Decodable { let kakera: Kakera }
 private struct PhotoUploaded: Decodable { let key: String; let url: String }
+private struct KatachiListEnvelope: Decodable { let katachi: [KatachiSummary] }
+private struct DetailEnvelope: Decodable {
+    let katachi: Katachi
+    let kakera: [KatachiKakera]
+    let nikki: Nikki?
+    let publishedIds: [String]?
+}
+private struct SearchEnvelope: Decodable { let results: [SearchResult] }
+private struct WordsEnvelope: Decodable { let words: [WordSummary] }
+private struct WordEnvelope: Decodable { let word: String; let kakera: [WordKakera] }
+private struct EntriesEnvelope: Decodable { let entries: [NameEntry] }
+private struct RefEnvelope: Decodable { let ref: NameRef }
+private struct PublishBodySaved: Decodable { let publish: DocView?; let kakera: DocView? }
+private struct PublishBodyEnvelope: Decodable { let publishBody: PublishBodyView }
+private struct PhotosEnvelope: Decodable { let photos: [PhotoChoice] }
+private struct FacesEnvelope: Decodable { let photos: [PhotoFaceState] }
+private struct FaceEnvelope: Decodable { let photo: PhotoFaceState }
+private struct TextsEnvelope: Decodable { let texts: [String] }
+private struct RowsEnvelope: Decodable { let rows: [WordPlanRow] }
 
 // MARK: - 下まわり
 
@@ -244,50 +263,260 @@ final class API: @unchecked Sendable {
         try await call(.minato, "POST", "/api/collect", json: ["date": day])
     }
 
-    // MARK: Web の画面（WKWebView の同梱）からの中継
+    // MARK: かたち・日記・ことば（Web の App.tsx と同じ /api/*）
 
-    struct Relayed {
-        let status: Int
-        let contentType: String?
-        let data: Data
+    /// まだかたちになっていないかけら（新しい順）と、その中の URL のカード
+    func nagare() async throws -> (kakera: [Kakera], cards: LinkCards) {
+        let data = try await raw(.kakera, "GET", "/api/kakera", query: [URLQueryItem(name: "unassigned", value: "1")])
+        guard let list = try? decoder.decode(KakeraList.self, from: data) else { throw APIError.transport("応答を読めませんでした") }
+        return (list.kakera, cardsIn(data))
     }
 
-    /// WebView（ios/editor-web/app-entry.tsx の App.tsx）からの /api/* を、かけら帳へサービストークンをつけてそのまま中継する。
-    /// メソッド・本文・Content-Type を渡し、ステータスと Content-Type と本文を返す（2xx 以外も投げない。画面がエラーの文を読む）。
-    /// ⚠️ 鍵はここで付けるだけで WebView には返さない。Access のログインへの転送（3xx）と 401/403 は、画面が読める JSON の 401 にする
-    func relay(method: String, path: String, query: String?, body: Data?, contentType: String?) async throws -> Relayed {
-        guard path.hasPrefix("/api/"), !path.contains("..") else { throw APIError.http(400, "中継できるのは /api/ だけです") }
-        let s = Service.kakera
-        guard let base = ServerConfig.baseURL(s), var comps = URLComponents(url: base, resolvingAgainstBaseURL: false) else {
-            throw APIError.notConfigured(s)
-        }
-        comps.path = path
-        comps.percentEncodedQuery = query?.isEmpty == false ? query : nil
-        guard let url = comps.url else { throw APIError.notConfigured(s) }
+    func katachiList() async throws -> [KatachiSummary] {
+        let r: KatachiListEnvelope = try await call(.kakera, "GET", "/api/katachi")
+        return r.katachi
+    }
 
-        var req = URLRequest(url: url)
-        req.httpMethod = method
-        req.setValue("application/json", forHTTPHeaderField: "Accept")
-        try authorize(&req, s, method: method, base: base)
-        if let body, method != "GET", method != "HEAD" {
-            req.httpBody = body
-            if let contentType { req.setValue(contentType, forHTTPHeaderField: "Content-Type") }
-        }
+    func katachi(_ id: String) async throws -> KatachiDetail {
+        try detail(try await raw(.kakera, "GET", "/api/katachi/\(id)"))
+    }
 
-        let data: Data
-        let response: URLResponse
-        do {
-            (data, response) = try await session.data(for: req, delegate: noRedirect)
-        } catch {
-            throw APIError.transport((error as NSError).localizedDescription)
+    func createKatachi(id: String, date: String, title: String, kakeraIds: [String], showTimeIds: [String]) async throws -> KatachiDetail {
+        try detail(try await send("POST", "/api/katachi", ["id": id, "date": date, "title": title, "kakera_ids": kakeraIds, "show_time_ids": showTimeIds]))
+    }
+
+    func setShowTime(katachiId: String, kakeraIds: [String], show: Bool) async throws -> KatachiDetail {
+        try detail(try await send("PUT", "/api/katachi/\(katachiId)/show-time", ["kakera_ids": kakeraIds, "show": show]))
+    }
+
+    /// date・title・description・move_nikki のうち渡したものだけ
+    func updateKatachi(_ id: String, _ patch: [String: Any]) async throws -> KatachiDetail {
+        try detail(try await send("PATCH", "/api/katachi/\(id)", patch))
+    }
+
+    func dissolveKatachi(_ id: String) async throws {
+        _ = try await raw(.kakera, "DELETE", "/api/katachi/\(id)")
+    }
+
+    func addKakera(toKatachi id: String, kakeraIds: [String]) async throws -> KatachiDetail {
+        try detail(try await send("POST", "/api/katachi/\(id)/kakera", ["kakera_ids": kakeraIds]))
+    }
+
+    func detachKakera(katachiId: String, kakeraId: String) async throws {
+        _ = try await raw(.kakera, "DELETE", "/api/katachi/\(katachiId)/kakera/\(kakeraId)")
+    }
+
+    func search(_ q: String) async throws -> [SearchResult] {
+        let r: SearchEnvelope = try await call(.kakera, "GET", "/api/search", query: [URLQueryItem(name: "q", value: q)])
+        return r.results
+    }
+
+    func words() async throws -> [WordSummary] {
+        let r: WordsEnvelope = try await call(.kakera, "GET", "/api/words")
+        return r.words
+    }
+
+    /// 言葉のページ（言葉は実名を含みうるので POST で読む）
+    func word(_ word: String) async throws -> WordDetail {
+        let data = try await send("POST", "/api/words", ["word": word])
+        guard let r = try? decoder.decode(WordEnvelope.self, from: data) else { throw APIError.transport("応答を読めませんでした") }
+        return WordDetail(word: r.word, kakera: r.kakera, cards: cardsIn(data))
+    }
+
+    // MARK: 公開名変換
+
+    func nameMap() async throws -> [NameEntry] {
+        let r: EntriesEnvelope = try await call(.kakera, "GET", "/api/name-map")
+        return r.entries
+    }
+
+    func addNameEntry(source: String, target: String, exception: Bool) async throws {
+        _ = try await send("POST", "/api/name-map", ["source": source, "target": target, "exception": exception])
+    }
+
+    func updateNameEntry(_ id: String, source: String, target: String, exception: Bool) async throws {
+        _ = try await send("PATCH", "/api/name-map/\(id)", ["source": source, "target": target, "exception": exception])
+    }
+
+    func deleteNameEntry(_ id: String) async throws {
+        _ = try await raw(.kakera, "DELETE", "/api/name-map/\(id)")
+    }
+
+    /// 変換ページを開くとき（文書の同期が走る）
+    func loadNameChoices(katachiId: String, kakeraIds: [String], title: String) async throws -> NameChoiceLoad {
+        let data = try await send("POST", "/api/katachi/\(katachiId)/name-choice", ["kakera_ids": kakeraIds, "title": title])
+        guard let r = try? decoder.decode(NameChoiceLoad.self, from: data) else { throw APIError.transport("応答を読めませんでした") }
+        return r
+    }
+
+    /// 記号一つの選択を覚える。戻りはサーバが整えた記号（辞書どおりと同じ言葉なら approve になる）
+    func saveNameChoice(katachiId: String, refId: String, action: String, text: String?) async throws -> NameRef {
+        var b: [String: Any] = ["ref_id": refId, "action": action]
+        if let text { b["text"] = text }
+        let data = try await send("PUT", "/api/katachi/\(katachiId)/name-choice", b)
+        guard let r = try? decoder.decode(RefEnvelope.self, from: data) else { throw APIError.transport("応答を読めませんでした") }
+        return r.ref
+    }
+
+    func loadPublishBodies(katachiId: String) async throws -> LinkCards {
+        cardsIn(try await raw(.kakera, "GET", "/api/katachi/\(katachiId)/publish-body"))
+    }
+
+    /// 日記用に直した文を保存する。publish が nil なら原本と同じ文になった（書き換えを持たない）
+    func savePublishBody(katachiId: String, kakeraId: String, base: String, text: String) async throws -> (publish: DocView?, kakera: DocView?, cards: LinkCards) {
+        let data = try await send("PUT", "/api/katachi/\(katachiId)/publish-body/\(kakeraId)", ["base": base, "text": text])
+        guard let r = try? decoder.decode(PublishBodySaved.self, from: data) else { throw APIError.transport("応答を読めませんでした") }
+        return (r.publish, r.kakera, cardsIn(data))
+    }
+
+    func acceptPublishBody(katachiId: String, kakeraId: String) async throws -> PublishBodyView {
+        let r: PublishBodyEnvelope = try await call(.kakera, "PATCH", "/api/katachi/\(katachiId)/publish-body/\(kakeraId)")
+        return r.publishBody
+    }
+
+    func deletePublishBody(katachiId: String, kakeraId: String) async throws {
+        _ = try await raw(.kakera, "DELETE", "/api/katachi/\(katachiId)/publish-body/\(kakeraId)")
+    }
+
+    func loadPhotoChoices(katachiId: String, kakeraIds: [String]) async throws -> [PhotoChoice] {
+        let data = try await send("POST", "/api/katachi/\(katachiId)/photo-choice", ["kakera_ids": kakeraIds])
+        guard let r = try? decoder.decode(PhotosEnvelope.self, from: data) else { throw APIError.transport("応答を読めませんでした") }
+        return r.photos
+    }
+
+    func savePhotoChoices(katachiId: String, kakeraIds: [String], photos: [PhotoChoice]) async throws {
+        _ = try await send("PUT", "/api/katachi/\(katachiId)/photo-choice",
+                           ["kakera_ids": kakeraIds, "photos": photos.map { ["kakera_id": $0.kakeraId, "key": $0.key] }])
+    }
+
+    func loadPhotoFaces(keys: [String]) async throws -> [PhotoFaceState] {
+        let data = try await send("POST", "/api/photo-face", ["keys": keys])
+        guard let r = try? decoder.decode(FacesEnvelope.self, from: data) else { throw APIError.transport("応答を読めませんでした") }
+        return r.photos
+    }
+
+    /// 写真 1 枚の枠を丸ごと入れ替える。⚠️ model は送らない（Web の MediaPipe の検出だけが「検出が済んだ」印を付ける）
+    func savePhotoFaces(key: String, faces: [PhotoFace]) async throws -> PhotoFaceState {
+        let list = faces.map { f -> [String: Any] in
+            ["id": f.id, "x": f.x, "y": f.y, "w": f.w, "h": f.h, "source": f.source, "shown": f.shown]
         }
-        guard let http = response as? HTTPURLResponse else { throw APIError.transport("応答がありません") }
-        if (300..<400).contains(http.statusCode) || http.statusCode == 401 || http.statusCode == 403 {
-            let msg = APIError.unauthorized(s).errorDescription ?? ""
-            let json = (try? JSONSerialization.data(withJSONObject: ["error": msg])) ?? Data()
-            return Relayed(status: 401, contentType: "application/json; charset=utf-8", data: json)
+        let data = try await send("PUT", "/api/photo-face", ["key": key, "faces": list])
+        guard let r = try? decoder.decode(FaceEnvelope.self, from: data) else { throw APIError.transport("応答を読めませんでした") }
+        return r.photo
+    }
+
+    /// モザイク済みの JPEG を置く（form: key / fp / file）
+    func uploadMaskedPhoto(key: String, fp: String, jpeg: Data) async throws {
+        let boundary = "kakera-\(UUID().uuidString)"
+        var body = Data()
+        func field(_ name: String, _ value: String) {
+            body.append("--\(boundary)\r\nContent-Disposition: form-data; name=\"\(name)\"\r\n\r\n\(value)\r\n".data(using: .utf8)!)
         }
-        return Relayed(status: http.statusCode, contentType: http.value(forHTTPHeaderField: "Content-Type"), data: data)
+        field("key", key)
+        field("fp", fp)
+        body.append("--\(boundary)\r\nContent-Disposition: form-data; name=\"file\"; filename=\"masked.jpg\"\r\nContent-Type: image/jpeg\r\n\r\n".data(using: .utf8)!)
+        body.append(jpeg)
+        body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
+        _ = try await raw(.kakera, "POST", "/api/photo-face/masked", body: body, contentType: "multipart/form-data; boundary=\(boundary)")
+    }
+
+    /// 書き出す（本文とタイトルはサーバが D1 の文書から解き直す）
+    func publishNikki(katachiId: String, kakeraIds: [String], title: String, choices: [RefChoice], photos: [PhotoChoice],
+                      confirmRealNames: Bool, docRevs: [ConvertView.DocRev], dictRev: String) async throws -> PublishResult {
+        let body: [String: Any] = [
+            "kakera_ids": kakeraIds,
+            "title": title,
+            "choices": choices.map { c -> [String: Any] in
+                var o: [String: Any] = ["ref_id": c.refId, "action": c.action]
+                if let t = c.text { o["text"] = t }
+                return o
+            },
+            "photos": photos.map { ["kakera_id": $0.kakeraId, "key": $0.key] },
+            "confirm_real_names": confirmRealNames,
+            "doc_revs": docRevs.map { ["doc_id": $0.docId, "rev": $0.rev] },
+            "dict_rev": dictRev,
+        ]
+        let data = try await send("POST", "/api/katachi/\(katachiId)/nikki", body)
+        guard let r = try? decoder.decode(PublishResult.self, from: data) else { throw APIError.transport("応答を読めませんでした") }
+        return r
+    }
+
+    // MARK: iPhone 版のための計算の口（/api/native/*・Web の決まりをサーバで当てる）
+
+    /// 選ぶ所の抜粋（Web の textForPick）
+    func pickTexts(_ bodies: [String], cards: LinkCards) async throws -> [String] {
+        guard !bodies.isEmpty else { return [] }
+        let r: TextsEnvelope = try await callJSON("POST", "/api/native/pick-texts", ["bodies": bodies, "cards": Self.cardsJSON(cards)])
+        return r.texts
+    }
+
+    /// かたちにする前の、既にページがある言葉の確認の行
+    func wordPlan(kakera: [(id: String, body: String)], pages: [String], cards: LinkCards) async throws -> [WordPlanRow] {
+        let r: RowsEnvelope = try await callJSON("POST", "/api/native/word-plan", [
+            "kakera": kakera.map { ["id": $0.id, "body": $0.body] }, "pages": pages, "cards": Self.cardsJSON(cards),
+        ])
+        return r.rows
+    }
+
+    /// 名前の辞書の試し書き
+    func nameTry(text: String, entries: [NameEntry]) async throws -> NameTry {
+        try await callJSON("POST", "/api/native/name-try", [
+            "text": text, "entries": entries.map { ["id": $0.id, "source": $0.source, "target": $0.target] },
+        ])
+    }
+
+    /// 変換ページに出すもの（Web の ConvertScreen が画面の中で組むものを、サーバが同じ関数で組む）
+    func convertView(katachiDate: String, kakera: [KatachiKakera], order: [String], title: String, description: String,
+                     entries: [NameEntry], docs: [DocView], photos: [PhotoChoice], cards: LinkCards) async throws -> ConvertView {
+        try await callJSON("POST", "/api/native/convert-view", [
+            "katachi_date": katachiDate,
+            "kakera": kakera.map { ["id": $0.id, "body": $0.body, "written_at": $0.writtenAt, "show_time": $0.showTime ?? false] },
+            "order": order,
+            "title": title,
+            "description": description,
+            "entries": entries.map { ["id": $0.id, "source": $0.source, "target": $0.target] },
+            "docs": try Self.snakeJSON(docs),
+            "photos": photos.map { ["kakera_id": $0.kakeraId, "key": $0.key] },
+            "cards": Self.cardsJSON(cards),
+        ])
+    }
+
+    // MARK: 形の読み書きの手伝い
+
+    private func detail(_ data: Data) throws -> KatachiDetail {
+        guard let r = try? decoder.decode(DetailEnvelope.self, from: data) else { throw APIError.transport("応答を読めませんでした") }
+        return KatachiDetail(katachi: r.katachi, kakera: r.kakera, nikki: r.nikki, publishedIds: r.publishedIds ?? [], cards: cardsIn(data))
+    }
+
+    /// 本文に出てくる URL のカード（⚠️ 鍵が URL なので snake_case 変換を通さない decoder で読む）
+    private func cardsIn(_ data: Data) -> LinkCards {
+        (try? JSONDecoder().decode(CardsEnvelope.self, from: data))?.cards ?? [:]
+    }
+
+    static func cardsJSON(_ cards: LinkCards) -> [String: Any] {
+        var out: [String: Any] = [:]
+        for (k, c) in cards {
+            out[k] = ["url": c.url, "title": c.title, "description": c.description, "siteName": c.siteName ?? "",
+                      "domain": c.domain, "image": c.image as Any? ?? NSNull()]
+        }
+        return out
+    }
+
+    /// Encodable を snake_case の JSON の値に（DocView を name-choice が返した形のまま送り返す）
+    static func snakeJSON<T: Encodable>(_ v: T) throws -> Any {
+        let e = JSONEncoder()
+        e.keyEncodingStrategy = .convertToSnakeCase
+        return try JSONSerialization.jsonObject(with: try e.encode(v))
+    }
+
+    private func send(_ method: String, _ path: String, _ json: [String: Any]) async throws -> Data {
+        let body = try JSONSerialization.data(withJSONObject: json)
+        return try await raw(.kakera, method, path, body: body, contentType: "application/json")
+    }
+
+    private func callJSON<T: Decodable>(_ method: String, _ path: String, _ json: [String: Any]) async throws -> T {
+        let data = try await send(method, path, json)
+        do { return try decoder.decode(T.self, from: data) } catch { throw APIError.transport("応答を読めませんでした") }
     }
 
     // MARK: 共通

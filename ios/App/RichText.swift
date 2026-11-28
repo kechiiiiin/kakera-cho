@@ -106,11 +106,43 @@ indirect enum Inline {
     case em([Inline])
     case del([Inline])
     case link(String, [Inline])
-    case word([Inline])
+    /// [[言葉]]（言葉は ** と ~~ を除いて前後の空白を落としたもの）
+    case word(String, [Inline])
 }
 
 enum InlineParser {
-    static func parse(_ text: String) -> [Inline] { nodes(Array(text), noWord: false, noLink: false) }
+    static func parse(_ text: String) -> [Inline] {
+        let t = Array(text)
+        return nodes(t, noWord: false, noLink: false, fences: fenceRanges(t), base: 0)
+    }
+
+    private static let fenceLine = try! NSRegularExpression(pattern: #"^ {0,3}(`{3,}|~{3,})"#)
+
+    /// コードフェンスの範囲（文字の位置・開き・閉じの行も含む）。閉じが無ければ終わりまで（markdown.ts の fenceRanges の写し）
+    static func fenceRanges(_ t: [Character]) -> [Range<Int>] {
+        var out: [Range<Int>] = []
+        var open: (char: Character, len: Int, start: Int)?
+        var pos = 0
+        for lineChars in t.split(separator: "\n", omittingEmptySubsequences: false) {
+            let line = String(lineChars)
+            let ns = line as NSString
+            var fence: String?
+            if let m = fenceLine.firstMatch(in: line, range: NSRange(location: 0, length: ns.length)) { fence = ns.substring(with: m.range(at: 1)) }
+            if let o = open {
+                if let f = fence, f.first == o.char, f.count >= o.len, line.trimmingCharacters(in: .whitespaces) == f {
+                    out.append(o.start..<(pos + lineChars.count))
+                    open = nil
+                }
+            } else if let f = fence {
+                let after = ns.range(of: f)
+                let rest = ns.substring(from: after.location + after.length)
+                if f.first != "`" || !rest.contains("`") { open = (f.first!, f.count, pos) }
+            }
+            pos += lineChars.count + 1
+        }
+        if let o = open { out.append(o.start..<t.count) }
+        return out
+    }
 
     private static func starts(_ t: [Character], _ mark: String, _ i: Int) -> Bool {
         let m = Array(mark)
@@ -164,7 +196,7 @@ enum InlineParser {
     }
 
     /// `[[言葉]]`（`[ ] 改行` を含まない1文字以上）
-    private static func matchWord(_ t: [Character], _ i: Int) -> (inner: [Character], end: Int)? {
+    private static func matchWord(_ t: [Character], _ i: Int) -> (inner: [Character], word: String, end: Int)? {
         guard starts(t, "[[", i) else { return nil }
         var j = i + 2
         while j < t.count, t[j] != "[", t[j] != "]", t[j] != "\n" { j += 1 }
@@ -174,10 +206,10 @@ enum InlineParser {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         if word.isEmpty { return nil }
         if String(inner).range(of: "`[^`]+`", options: .regularExpression) != nil { return nil }
-        return (inner, j + 2)
+        return (inner, word, j + 2)
     }
 
-    private static func nodes(_ t: [Character], noWord: Bool, noLink: Bool) -> [Inline] {
+    private static func nodes(_ t: [Character], noWord: Bool, noLink: Bool, fences: [Range<Int>] = [], base: Int = 0) -> [Inline] {
         var out: [Inline] = []
         var buf = ""
         var i = 0
@@ -202,10 +234,10 @@ enum InlineParser {
                     out.append(.link(m.href.trimmingCharacters(in: .whitespaces), nodes(m.label, noWord: true, noLink: false)))
                     i = m.end; continue
                 }
-                if let w = matchWord(t, i) {
+                if !fences.contains(where: { $0.contains(base + i) }), let w = matchWord(t, i) {
                     flush()
                     let children = nodes(w.inner, noWord: true, noLink: true)
-                    if noWord { out.append(contentsOf: children) } else { out.append(.word(children)) }
+                    if noWord { out.append(contentsOf: children) } else { out.append(.word(w.word, children)) }
                     i = w.end; continue
                 }
                 if let m {
@@ -223,7 +255,7 @@ enum InlineParser {
                 let inner = Array(t[from..<close])
                 if inner.first?.isWhitespace == true || inner.last?.isWhitespace == true { continue }
                 flush()
-                let kids = nodes(inner, noWord: noWord, noLink: noLink)
+                let kids = nodes(inner, noWord: noWord, noLink: noLink, fences: fences, base: base + from)
                 out.append(kind == 0 ? .strong(kids) : kind == 1 ? .del(kids) : .em(kids))
                 i = close + mark.count
                 matched = true
@@ -245,10 +277,50 @@ struct InlineStyle {
     var italic = false
     var strike = false
     var color: Color = Theme.ink
+    /// 読む側（かたち）の明朝
+    var mincho = false
+    /// 言葉を押せるリンクにする（言葉のページを開ける画面だけ）
+    var wordLinks = false
+    /// いま開いている言葉のページの言葉（太字で出し、リンクにしない）
+    var hereWord: String?
 
     func font() -> Font {
-        let f = Theme.gothic(size, weight: bold ? .bold : .regular)
+        let f = mincho ? Theme.mincho(size, bold: bold) : Theme.gothic(size, weight: bold ? .bold : .regular)
         return italic ? f.italic() : f
+    }
+}
+
+/// 言葉のリンクの URL（kakera-word://open?w=…）。押されたら RichTextView が言葉のページを開く（外へは出ない）
+enum WordLink {
+    static let scheme = "kakera-word"
+
+    static func url(_ word: String) -> URL? {
+        var c = URLComponents()
+        c.scheme = scheme
+        c.host = "open"
+        c.queryItems = [URLQueryItem(name: "w", value: word)]
+        return c.url
+    }
+
+    static func word(_ url: URL) -> String? {
+        guard url.scheme == scheme else { return nil }
+        return URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "w" }?.value
+    }
+}
+
+/// 本文の言葉を押したとき（nil なら言葉は押せない飾り）と、読む側の明朝・いまの言葉
+struct RichContext {
+    var openWord: ((String) -> Void)?
+    var mincho = false
+    var hereWord: String?
+}
+
+private struct RichContextKey: EnvironmentKey { static let defaultValue = RichContext() }
+
+extension EnvironmentValues {
+    var richContext: RichContext {
+        get { self[RichContextKey.self] }
+        set { self[RichContextKey.self] = newValue }
     }
 }
 
@@ -292,11 +364,17 @@ enum InlineRender {
             a.underlineStyle = .init(pattern: .solid, color: Theme.accent)
             if let u = URL(string: href) { a.link = u }
             return a
-        case .word(let kids):
-            // 言葉のリンク（Web の a.word-link: 朱・1px の下線）。iOS には言葉のページが無いので押せない飾り
+        case .word(let word, let kids):
+            // 言葉のリンク（Web の a.word-link: 朱・1px の下線）。押すと言葉のページへ（RichTextView の wordOpener）。
+            // いま開いている言葉のページの言葉自身は太字の黒（Web の WordLinkContext の here）
+            if let here = s.hereWord, here == word {
+                var t = s; t.bold = true
+                return attributed(kids, t)
+            }
             var t = s; t.color = Theme.accent
             var a = attributed(kids, t)
             a.underlineStyle = .init(pattern: .solid, color: Theme.accent)
+            if s.wordLinks, let u = WordLink.url(word) { a.link = u }
             return a
         }
     }
@@ -402,9 +480,10 @@ enum RichPart: Identifiable {
     case text(Int, String)
     case photo(Int, String)
     case card(Int, String, LinkCard)
+    case embed(Int, Embed)
 
     var id: Int {
-        switch self { case .text(let i, _), .photo(let i, _), .card(let i, _, _): return i }
+        switch self { case .text(let i, _), .photo(let i, _), .card(let i, _, _), .embed(let i, _): return i }
     }
 }
 
@@ -413,14 +492,17 @@ enum RichSplitter {
 
     static func parts(_ body: String, cards: LinkCards) -> [RichPart] {
         let ns = body as NSString
-        enum K { case photo(String), card(String, LinkCard) }
+        enum K { case photo(String), card(String, LinkCard), embed(Embed) }
         var slots: [(NSRange, K)] = imageToken.matches(in: body, range: NSRange(location: 0, length: ns.length)).map {
             ($0.range, .photo(ns.substring(with: $0.range(at: 1))))
         }
         var pos = 0
-        for line in body.components(separatedBy: "\n") {
+        let embeds = Dictionary(Embed.lines(body).map { ($0.line, $0.embed) }, uniquingKeysWith: { a, _ in a })
+        for (n, line) in body.components(separatedBy: "\n").enumerated() {
             let len = (line as NSString).length
-            if let url = MD.standaloneUrl(line), let card = MD.card(for: url, in: cards) {
+            if let e = embeds[n] {
+                slots.append((NSRange(location: pos, length: len), .embed(e)))
+            } else if Embed.match(line) == nil, let url = MD.standaloneUrl(line), let card = MD.card(for: url, in: cards) {
                 slots.append((NSRange(location: pos, length: len), .card(url, card)))
             }
             pos += len + 1
@@ -440,6 +522,7 @@ enum RichSplitter {
             switch k {
             case .photo(let u): out.append(.photo(n, u))
             case .card(let u, let c): out.append(.card(n, u, c))
+            case .embed(let e): out.append(.embed(n, e))
             }
             n += 1
             at = r.location + r.length
@@ -455,19 +538,35 @@ enum RichSplitter {
 struct RichTextView: View {
     let body_: String
     let cards: LinkCards
+    /// 縦長の写真を切って「全体を見る」を出す（読む画面と流れ・Web の clipTall）
+    var clipTall = true
+    @Environment(\.richContext) private var rich
 
-    init(_ body: String, cards: LinkCards) {
+    init(_ body: String, cards: LinkCards, clipTall: Bool = true) {
         self.body_ = body
         self.cards = cards
+        self.clipTall = clipTall
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        content
+            .environment(\.openURL, OpenURLAction { url in
+                if let w = WordLink.word(url) {
+                    rich.openWord?(w)
+                    return .handled
+                }
+                return .systemAction
+            })
+    }
+
+    private var content: some View {
+        VStack(alignment: .leading, spacing: rich.mincho ? 12 : 8) {
             ForEach(RichSplitter.parts(body_, cards: cards)) { p in
                 switch p {
                 case .text(_, let t): RichBlock(text: t)
-                case .photo(_, let u): AssembledPhoto(path: u)
+                case .photo(_, let u): AssembledPhoto(path: u, clipTall: clipTall)
                 case .card(_, let u, let c): LinkCardView(href: u, card: c)
+                case .embed(_, let e): EmbedCardView(embed: e)
                 }
             }
         }
@@ -479,6 +578,7 @@ struct RichTextView: View {
 struct RichBlock: View {
     let text: String
     var color: Color = Theme.ink
+    @Environment(\.richContext) private var rich
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -490,8 +590,10 @@ struct RichBlock: View {
     }
 
     private func para(_ s: String, size: CGFloat = 16, bold: Bool = false) -> some View {
-        Text(InlineRender.attributed(InlineParser.parse(s), InlineStyle(size: size, bold: bold, color: color)))
-            .lineSpacing(size * 0.3)
+        Text(InlineRender.attributed(InlineParser.parse(s), InlineStyle(size: rich.mincho && size == 16 ? 17 : size, bold: bold, color: color,
+                                                                        mincho: rich.mincho, wordLinks: rich.openWord != nil,
+                                                                        hereWord: rich.hereWord)))
+            .lineSpacing(size * (rich.mincho ? 0.8 : 0.3))
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -598,6 +700,7 @@ struct LinkCardView: View {
 /// 写真（.assembled-photo: 幅いっぱい・角丸 2pt）。縦長（高さ÷幅 > 2）は横幅と同じ高さで切り、下を薄くして「全体を見る」
 struct AssembledPhoto: View {
     let path: String
+    var clipTall = true
     @State private var image: UIImage?
     @State private var failed = false
     @State private var showAll = false
@@ -607,7 +710,7 @@ struct AssembledPhoto: View {
     var body: some View {
         Group {
             if let image {
-                let tall = image.size.width > 0 && image.size.height / image.size.width > Self.tallRatio
+                let tall = clipTall && image.size.width > 0 && image.size.height / image.size.width > Self.tallRatio
                 if tall && !showAll {
                     Color.clear
                         .aspectRatio(1, contentMode: .fit)
@@ -651,6 +754,55 @@ struct AssembledPhoto: View {
         .task(id: path) {
             image = await PhotoCache.shared.image(path)
             failed = image == nil
+        }
+    }
+}
+
+/// 埋め込み（X・YouTube・Spotify）は中で再生せず、カードを押すとアプリか Safari で開く（かけら帳ネイティブ化設計「写真・埋め込み」）
+struct EmbedCardView: View {
+    let embed: Embed
+
+    private var icon: String {
+        switch embed {
+        case .youtube: return "play.rectangle"
+        case .tweet: return "text.bubble"
+        case .spotify: return "music.note"
+        }
+    }
+
+    private var domain: String {
+        switch embed {
+        case .youtube: return "youtube.com"
+        case .tweet(let url): return URL(string: url)?.host ?? "x.com"
+        case .spotify: return "open.spotify.com"
+        }
+    }
+
+    var body: some View {
+        let content = HStack(alignment: .center, spacing: 12) {
+            ZStack {
+                Color(uiColor: UIColor(hex: 0xF1EFEA))
+                Image(systemName: icon).font(.system(size: 22, weight: .light)).foregroundStyle(Theme.muted)
+            }
+            .frame(width: 56, height: 56)
+            .clipShape(RoundedRectangle(cornerRadius: 3))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(domain).font(Theme.mono(11.5)).foregroundStyle(Theme.muted).lineLimit(1)
+                Text(embed.title).font(Theme.gothic(14.5, weight: .semibold)).foregroundStyle(Theme.ink).lineLimit(1)
+                Text("押すと開きます").font(Theme.gothic(12)).foregroundStyle(Theme.muted)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Image(systemName: "arrow.up.forward").font(.system(size: 12)).foregroundStyle(Theme.muted)
+        }
+        .padding(10)
+        .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Theme.line, lineWidth: Theme.hairline))
+        .contentShape(Rectangle())
+        .padding(.vertical, 2)
+
+        if let url = embed.openURL {
+            Link(destination: url) { content }.buttonStyle(.plain).accessibilityLabel("\(embed.title)を開く")
+        } else {
+            content
         }
     }
 }

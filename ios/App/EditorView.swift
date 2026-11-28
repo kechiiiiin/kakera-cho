@@ -28,9 +28,9 @@ struct Draft: Identifiable {
     }
 }
 
-/// かけらを書く・直す・消す。本文欄は Web 版と同じ k-editor（WKWebView・KEditorView.swift）。保存の形は今までどおり Markdown。
-/// 日時・保存・やめる・消すはネイティブ。並びは Web の書く欄と同じ 本文 → 道具 → 日時と保存 → やめる／消す。
-/// **保存はボタンだけ**（日本語入力の確定の Enter で保存しない。k-editor も確定の Enter を送信にしない）
+/// かけらを書く・直す・消す。本文欄はネイティブの書く欄（MarkdownEditor.swift・記号は残して飾る）。保存の形は今までどおり Markdown。
+/// 並びは Web の書く欄と同じ 本文 → 道具 → 日時と保存 → やめる／かたちに入れる／消す。
+/// **保存はボタンだけ**（日本語入力の確定の Enter で保存しない。書く欄の Enter は改行を入れるだけ）
 struct EditorView: View {
     @State var draft: Draft
     /// その日のリンクカード（本文の URL の行をカードで見せる。無い URL は URL のまま）
@@ -39,11 +39,13 @@ struct EditorView: View {
     let onDone: () -> Void
 
     @Environment(\.dismiss) private var dismiss
-    @StateObject private var editor = KEditorController()
+    @StateObject private var editor = MarkdownEditorController()
     @State private var saving = false
     @State private var error: String?
     @State private var confirmDelete = false
     @State private var confirmDiscard = false
+    @State private var confirmMove = false
+    @State private var picking = false
 
     private let initialBody: String
     private let initialDate: Date
@@ -58,49 +60,68 @@ struct EditorView: View {
 
     private var isNew: Bool { draft.original == nil }
     private var trimmed: String { draft.body.trimmingCharacters(in: .whitespacesAndNewlines) }
-    private var dirty: Bool { draft.body != initialBody || draft.writtenAt != initialDate || isNew && !trimmed.isEmpty }
+    private var timeChanged: Bool { !DayText.sameMinute(JST.writtenAt(draft.writtenAt), JST.writtenAt(initialDate)) }
+    private var dirty: Bool { draft.body != initialBody || timeChanged || isNew && !trimmed.isEmpty }
+    /// かけらたち（まだかたちになっていない）を直しているとき
+    private var canMove: Bool { draft.original != nil && draft.original?.katachiId == nil }
 
     var body: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 0) {
                 Text(isNew ? "かけらを書く" : "かけらを直す")
                     .font(Theme.gothic(17, weight: .medium)).foregroundStyle(Theme.ink)
-                    .padding(.horizontal, 18).padding(.top, 20).padding(.bottom, 12)
+                    .padding(.horizontal, 18).padding(.top, 20).padding(.bottom, 8)
 
-                // 本文と道具（k-editor）。道具は本文の枠の直下、キーボードが出ればその上に乗る
-                KEditorView(controller: editor)
+                // 本文と道具。道具は本文の枠の直下、キーボードが出ればその上に乗る
+                MarkdownEditorView(controller: editor)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .accessibilityIdentifier("bodyEditor")
+                MarkdownToolbar(controller: editor)
 
+                if let u = editor.uploading {
+                    HStack(spacing: 8) { ProgressView(); Text(u).font(Theme.gothic(12.5)).foregroundStyle(Theme.muted) }
+                        .padding(.horizontal, 18).padding(.top, 8)
+                }
                 if let error {
                     Text(error).font(Theme.gothic(13)).foregroundStyle(Theme.accent)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.horizontal, 18).padding(.top, 8)
                 }
 
-                // .composer-actions: 書いた日時（左）と保存（右）。罫を挟む
-                Rule().padding(.horizontal, 18).padding(.top, 8)
+                // .composer-actions: 書いた日時（左）と保存（右）
                 HStack(spacing: 8) {
                     pickerChip(JST.dayKey(draft.writtenAt), components: .date)
                         .accessibilityIdentifier("writtenAt")
                     pickerChip(JST.time(draft.writtenAt), components: .hourAndMinute)
+                    if timeChanged {
+                        Button(isNew ? "いまに戻す" : "元に戻す") { draft.writtenAt = initialDate }
+                            .buttonStyle(LinkButtonStyle(color: Theme.accent))
+                    }
                     Spacer(minLength: 4)
                     if saving {
                         ProgressView().frame(minWidth: 60, minHeight: 38)
                     } else {
                         Button("保存") { Task { await save() } }
                             .buttonStyle(PrimaryButtonStyle())
-                            .disabled(trimmed.isEmpty)
+                            .disabled(trimmed.isEmpty || editor.uploading != nil)
                             .accessibilityIdentifier("save")
                     }
                 }
                 .padding(.horizontal, 18).padding(.top, 10)
 
-                // その下に やめる／消す（Web のその場編集の 取消／削除）
+                // その下に やめる／かたちに入れる／消す（Web のその場編集の 取消／かたちに入れる／削除）
                 HStack(spacing: 8) {
                     Button("やめる") { if dirty { confirmDiscard = true } else { dismiss() } }
                         .buttonStyle(GhostButtonStyle())
                         .disabled(saving)
+                    if canMove {
+                        Button("かたちに入れる") {
+                            if draft.body.trimmingCharacters(in: .whitespacesAndNewlines) != draft.original?.body || timeChanged { confirmMove = true } else { picking = true }
+                        }
+                        .buttonStyle(GhostButtonStyle())
+                        .disabled(saving)
+                        .accessibilityIdentifier("moveToKatachi")
+                    }
                     if !isNew && draft.original?.katachiId != nil {
                         Text("かたちの中のかけらです。消すと、かたちからも消えます。")
                             .font(Theme.gothic(10.5)).foregroundStyle(Theme.muted).lineSpacing(2)
@@ -125,13 +146,28 @@ struct EditorView: View {
             .confirmationDialog("このかけらを消しますか（元に戻せません）", isPresented: $confirmDelete, titleVisibility: .visible) {
                 Button("消す", role: .destructive) { Task { await remove() } }
             }
+            .confirmationDialog("直した本文・日時はまだ保存していません。保存せずに進みますか？", isPresented: $confirmMove, titleVisibility: .visible) {
+                Button("保存せずに進む") { picking = true }
+            }
+            .sheet(isPresented: $picking) {
+                KatachiPickSheet { katachiId in
+                    guard let id = draft.original?.id else { return }
+                    let next = try await API.shared.addKakera(toKatachi: katachiId, kakeraIds: [id])
+                    KakeraStore.shared.details[katachiId] = next
+                    Toast.shared.say(KakeraStore.addedMessage(next))
+                    picking = false
+                    onDone()
+                    dismiss()
+                }
+            }
+            .toastOverlay()
             .onAppear {
                 editor.kakeraId = draft.id
                 editor.photoWrittenAt = draft.photoWrittenAt
                 editor.onChange = { md in draft.body = md }
                 editor.onError = { m in error = m }
                 // 新しいかけら（材料からの書きかけも）は開いたらすぐ書けるように
-                editor.start(markdown: draft.body, cards: cards, focus: isNew)
+                editor.start(markdown: draft.body, cards: cards, placeholder: "いま、何が浮かびましたか", focus: isNew)
             }
         }
     }
@@ -156,12 +192,14 @@ struct EditorView: View {
         saving = true
         error = nil
         defer { saving = false }
-        // 変更の知らせを待たず、保存の直前に k-editor から取り直す（打った直後に押しても取りこぼさない）
-        if let md = await editor.currentMarkdown() { draft.body = md }
+        // 変更の知らせを待たず、保存の直前に書く欄から取り直す（変換中の文字は確定させてから）
+        if editor.textView.markedTextRange != nil { editor.textView.unmarkText() }
+        draft.body = editor.markdown
         guard !trimmed.isEmpty else { return }
         do {
             if let original = draft.original {
-                let bodyChanged = trimmed != original.body
+                let patch = Self.bodyPatch(current: draft.body, original: original.body)
+                let bodyChanged = patch != nil
                 // サーバは分まで（秒は 00）。分が変わったときだけ送る
                 let timeChanged = JST.writtenAt(draft.writtenAt).prefix(16) != JST.writtenAt(original.writtenDate).prefix(16)
                 if bodyChanged || timeChanged {
@@ -170,6 +208,7 @@ struct EditorView: View {
                 }
             } else {
                 _ = try await API.shared.createKakera(id: draft.id, body: trimmed, writtenAt: JST.writtenAt(draft.writtenAt))
+                if let word = WordRules.wordsOf(trimmed).first { Toast.shared.say("「\(word)」のページに溜まりました") }
             }
             if !draft.photoAssetIDs.isEmpty { UsedMarks.shared.markPhotos(draft.photoAssetIDs) }
             if let item = draft.tayoriItemID { UsedMarks.shared.markItem(item) }
@@ -179,6 +218,13 @@ struct EditorView: View {
         } catch {
             self.error = error.localizedDescription
         }
+    }
+
+    /// 直すときに送る本文。触っていなければ nil（送らない＝本文は1文字も変わらない）。直したら前後の空白を落とす（Web と同じ）
+    static func bodyPatch(current: String, original: String) -> String? {
+        let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard current != original, trimmed != original else { return nil }
+        return trimmed
     }
 
     private func remove() async {

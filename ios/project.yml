@@ -1,6 +1,6 @@
 name: kakera
 
-# かけら帳（kakera-cho）iOS — 第一弾・第二弾（設計: jinsei vault hestia/projects/blog-cms-design/かけら帳iOS構想.md §2・§3.2）
+# かけら帳（kakera-cho）iOS — 全画面 SwiftUI（設計: jinsei vault hestia/projects/blog-cms-design/かけら帳iOS構想.md・かけら帳ネイティブ化設計.md）
 # `*.xcodeproj` は生成物でコミットしない。必ず `xcodegen generate`（make generate）が先
 # iPhone だけ（TARGETED_DEVICE_FAMILY 1）。PC は今までどおりブラウザで Web 版
 
@@ -53,6 +53,22 @@ targets:
         SWIFT_EMIT_LOC_STRINGS: YES
         ENABLE_PREVIEWS: YES
 
+  # Web から移した決まり（vitest の入出力の写し）と書く欄の往復（make test・make roundtrip）
+  KakeraTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests
+    dependencies:
+      - target: Kakera
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: jp.kechiiiiin.kakera.tests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Kakera.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Kakera"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        TARGETED_DEVICE_FAMILY: "1"
+
 schemes:
   Kakera:
     build:
@@ -60,5 +76,9 @@ schemes:
         Kakera: all
     run:
       config: Debug
+    test:
+      config: Debug
+      targets:
+        - KakeraTests
     archive:
       config: Release

@@ -1,8 +1,10 @@
 # かけら帳（kakera-cho）iOS — よく使う手順（便り tayori/ios と同じ組み立て）
 #
-#   make editor-web 書く欄の k-editor（ios/editor-web/）を App/EditorWeb/kedit.* に、Web の画面（App.tsx まるごと・かたち／日記／ことば／かたちにする）を
-#                   App/EditorWeb/kapp.* に束ねる（npm run build:ios-web。生成物はコミットする）
-#   make generate   xcodegen で .xcodeproj を作る（生成物はコミットしない）。先に editor-web を束ね直す
+#   make generate   xcodegen で .xcodeproj を作る（生成物はコミットしない）。全画面 SwiftUI（WebView は使わない・かけら帳ネイティブ化設計）
+#   make test       XCTest（Web から移した決まり・書く欄の往復）をシミュレータで回す
+#   make fixtures   Swift に移した決まりの期待値を Web の関数（src/lib）から書き出す（Tests/Fixtures/rules.json・コミットする）
+#   make roundtrip  本番の全かけらの本文を読み取りだけで取り出し（wrangler d1 execute --remote の SELECT・build/ に置く・gitignore）、
+#                   書く欄に入れて触らずに出すと1文字も変わらないことを XCTest で確かめる
 #   make sim        シミュレータ向けにビルドだけ通す（Team ID 不要・アドホック署名）
 #   make run-local  シミュレータで起動し、ローカルの Worker（かけら帳 astro dev :4321・港 ~/work/minato の npm run dev :8793）に向ける
 #                   読んだ記事は港の tayori から読む（アプリは便りを直接呼ばない）。港をローカルで回すと出どころの秘密が無いので
@@ -33,14 +35,33 @@ ARCHIVE = build/Kakera.xcarchive
 KC_SERVICE ?= kakera-token
 SECRETS = Secrets.xcconfig
 
-.PHONY: editor-web generate sim run-local run-local-minato-prod icon clean archive upload export-testflight release require-team require-asc-key
+.PHONY: generate test fixtures roundtrip sim run-local run-local-minato-prod icon clean archive upload export-testflight release require-team require-asc-key
 
-# 書く欄（WKWebView の k-editor）と Web の画面（App.tsx）。kakera-cho の node_modules の esbuild で束ねる（ネットから読まない）
-editor-web:
-	cd .. && npm run --silent build:ios-web
-
-generate: editor-web
+generate:
 	xcodegen generate
+
+test: generate
+	@mkdir -p build
+	@xcrun simctl list devices | grep -q "$(PHONE_SIM) (" || xcrun simctl create "$(PHONE_SIM)" "$(PHONE_TYPE)" > /dev/null
+	@set -o pipefail; xcodebuild -project $(PROJECT) -scheme $(SCHEME) -destination 'platform=iOS Simulator,name=$(PHONE_SIM)' \
+	  -configuration Debug -derivedDataPath build-sim CODE_SIGN_IDENTITY=- test 2>&1 | tee build/test.log | \
+	  grep -E "(error|warning):|Test Suite '.*' (passed|failed)|Executed [0-9]+ tests|TEST (SUCCEEDED|FAILED)|roundtrip"
+
+fixtures:
+	@mkdir -p build
+	../node_modules/.bin/esbuild scripts/rule-fixtures.ts --bundle --platform=node --format=esm --target=node20 \
+	  --outfile=build/rule-fixtures.mjs --log-level=warning
+	node build/rule-fixtures.mjs > Tests/Fixtures/rules.json
+
+# 本番の本文（読み取りだけ）。⚠️ 実名を含むので build/（gitignore）に置き、リポジトリに入れない
+BODIES = build/roundtrip/bodies.json
+roundtrip: generate
+	@mkdir -p build/roundtrip
+	cd .. && npx wrangler d1 execute kakera --remote --json --command "SELECT id, body FROM kakera ORDER BY id" > ios/$(BODIES)
+	@set -o pipefail; TEST_RUNNER_KAKERA_BODIES="$(CURDIR)/$(BODIES)" xcodebuild -project $(PROJECT) -scheme $(SCHEME) \
+	  -destination 'platform=iOS Simulator,name=$(PHONE_SIM)' -configuration Debug -derivedDataPath build-sim CODE_SIGN_IDENTITY=- \
+	  -only-testing:KakeraTests/EditorRoundTripTests test 2>&1 | tee build/roundtrip.log | \
+	  grep -E "(error):|roundtrip|Executed [0-9]+ tests|TEST (SUCCEEDED|FAILED)"
 
 sim: generate
 	@set -o pipefail; xcodebuild -project $(PROJECT) -scheme $(SCHEME) \

@@ -46,6 +46,11 @@ enum Theme {
 
     static func gothic(_ size: CGFloat, bold: Bool) -> Font { gothic(size, weight: bold ? .semibold : .regular) }
 
+    /// 明朝（読む側・かたちの組版。Web の .mode-read と同じヒラギノ明朝）
+    static func mincho(_ size: CGFloat, bold: Bool = false) -> Font {
+        font(bold ? ["HiraMinProN-W6"] : ["HiraMinProN-W3"], size: size, relativeTo: .body)
+    }
+
     /// 等幅（数字・記号・ラベルだけ。ui-monospace / SF Mono）
     static func mono(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
         .system(size: size, weight: weight, design: .monospaced)
