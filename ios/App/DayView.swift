@@ -14,6 +14,8 @@ struct DayView: View {
     /// 気分（押していない日は nil）。日を移ったらすぐ外し、読めたらその日のものを出す
     @State private var kibun: Kibun?
     @State private var basho: [Basho] = []
+    /// その日の移動の軌跡（GET /api/track・時刻順）。読めなければ空（地図は今のまま）
+    @State private var kiseki: [TrackPoint] = []
     /// 気分・場所が読めなかったとき（かけらは読めていることがある）
     @State private var dayError: String?
     /// 気分・場所を読み終えた日（違う日のハンコを押させない）
@@ -67,7 +69,7 @@ struct DayView: View {
                         EntryBox(kind: $entryKind, at: $entryAt, text: $entryText, range: DayPage.entryRange(day: day),
                                  adding: adding, enabled: loadedKakera && loadedDay == day, focused: $entryFocused,
                                  pickedPhotos: $pickedPhotos) { addEntry() }
-                        ChizuSection(pins: pins)
+                        ChizuSection(pins: pins, track: kiseki, steps: minato.daySummary)
                     }
                     MaterialsHeader(minato: minato, canCollect: API.shared.isConfigured(.minato)) {
                         Task { await minato.collectNow() }
@@ -104,10 +106,13 @@ struct DayView: View {
             .onReceive(NotificationCenter.default.publisher(for: .kakeraPlacesChanged)) { _ in
                 Task { await reloadBasho() }
             }
-            .onChange(of: day) { _, _ in kibun = nil; loadedDay = nil }
+            .onReceive(NotificationCenter.default.publisher(for: .kakeraTrackChanged)) { _ in
+                Task { await reloadKiseki() }
+            }
+            .onChange(of: day) { _, _ in kibun = nil; loadedDay = nil; kiseki = [] }
             .onChange(of: scenePhase) { _, p in
                 if p == .active {
-                    Task { await VisitRecorder.shared.flush() } // 溜まっている訪問を送る
+                    Task { await VisitRecorder.shared.flush() } // 溜まっている訪問と軌跡の点を送る
                     calendar.load(day)
                     photos.load(day)
                     places.load(day: day, assets: photos.assets)
@@ -251,6 +256,12 @@ struct DayView: View {
         yoteiGeo = YoteiGeocodeCache.known(names)
         let found = await YoteiGeocodeCache.lookup(names)
         yoteiGeo = found
+    }
+
+    /// 軌跡の点を送り終えたら、軌跡だけ読み直す
+    private func reloadKiseki() async {
+        let target = day
+        if let list = try? await API.shared.track(on: target), target == day { kiseki = list }
     }
 
     /// 自動で残した場所を送り終えたら、場所だけ読み直す
@@ -565,8 +576,10 @@ struct DayView: View {
         calendar.load(target)
         async let h: Result<[String: Set<String>], Error> = capture { try await API.shared.hidden(on: target) }
         async let m: Void = minato.load(target)
-        let (kr, br, fr, hr, _) = await (k, b, f, h, m)
+        async let t: [TrackPoint]? = try? API.shared.track(on: target)
+        let (kr, br, fr, hr, _, tr) = await (k, b, f, h, m, t)
         guard target == day else { return } // 読み込み中に日付が変わった
+        kiseki = tr ?? []
         let hiddenAll = (try? hr.get()) ?? [:]
         hiddenPhotos = hiddenAll["photo"] ?? []
         hiddenEvents = hiddenAll["event"] ?? []

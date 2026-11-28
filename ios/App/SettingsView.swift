@@ -21,7 +21,7 @@ struct SettingsView: View {
                         Button("閉じる") { dismiss() }.buttonStyle(LinkButtonStyle())
                     }
 
-                    SectionHead(title: "行った場所")
+                    SectionHead(title: "行った場所と軌跡")
                     VisitSettingSection()
 
                     SectionHead(title: "書き出し")

@@ -7,6 +7,8 @@ import SwiftUI
 // Web の POST /api/place（src/pages/api/place/index.ts・source=visit）に送る。送れなければ端末に溜めて、次に開いたとき送る。
 // 二重にしない: 訪問ごとに id（ULID）を到着時刻と位置から決めて作る。同じ訪問が二度届いても同じ id になり、
 // サーバは同じ id を 409 で断る（＝もう入っている）。端末でも送り済みの鍵を覚えて、同じ訪問は溜めない。
+// 移動の軌跡（追加: 移動の軌跡）も同じ係が受ける: 大きな位置の変化（significant location change）の点と訪問の到着点を
+// Kiseki.swift の KisekiQueue に渡す。スイッチは一つ（「行った場所と軌跡を自動で残す」）。
 
 /// 溜めておく訪問（送れるまで端末の UserDefaults に置く）
 struct PendingVisit: Codable, Hashable {
@@ -57,7 +59,7 @@ extension Notification.Name {
     static let kakeraPlacesChanged = Notification.Name("kakeraPlacesChanged")
 }
 
-/// 訪問を受けて送る係。アプリの起動時に作り、オンなら訪問の監視を始める
+/// 訪問と軌跡の点を受けて送る係。アプリの起動時に作り、オンなら訪問と大きな位置の変化の監視を始める
 @MainActor
 final class VisitRecorder: NSObject, ObservableObject, CLLocationManagerDelegate {
     static let shared = VisitRecorder()
@@ -83,8 +85,16 @@ final class VisitRecorder: NSObject, ObservableObject, CLLocationManagerDelegate
 
     /// 起動時: オンで許可があれば監視を続け、溜まっているものを送る
     func resume() {
-        if enabled, authorization == .authorizedAlways { manager.startMonitoringVisits() }
+        if enabled, authorization == .authorizedAlways { startMonitoring() }
         Task { await flush() }
+    }
+
+    /// 訪問と大きな位置の変化（どちらも電池をほとんど使わない・アプリを閉じていても起こしてもらえる）
+    private func startMonitoring() {
+        manager.startMonitoringVisits()
+        if CLLocationManager.significantLocationChangeMonitoringAvailable() {
+            manager.startMonitoringSignificantLocationChanges()
+        }
     }
 
     /// 設定のオン（理由の説明を見せた後に呼ぶ）。使用中のみ → 常に の2段で求める
@@ -97,7 +107,7 @@ final class VisitRecorder: NSObject, ObservableObject, CLLocationManagerDelegate
         case .authorizedWhenInUse:
             manager.requestAlwaysAuthorization()
         case .authorizedAlways:
-            manager.startMonitoringVisits()
+            startMonitoring()
         default:
             setEnabled(false)
             message = "位置の利用が許可されていません。設定アプリの「かけら帳」→「位置情報」で「常に」にすると使えます"
@@ -106,6 +116,7 @@ final class VisitRecorder: NSObject, ObservableObject, CLLocationManagerDelegate
 
     func turnOff() {
         manager.stopMonitoringVisits()
+        manager.stopMonitoringSignificantLocationChanges()
         setEnabled(false)
     }
 
@@ -129,7 +140,7 @@ final class VisitRecorder: NSObject, ObservableObject, CLLocationManagerDelegate
                 }
             case .authorizedAlways:
                 self.message = nil
-                self.manager.startMonitoringVisits()
+                self.startMonitoring()
             case .denied, .restricted:
                 self.turnOff()
                 self.message = "位置の利用が許可されなかったので、自動では残しません（手入力の場所は使えます）"
@@ -140,14 +151,25 @@ final class VisitRecorder: NSObject, ObservableObject, CLLocationManagerDelegate
     }
 
     nonisolated func locationManager(_ manager: CLLocationManager, didVisit visit: CLVisit) {
-        let arrival = visit.arrivalDate, coordinate = visit.coordinate
-        Task { @MainActor in await self.receive(arrival: arrival, coordinate: coordinate) }
+        let arrival = visit.arrivalDate, coordinate = visit.coordinate, accuracy = visit.horizontalAccuracy
+        Task { @MainActor in await self.receive(arrival: arrival, coordinate: coordinate, accuracy: accuracy) }
+    }
+
+    /// 大きな位置の変化（数百m〜数km動いたとき）。点を軌跡に溜めて送る
+    nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        let points = locations.compactMap(Kiseki.slcPoint)
+        Task { @MainActor in
+            guard self.enabled else { return }
+            await KisekiQueue.receive(points)
+        }
     }
 
     /// 訪問を一つ受ける（DEBUG の擬似訪問もここを通る）。到着時刻が分からない・位置が変なものは捨てる
-    func receive(arrival: Date, coordinate: CLLocationCoordinate2D) async {
+    func receive(arrival: Date, coordinate: CLLocationCoordinate2D, accuracy: CLLocationAccuracy? = nil) async {
         guard arrival != .distantPast, arrival <= Date().addingTimeInterval(60),
               CLLocationCoordinate2DIsValid(coordinate), !(coordinate.latitude == 0 && coordinate.longitude == 0) else { return }
+        // 訪問の到着点も軌跡に混ぜる（同じ訪問は同じ id なので、軌跡でも二重にならない）
+        if let p = Kiseki.visitPoint(arrival: arrival, coordinate: coordinate, accuracy: accuracy) { await KisekiQueue.receive([p]) }
         let key = Houmon.key(arrival: arrival, coordinate: coordinate)
         var sent = Self.sentKeys
         var pending = Self.pending
@@ -162,8 +184,9 @@ final class VisitRecorder: NSObject, ObservableObject, CLLocationManagerDelegate
         await flush()
     }
 
-    /// 溜まっている訪問を送る。送れた・もう入っていた（409）ものを外す。通信できなければ残して次に開いたとき
+    /// 溜まっている訪問と軌跡の点を送る。送れた・もう入っていた（409）ものを外す。通信できなければ残して次に開いたとき
     func flush() async {
+        await KisekiQueue.flush()
         guard !flushing, !Self.pending.isEmpty, API.shared.isConfigured(.kakera) else { return }
         flushing = true
         defer { flushing = false }
@@ -215,6 +238,7 @@ final class VisitRecorder: NSObject, ObservableObject, CLLocationManagerDelegate
             UserDefaults.standard.removeObject(forKey: Self.pendingKey)
             UserDefaults.standard.removeObject(forKey: Self.sentKey)
         }
+        await KisekiQueue.applyLaunchArguments()
         for (i, a) in args.enumerated() where a == "-kakeraFakeVisit" && i + 1 < args.count {
             let parts = args[i + 1].split(separator: ",", maxSplits: 2).map(String.init)
             guard parts.count == 3, let lat = Double(parts[0]), let lng = Double(parts[1]), let at = JST.parse(parts[2]) else { continue }
@@ -224,7 +248,7 @@ final class VisitRecorder: NSObject, ObservableObject, CLLocationManagerDelegate
     #endif
 }
 
-/// 設定画面の「行った場所を自動で残す」。オンにする前に理由を出す
+/// 設定画面の「行った場所と軌跡を自動で残す」。オンにする前に理由を出す
 struct VisitSettingSection: View {
     @ObservedObject var recorder = VisitRecorder.shared
     @State private var explaining = false
@@ -234,11 +258,11 @@ struct VisitSettingSection: View {
             Toggle(isOn: Binding(get: { recorder.enabled }, set: { on in
                 if on { explaining = true } else { recorder.turnOff() }
             })) {
-                Text("行った場所を自動で残す").font(Theme.gothic(14)).foregroundStyle(Theme.ink)
+                Text("行った場所と軌跡を自動で残す").font(Theme.gothic(14)).foregroundStyle(Theme.ink)
             }
             .tint(Theme.accent)
             .accessibilityIdentifier("visitToggle")
-            Text("iPhone が「しばらく居た場所」を見つけたら、着いた時刻と地名をその日の一覧に場所として足します。既定はオフ。位置は「常に」の許可が要ります（断っても、手入力の場所はそのまま使えます）。")
+            Text("iPhone が「しばらく居た場所」を見つけたら、着いた時刻と地名をその日の一覧に場所として足します。大きく動いたとき（数百m〜数km）だけ位置の点も残し、その日の地図に移動の軌跡として描きます（電池はほとんど使いません）。既定はオフ。位置は「常に」の許可が要ります（断っても、手入力の場所はそのまま使えます）。")
                 .font(Theme.gothic(11)).foregroundStyle(Theme.muted).lineSpacing(3)
                 .fixedSize(horizontal: false, vertical: true)
             if let m = recorder.message {
@@ -250,13 +274,18 @@ struct VisitSettingSection: View {
                 Text("送れていない訪問が \(VisitRecorder.pending.count) 件あります（次に開いたとき送ります）")
                     .font(Theme.gothic(11)).foregroundStyle(Theme.muted)
             }
+            if !KisekiQueue.pending.isEmpty {
+                Text("送れていない軌跡の点が \(KisekiQueue.pending.count) 点あります（次に開いたとき送ります）")
+                    .font(Theme.gothic(11)).foregroundStyle(Theme.muted)
+                    .accessibilityIdentifier("trackPending")
+            }
         }
-        .alert("行った場所を自動で残しますか", isPresented: $explaining) {
+        .alert("行った場所と軌跡を自動で残しますか", isPresented: $explaining) {
             Button("続ける") { recorder.turnOn() }
                 .accessibilityIdentifier("visitContinue")
             Button("やめる", role: .cancel) {}
         } message: {
-            Text("位置は訪問を見つけるためだけに使い、着いた時刻・地名・座標だけをかけら帳に送ります。このあと位置の許可を「使用中のみ」→「常に」の順に尋ねます。")
+            Text("位置は訪問と大きな移動を見つけるためだけに使い、着いた時刻・地名・座標と、大きく動いたときの時刻・座標だけをかけら帳に送ります。このあと位置の許可を「使用中のみ」→「常に」の順に尋ねます。")
         }
     }
 }

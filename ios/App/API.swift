@@ -141,6 +141,8 @@ private struct KakeraEnvelope: Decodable { let kakera: Kakera }
 private struct DayEnvelope: Decodable { struct Day: Decodable { let date: String; let mood: String? }; let day: Day }
 private struct BashoListEnvelope: Decodable { let places: [Basho] }
 private struct BashoEnvelope: Decodable { let place: Basho }
+private struct TrackListEnvelope: Decodable { let points: [TrackPoint] }
+private struct TrackSent: Decodable { let added: Int; let skipped: Int }
 private struct DaysEnvelope: Decodable { let days: [DaySummaryRow] }
 private struct DaySearchEnvelope: Decodable { let kakera: [KakeraHit]?; let places: [PlaceHit]? }
 private struct HiddenEnvelope: Decodable { struct Row: Decodable { let kind: String; let ref: String; let date: String }; let hidden: [Row] }
@@ -263,6 +265,22 @@ final class API: @unchecked Sendable {
 
     func deleteBasho(id: String) async throws {
         _ = try await raw(.kakera, "DELETE", "/api/place/\(id)")
+    }
+
+    /// その日（JST）の軌跡の点（時刻順・Web の GET /api/track）
+    func track(on day: String) async throws -> [TrackPoint] {
+        let r: TrackListEnvelope = try await call(.kakera, "GET", "/api/track", query: [URLQueryItem(name: "date", value: day)])
+        return r.points
+    }
+
+    /// 軌跡の点をまとめて送る（Kiseki.batchMax まで）。同じ id はサーバが黙って飛ばす
+    @discardableResult
+    func sendTrack(_ points: [TrackPoint]) async throws -> (added: Int, skipped: Int) {
+        let list: [[String: Any]] = points.map {
+            ["id": $0.id, "at": $0.at, "lat": $0.lat, "lng": $0.lng, "accuracy": $0.accuracy.map { $0 as Any } ?? NSNull(), "source": $0.source]
+        }
+        let r: TrackSent = try await call(.kakera, "POST", "/api/track", json: ["points": list])
+        return (r.added, r.skipped)
     }
 
     /// その日の一覧から外した印（kind → ref の集まり。写真は localIdentifier、予定は「eventIdentifier|その回の開始」）

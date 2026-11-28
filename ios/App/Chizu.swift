@@ -1,8 +1,9 @@
 import MapKit
 import SwiftUI
 
-// 1日のページの地図（かけら帳1日のページ設計・段階4）: 座標のある行（場所・位置つきの予定・位置つきの写真。外した行は除く）を
-// 一覧の上から 1, 2, 3… と番号を振ってピンにし、時刻順に線で結ぶ。Web には対応する画面が無い（地図は iPhone だけ）。
+// 1日のページの地図（かけら帳1日のページ設計・段階4・軌跡は「追加: 移動の軌跡」）: 座標のある行（場所・位置つきの予定・位置つきの写真。外した行は除く）を
+// 一覧の上から 1, 2, 3… と番号を振ってピンにし、時刻順に線で結ぶ。軌跡（Web の GET /api/track）がある日は、軌跡を太い朱の線で描き
+// ピン同士の直線は描かない（ピンと番号は残す）。Web には対応する画面が無い（地図は iPhone だけ）。
 // 場所の座標は Web の place（src/lib/kakera/day-db.ts の lat / lng）、予定・写真の座標は端末から読む。
 
 /// 地図のピン（一覧の行と同じ番号）
@@ -122,45 +123,54 @@ struct PinNumber: View {
     }
 }
 
-/// 「きょうの地図」。ピンが無い日は一行だけ
+/// 「きょうの地図」。ピンも軌跡も無い日は一行だけ。押すと全画面の地図（指で動かせる）
 struct ChizuSection: View {
     let pins: [ChizuPin]
+    /// その日の軌跡の点（時刻順・Web の GET /api/track）。2点以上で線を描く
+    var track: [TrackPoint] = []
+    /// 港の歩数（日付の下の一行と同じ出どころ・MinatoMaterials.daySummary）
+    var steps: String? = nil
     @State private var position: MapCameraPosition = .automatic
+    @State private var full = false
 
-    /// ピンが1つだけの日は寄りすぎるので、約2km四方を見せる。2つ以上は全部が入る範囲（自動）
-    static func camera(_ pins: [ChizuPin]) -> MapCameraPosition {
+    /// 軌跡がある日は軌跡とピンの全部が入る範囲。無い日は今のまま:
+    /// ピンが1つだけの日は寄りすぎるので約2km四方、2つ以上は全部が入る範囲（自動）
+    static func camera(_ pins: [ChizuPin], track: [TrackPoint] = []) -> MapCameraPosition {
+        if track.count >= 2, let r = Kiseki.region(track.map(\.coordinate) + pins.map(\.coordinate)) { return .region(r) }
         guard pins.count == 1, let p = pins.first else { return .automatic }
         return .region(MKCoordinateRegion(center: p.coordinate, latitudinalMeters: 2000, longitudinalMeters: 2000))
     }
+
+    private var hasTrack: Bool { track.count >= 2 }
+    private var summary: String? { ChizuContent.summary(track: track, steps: steps) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             SectionHead(title: "きょうの地図", count: pins.count)
                 .padding(.bottom, -10)
-            if pins.isEmpty {
+            if pins.isEmpty && !hasTrack {
                 Text("この日は位置の分かる記録がありません").font(Theme.gothic(12)).foregroundStyle(Theme.muted)
                     .accessibilityIdentifier("chizuEmpty")
             } else {
-                // 動かさない地図（ページを縦に送る指が地図を引きずらないように）。全部のピンが入る範囲を自動で見せる
-                Map(position: $position, interactionModes: []) {
-                    if pins.count >= 2 {
-                        MapPolyline(coordinates: pins.map(\.coordinate))
-                            .stroke(Theme.ink.opacity(0.7), lineWidth: 2)
-                    }
-                    ForEach(pins) { p in
-                        Annotation(p.title, coordinate: p.coordinate, anchor: .center) {
-                            PinNumber(number: p.number, size: 22)
-                                .accessibilityIdentifier("pin-\(p.number)")
-                        }
-                        .annotationTitles(.hidden)
-                    }
-                }
+                // 動かさない地図（ページを縦に送る指が地図を引きずらないように）。押すと全画面で動かせる地図
+                Map(position: $position, interactionModes: []) { ChizuContent.content(pins: pins, track: track) }
                 .mapStyle(.standard(pointsOfInterest: .excludingAll))
                 .frame(height: 260)
                 .clipShape(RoundedRectangle(cornerRadius: Theme.radius))
                 .overlay(RoundedRectangle(cornerRadius: Theme.radius).strokeBorder(Theme.line, lineWidth: Theme.hairline))
+                .overlay {
+                    // 地図の上の透明な面で押したことを受ける（地図そのものは押しても何もしない）
+                    Color.clear.contentShape(Rectangle()).onTapGesture { full = true }.accessibilityHidden(true)
+                }
                 .accessibilityIdentifier("chizu")
                 .accessibilityValue(pins.map { String($0.number) }.joined(separator: ","))
+                .accessibilityHint(hasTrack ? "軌跡 \(track.count) 点" : "")
+                .accessibilityAction(named: "全画面で見る") { full = true }
+                if let summary {
+                    Text(summary).pageSub()
+                        .lineLimit(1).minimumScaleFactor(0.8)
+                        .accessibilityIdentifier("chizuSummary")
+                }
                 if let url = Chizu.googleMapsURL(pins) {
                     Link("Google マップでルート", destination: url)
                         .buttonStyle(LinkButtonStyle(color: Theme.accent))
@@ -169,7 +179,11 @@ struct ChizuSection: View {
                 }
             }
         }
-        .onAppear { position = Self.camera(pins) }
-        .onChange(of: pins) { _, p in position = Self.camera(p) }
+        .onAppear { position = Self.camera(pins, track: track) }
+        .onChange(of: pins) { _, p in position = Self.camera(p, track: track) }
+        .onChange(of: track) { _, t in position = Self.camera(pins, track: t) }
+        .fullScreenCover(isPresented: $full) {
+            ChizuFullScreen(pins: pins, track: track, summary: summary, camera: Self.camera(pins, track: track))
+        }
     }
 }
