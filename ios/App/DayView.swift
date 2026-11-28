@@ -35,6 +35,9 @@ struct DayView: View {
     /// × で消すかけら（念押しのあと消す）
     @State private var pendingDelete: Kakera?
     @State private var photos = PhotoMaterials()
+    @State private var calendar = CalendarMaterials()
+    /// 一覧から外した予定の回（D1 の timeline_hidden・kind=event）
+    @State private var hiddenEvents: Set<String> = []
     @State private var places = PlaceMaterials()
     @State private var minato = MinatoMaterials()
     @State private var used = UsedMarks.shared
@@ -94,6 +97,7 @@ struct DayView: View {
             .onChange(of: day) { _, _ in kibun = nil; loadedDay = nil }
             .onChange(of: scenePhase) { _, p in
                 if p == .active {
+                    calendar.load(day)
                     photos.load(day)
                     places.load(day: day, assets: photos.assets)
                 }
@@ -120,6 +124,7 @@ struct DayView: View {
                 let args = ProcessInfo.processInfo.arguments
                 // 検査: -kakeraResetPhotoAdds で「別の日から足した写真」の印を空にして始める（UI テストを毎回同じ所から）
                 if args.contains("-kakeraResetPhotoAdds") { PhotoAdds.removeAll() }
+                seedEventsIfAsked()
                 if let i = args.firstIndex(of: "-kakeraOpen"), args.index(after: i) < args.endIndex {
                     web = AppStart(rawValue: args[args.index(after: i)])
                 }
@@ -209,7 +214,15 @@ struct DayView: View {
 
     // MARK: きょうの一覧（かけら＋場所を時刻順）
 
-    private var timeline: [TimelineItem] { DayPage.merge(kakera: kakera, basho: basho, photos: timelinePhotos) }
+    private var timeline: [TimelineItem] {
+        DayPage.merge(kakera: kakera, basho: basho, photos: timelinePhotos, yotei: timelineYotei)
+    }
+
+    /// 一覧の予定（外した回を除く。外した印を読み終えるまで出さない）
+    private var timelineYotei: [TimelineYotei] {
+        guard calendar.day == day, loadedDay == day else { return [] }
+        return DayPage.yotei(calendar.events, on: day, hidden: hiddenEvents)
+    }
 
     /// 一覧の写真: その日に撮ったもの（外したものを除く）＋別の日から足したもの（この日の同じ時刻に置く）
     private var timelinePhotos: [TimelinePhoto] {
@@ -261,6 +274,7 @@ struct DayView: View {
             Text(dayError).font(Theme.gothic(12)).foregroundStyle(Theme.accent).padding(.vertical, 4)
         }
         if API.shared.isConfigured(.kakera) {
+            CalendarAccessNote(status: calendar.status) { Task { await calendar.requestAccess(); seedEventsIfAsked() } }
             PhotoAccessNote(status: photos.status) { Task { await photos.requestAccess() } }
         }
         // かけらの行を押すと直す画面。⚠️ Button にすると中のリンク・リンクカードが押せないので、行は onTapGesture で開く
@@ -281,6 +295,8 @@ struct DayView: View {
                 .accessibilityAddTraits(.isButton)
         case .basho(let b):
             TimelineRow(item: item, cards: cards) { removeBasho(b) }
+        case .yotei(let y):
+            TimelineRow(item: item, cards: cards) { hideYotei(y) }
         case .photo(let p):
             TimelineRow(item: item, cards: cards) { hidePhoto(p) }
                 .onTapGesture {
@@ -310,6 +326,31 @@ struct DayView: View {
                 alert = "写真を外せませんでした: \(error.localizedDescription)"
             }
         }
+    }
+
+    /// 予定の ×: その回だけを一覧から外す（繰り返しの他の回は残る）。カレンダー本体は消さない
+    private func hideYotei(_ y: TimelineYotei) {
+        let target = day
+        hiddenEvents.insert(y.ref)
+        Task {
+            do {
+                try await API.shared.hide(kind: "event", ref: y.ref, on: target)
+            } catch {
+                if target == day { hiddenEvents.remove(y.ref) }
+                alert = "予定を外せませんでした: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    /// 検査だけ（DEBUG）: 起動引数 -kakeraSeedEvents YYYY-MM-DD で検証用のカレンダーに予定を入れる
+    private func seedEventsIfAsked() {
+        #if DEBUG
+        let args = ProcessInfo.processInfo.arguments
+        if let i = args.firstIndex(of: "-kakeraSeedEvents"), args.index(after: i) < args.endIndex {
+            calendar.seedForTesting(day: args[args.index(after: i)])
+            calendar.load(day)
+        }
+        #endif
     }
 
     /// 「写真を追加」で選んだ写真: 外したものなら印を取って戻す。別の日に撮ったものはこの日の一覧に足す
@@ -475,11 +516,14 @@ struct DayView: View {
         async let k: Result<(kakera: [Kakera], cards: LinkCards), Error> = capture { try await API.shared.kakera(on: target) }
         async let b: Result<[Basho], Error> = capture { try await API.shared.basho(on: target) }
         async let f: Result<Kibun?, Error> = capture { try await API.shared.kibun(on: target) }
-        async let h: Result<Set<String>, Error> = capture { try await API.shared.hiddenRefs(on: target) }
+        calendar.load(target)
+        async let h: Result<[String: Set<String>], Error> = capture { try await API.shared.hidden(on: target) }
         async let m: Void = minato.load(target)
         let (kr, br, fr, hr, _) = await (k, b, f, h, m)
         guard target == day else { return } // 読み込み中に日付が変わった
-        hiddenPhotos = (try? hr.get()) ?? []
+        let hiddenAll = (try? hr.get()) ?? [:]
+        hiddenPhotos = hiddenAll["photo"] ?? []
+        hiddenEvents = hiddenAll["event"] ?? []
         addedAssets = Self.fetchAdded(target)
         switch kr {
         case .success(let r): kakera = r.kakera; cards = r.cards; kakeraError = nil

@@ -40,6 +40,42 @@ final class DayPageTests: XCTestCase {
         XCTAssertEqual(apart.map(\.id), ["kakera-K", "basho-B"])
     }
 
+    private func yotei(_ title: String, _ start: String, _ end: String, allDay: Bool = false) -> Yotei {
+        Yotei(ref: Yotei.ref(eventIdentifier: "EV-\(title)", start: date(start)), title: title, start: date(start), end: date(end),
+              isAllDay: allDay, locationName: nil, location: nil)
+    }
+
+    func testYoteiRefSeparatesOccurrences() {
+        // 繰り返し予定は eventIdentifier が同じなので、回の開始日時で分ける
+        XCTAssertEqual(Yotei.ref(eventIdentifier: "ABC:123", start: date("2026-11-27T07:30:00+09:00")), "ABC:123|2026-11-27T07:30:00+09:00")
+        XCTAssertNotEqual(Yotei.ref(eventIdentifier: "ABC:123", start: date("2026-11-27T07:30:00+09:00")),
+                          Yotei.ref(eventIdentifier: "ABC:123", start: date("2026-11-28T07:30:00+09:00")))
+    }
+
+    func testYoteiAcrossDays() {
+        let bus = yotei("bus", "2026-11-26T22:00:00+09:00", "2026-11-27T01:30:00+09:00")
+        XCTAssertEqual(bus.rangeLabel(on: "2026-11-27"), "前日から〜01:30")
+        XCTAssertEqual(bus.shownAt(on: "2026-11-27"), date("2026-11-27T00:00:00+09:00"))
+        XCTAssertEqual(bus.rangeLabel(on: "2026-11-26"), "22:00〜翌日まで")
+        XCTAssertEqual(yotei("m", "2026-11-27T10:00:00+09:00", "2026-11-27T11:30:00+09:00").rangeLabel(on: "2026-11-27"), "10:00〜11:30")
+    }
+
+    func testAllDayFirstThenSameMinuteYoteiBeforeOthers() {
+        let ys = DayPage.yotei([
+            yotei("lunch", "2026-11-27T12:30:00+09:00", "2026-11-27T13:00:00+09:00"),
+            yotei("holiday", "2026-11-27T00:00:00+09:00", "2026-11-27T23:59:59+09:00", allDay: true),
+            yotei("bus", "2026-11-26T22:00:00+09:00", "2026-11-27T01:30:00+09:00"),
+            yotei("hidden", "2026-11-27T09:00:00+09:00", "2026-11-27T09:30:00+09:00"),
+        ], on: "2026-11-27", hidden: [Yotei.ref(eventIdentifier: "EV-hidden", start: date("2026-11-27T09:00:00+09:00"))])
+        let items = DayPage.merge(
+            kakera: [kakera("K", "2026-11-27T12:30:00+09:00"), kakera("K0", "2026-11-27T00:00:00+09:00")],
+            basho: [basho("B", "2026-11-27T12:30:10+09:00")], yotei: ys
+        )
+        XCTAssertEqual(items.map(\.id).map { $0.components(separatedBy: "|").first! },
+                       ["yotei-EV-holiday", "yotei-EV-bus", "kakera-K0", "yotei-EV-lunch", "basho-B", "kakera-K"])
+        XCTAssertEqual(items.first?.timeLabel, "終日")
+    }
+
     func testPhotoRefs() {
         let r = DayPage.photoRefs(dayRefs: ["a", "b", "c"], hidden: ["b"], added: ["x", "a", "x", "y"])
         XCTAssertEqual(r.own, ["a", "c"])

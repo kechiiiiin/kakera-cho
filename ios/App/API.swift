@@ -262,13 +262,13 @@ final class API: @unchecked Sendable {
         _ = try await raw(.kakera, "DELETE", "/api/place/\(id)")
     }
 
-    /// その日の一覧から外した写真の参照（localIdentifier）。予定（段階3）は kind=event
-    func hiddenRefs(on day: String, kind: String = "photo") async throws -> Set<String> {
+    /// その日の一覧から外した印（kind → ref の集まり。写真は localIdentifier、予定は「eventIdentifier|その回の開始」）
+    func hidden(on day: String) async throws -> [String: Set<String>] {
         let r: HiddenEnvelope = try await call(.kakera, "GET", "/api/timeline-hidden", query: [URLQueryItem(name: "date", value: day)])
-        return Set(r.hidden.filter { $0.kind == kind }.map(\.ref))
+        return Dictionary(grouping: r.hidden, by: \.kind).mapValues { Set($0.map(\.ref)) }
     }
 
-    /// 一覧から外す（ライブラリ・カレンダーからは消さない）
+    /// 一覧から外す（写真のライブラリ・カレンダーからは消さない）
     func hide(kind: String, ref: String, on day: String) async throws {
         _ = try await send("POST", "/api/timeline-hidden", ["kind": kind, "ref": ref, "date": day])
     }

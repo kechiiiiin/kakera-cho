@@ -52,8 +52,20 @@ struct TimelinePhoto: Hashable {
     }
 }
 
-/// きょうの一覧の一行（段階1はかけらと場所、段階2で写真。予定は段階3で足す）
+/// 一覧の予定（その日に表示する時刻つき）
+struct TimelineYotei: Hashable {
+    let yotei: Yotei
+    /// 一覧で並べる時刻（終日・前日から続く予定はその日の 0:00）
+    let shownAt: Date
+    /// 「10:00〜11:30」「終日」「前日から〜01:30」
+    let rangeLabel: String
+
+    var ref: String { yotei.ref }
+}
+
+/// きょうの一覧の一行（段階1はかけらと場所、段階2で写真、段階3で予定）
 enum TimelineItem: Identifiable, Hashable {
+    case yotei(TimelineYotei)
     case basho(Basho)
     case photo(TimelinePhoto)
     case kakera(Kakera)
@@ -63,6 +75,7 @@ enum TimelineItem: Identifiable, Hashable {
         case .kakera(let k): return "kakera-\(k.id)"
         case .basho(let b): return "basho-\(b.id)"
         case .photo(let p): return "photo-\(p.ref)"
+        case .yotei(let y): return "yotei-\(y.ref)"
         }
     }
 
@@ -71,12 +84,23 @@ enum TimelineItem: Identifiable, Hashable {
         case .kakera(let k): return k.writtenDate
         case .basho(let b): return b.atDate
         case .photo(let p): return p.shownAt
+        case .yotei(let y): return y.shownAt
         }
     }
 
-    /// 同じ時刻（分まで同じ）のときの並び: 予定(0)→場所(1)→写真(2)→かけら(3)。予定は段階3で 0 に入る
+    /// 終日の予定（一覧の先頭・時刻欄は「終日」）
+    var isAllDay: Bool {
+        if case .yotei(let y) = self { return y.yotei.isAllDay }
+        return false
+    }
+
+    /// 時刻欄の文字
+    var timeLabel: String { isAllDay ? "終日" : JST.time(date) }
+
+    /// 同じ時刻（分まで同じ）のときの並び: 予定(0)→場所(1)→写真(2)→かけら(3)
     var kindRank: Int {
         switch self {
+        case .yotei: return 0
         case .basho: return 1
         case .photo: return 2
         case .kakera: return 3
@@ -89,11 +113,13 @@ enum TimelineItem: Identifiable, Hashable {
         case .kakera(let k): return k.id
         case .basho(let b): return b.id
         case .photo(let p): return p.ref
+        case .yotei(let y): return y.ref
         }
     }
 
-    /// 並べ順の比較。画面に出す時刻（分）で比べ、同じ分なら種類の順、その中は秒まで含めた時刻、最後に id
+    /// 並べ順の比較。終日の予定が先頭。あとは画面に出す時刻（分）で比べ、同じ分なら種類の順、その中は秒まで含めた時刻、最後に id
     static func ordered(_ a: TimelineItem, _ b: TimelineItem) -> Bool {
+        if a.isAllDay != b.isAllDay { return a.isAllDay }
         let ma = (a.date.timeIntervalSince1970 / 60).rounded(.down), mb = (b.date.timeIntervalSince1970 / 60).rounded(.down)
         if ma != mb { return ma < mb }
         if a.kindRank != b.kindRank { return a.kindRank < b.kindRank }
@@ -110,9 +136,16 @@ enum EntryKind: String, CaseIterable, Identifiable {
 
 enum DayPage {
     /// かけら・場所・写真を時刻順に1本にする（同じ分は 予定→場所→写真→かけら）
-    static func merge(kakera: [Kakera], basho: [Basho], photos: [TimelinePhoto] = []) -> [TimelineItem] {
-        (kakera.map(TimelineItem.kakera) + basho.map(TimelineItem.basho) + photos.map(TimelineItem.photo))
+    static func merge(kakera: [Kakera], basho: [Basho], photos: [TimelinePhoto] = [], yotei: [TimelineYotei] = []) -> [TimelineItem] {
+        (yotei.map(TimelineItem.yotei) + kakera.map(TimelineItem.kakera) + basho.map(TimelineItem.basho) + photos.map(TimelineItem.photo))
             .sorted(by: TimelineItem.ordered)
+    }
+
+    /// その日の一覧に出す予定（外した印のある回を除く）
+    static func yotei(_ events: [Yotei], on day: String, hidden: Set<String>) -> [TimelineYotei] {
+        events.filter { !hidden.contains($0.ref) }.map {
+            TimelineYotei(yotei: $0, shownAt: $0.shownAt(on: day), rangeLabel: $0.rangeLabel(on: day))
+        }
     }
 
     /// 別の日に撮った写真を、この日の同じ時刻（JST の時・分・秒）に置く
@@ -220,7 +253,7 @@ struct KibunStamps: View {
 
 // MARK: - きょうの一覧
 
-/// 種類の印（罫と墨の小さな記号）: かけらは墨の小さな四角、場所は墨の輪、写真は墨の枠の四角
+/// 種類の印（罫と墨の小さな記号）: かけらは墨の小さな四角、場所は墨の輪、写真は墨の枠の四角、予定は墨の短い横棒
 struct KindMark: View {
     let item: TimelineItem
 
@@ -233,6 +266,8 @@ struct KindMark: View {
                 Circle().strokeBorder(Theme.ink, lineWidth: 1.2).frame(width: 8, height: 8)
             case .photo:
                 Rectangle().strokeBorder(Theme.ink, lineWidth: 1.2).frame(width: 8, height: 8)
+            case .yotei:
+                Rectangle().fill(Theme.ink).frame(width: 9, height: 1.5)
             }
         }
         .frame(width: 10, height: 10)
@@ -248,7 +283,7 @@ struct TimelineRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             VStack(alignment: .leading, spacing: 3) {
-                Text(JST.time(item.date)).font(Theme.mono(11)).foregroundStyle(Theme.muted)
+                Text(item.timeLabel).font(item.isAllDay ? Theme.gothic(11) : Theme.mono(11)).foregroundStyle(Theme.muted)
                 if case .kakera(let k) = item, k.katachiId != nil {
                     Text("かたち").font(Theme.mono(9.5)).foregroundStyle(Theme.muted.opacity(0.8))
                 }
@@ -289,6 +324,22 @@ struct TimelineRow: View {
                 }
             }
             .padding(.top, 1)
+        case .yotei(let y):
+            VStack(alignment: .leading, spacing: 3) {
+                Text(y.yotei.title).font(Theme.gothic(15)).foregroundStyle(Theme.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 8) {
+                    if !y.yotei.isAllDay {
+                        Text(y.rangeLabel).font(Theme.mono(11)).foregroundStyle(Theme.muted)
+                    }
+                    if let place = y.yotei.locationName {
+                        Text(place).font(Theme.gothic(11)).foregroundStyle(Theme.muted).lineLimit(1)
+                    }
+                }
+            }
+            .padding(.top, 1)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("yotei-\(y.yotei.title)")
         case .photo(let p):
             // 小さな絵（多い日でも重くならないよう、この大きさで読む）
             AssetThumb(asset: p.asset, side: TimelineRow.thumbSide)
