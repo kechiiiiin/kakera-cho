@@ -141,6 +141,7 @@ private struct KakeraEnvelope: Decodable { let kakera: Kakera }
 private struct DayEnvelope: Decodable { struct Day: Decodable { let date: String; let mood: String? }; let day: Day }
 private struct BashoListEnvelope: Decodable { let places: [Basho] }
 private struct BashoEnvelope: Decodable { let place: Basho }
+private struct HiddenEnvelope: Decodable { struct Row: Decodable { let kind: String; let ref: String; let date: String }; let hidden: [Row] }
 private struct PhotoUploaded: Decodable { let key: String; let url: String }
 private struct KatachiListEnvelope: Decodable { let katachi: [KatachiSummary] }
 private struct DetailEnvelope: Decodable {
@@ -259,6 +260,22 @@ final class API: @unchecked Sendable {
 
     func deleteBasho(id: String) async throws {
         _ = try await raw(.kakera, "DELETE", "/api/place/\(id)")
+    }
+
+    /// その日の一覧から外した写真の参照（localIdentifier）。予定（段階3）は kind=event
+    func hiddenRefs(on day: String, kind: String = "photo") async throws -> Set<String> {
+        let r: HiddenEnvelope = try await call(.kakera, "GET", "/api/timeline-hidden", query: [URLQueryItem(name: "date", value: day)])
+        return Set(r.hidden.filter { $0.kind == kind }.map(\.ref))
+    }
+
+    /// 一覧から外す（ライブラリ・カレンダーからは消さない）
+    func hide(kind: String, ref: String, on day: String) async throws {
+        _ = try await send("POST", "/api/timeline-hidden", ["kind": kind, "ref": ref, "date": day])
+    }
+
+    /// 外した印を取って一覧に戻す
+    func unhide(kind: String, ref: String) async throws {
+        _ = try await raw(.kakera, "DELETE", "/api/timeline-hidden", query: [URLQueryItem(name: "kind", value: kind), URLQueryItem(name: "ref", value: ref)])
     }
 
     /// 写真（JPEG）を上げる。戻りは本文に書く相対 URL（/api/photo/kakera/...）。Web 版と同じ multipart の形

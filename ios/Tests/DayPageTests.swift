@@ -27,6 +27,32 @@ final class DayPageTests: XCTestCase {
         XCTAssertEqual(items.map(\.id), ["basho-B0", "kakera-K1", "basho-B1", "kakera-K2"])
     }
 
+    func testSameMinuteOrderIsPlaceThenPhotoThenKakera() {
+        // 分が同じなら 予定→場所→写真→かけら（秒が後でも場所が先）
+        let items = DayPage.merge(
+            kakera: [kakera("K", "2026-11-27T12:30:00+09:00")],
+            basho: [basho("B", "2026-11-27T12:30:50+09:00")]
+        )
+        XCTAssertEqual(items.map(\.id), ["basho-B", "kakera-K"])
+        XCTAssertEqual(items.map(\.kindRank), [1, 3])
+        // 分が違えば時刻順のまま
+        let apart = DayPage.merge(kakera: [kakera("K", "2026-11-27T12:29:59+09:00")], basho: [basho("B", "2026-11-27T12:30:00+09:00")])
+        XCTAssertEqual(apart.map(\.id), ["kakera-K", "basho-B"])
+    }
+
+    func testPhotoRefs() {
+        let r = DayPage.photoRefs(dayRefs: ["a", "b", "c"], hidden: ["b"], added: ["x", "a", "x", "y"])
+        XCTAssertEqual(r.own, ["a", "c"])
+        // その日に撮ったもの（外したものも含む）は足した側に出さない。重なりは1回
+        XCTAssertEqual(r.added, ["x", "y"])
+    }
+
+    func testShownAtKeepsTimeOfDay() {
+        let taken = date("2026-11-20T17:42:31+09:00")
+        XCTAssertEqual(DayPage.shownAt(taken: taken, on: "2026-11-27"), date("2026-11-27T17:42:31+09:00"))
+        XCTAssertEqual(JST.shortDate(taken), "11/20")
+    }
+
     func testDefaultEntryDate() {
         let now = date("2026-11-28T15:42:10+09:00")
         // 今日は今

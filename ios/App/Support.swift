@@ -26,6 +26,7 @@ enum JST {
     private static let writtenFormatter = formatter("yyyy-MM-dd'T'HH:mm:ssxxx")
     private static let timeFormatter = formatter("HH:mm")
     private static let titleFormatter = formatter("M月d日（E）", locale: "ja_JP")
+    private static let shortDateFormatter = formatter("M/d")
     private static let isoPlain: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime]
@@ -59,6 +60,8 @@ enum JST {
     static func parse(_ s: String) -> Date? { isoPlain.date(from: s) ?? isoFraction.date(from: s) }
 
     static func time(_ d: Date) -> String { timeFormatter.string(from: d) }
+    /// 「11/20」（別の日の写真に添える）
+    static func shortDate(_ d: Date) -> String { shortDateFormatter.string(from: d) }
     static func title(_ key: String) -> String { dayRange(key).map { titleFormatter.string(from: $0.start) } ?? key }
 }
 

@@ -1,4 +1,5 @@
 import Photos
+import PhotosUI
 import SwiftUI
 
 /// 日ごとの画面（1日1ページの手帳・かけら帳1日のページ設計）: 日付を左右で移る（既定は今日）。並びは
@@ -24,6 +25,13 @@ struct DayView: View {
     @State private var adding = false
     /// 入力欄に書いている間は「書く」の帯を出さない（キーボードの上に乗って欄を隠すので）
     @FocusState private var entryFocused: Bool
+    /// 一覧から外した写真（D1 の timeline_hidden・kind=photo）。読めなければ空（全部出す）
+    @State private var hiddenPhotos: Set<String> = []
+    /// 別の日に撮って足した写真（端末の UserDefaults の印から引いたもの）
+    @State private var addedAssets: [PHAsset] = []
+    @State private var pickedPhotos: [PhotosPickerItem] = []
+    /// 全画面で見ている写真（同じ日の写真を左右で送る）
+    @State private var viewer: ViewerStart?
     /// × で消すかけら（念押しのあと消す）
     @State private var pendingDelete: Kakera?
     @State private var photos = PhotoMaterials()
@@ -50,7 +58,8 @@ struct DayView: View {
                     timelineSection
                     if API.shared.isConfigured(.kakera) {
                         EntryBox(kind: $entryKind, at: $entryAt, text: $entryText, range: DayPage.entryRange(day: day),
-                                 adding: adding, enabled: loadedKakera && loadedDay == day, focused: $entryFocused) { addEntry() }
+                                 adding: adding, enabled: loadedKakera && loadedDay == day, focused: $entryFocused,
+                                 pickedPhotos: $pickedPhotos) { addEntry() }
                     }
                     MaterialsHeader(minato: minato, canCollect: API.shared.isConfigured(.minato)) {
                         Task { await minato.collectNow() }
@@ -89,7 +98,13 @@ struct DayView: View {
                     places.load(day: day, assets: photos.assets)
                 }
             }
-            .onChange(of: photos.status) { _, _ in places.load(day: day, assets: photos.assets) }
+            .onChange(of: photos.status) { _, _ in places.load(day: day, assets: photos.assets); addedAssets = Self.fetchAdded(day) }
+            .onChange(of: pickedPhotos) { _, items in
+                guard !items.isEmpty else { return }
+                pickedPhotos = []
+                addPicked(items.compactMap(\.itemIdentifier))
+            }
+            .fullScreenCover(item: $viewer) { v in PhotoViewer(photos: v.photos, index: v.index) }
             .sheet(item: $draft) { d in
                 EditorView(draft: d, cards: cards) { Task { await reload() } }
             }
@@ -103,6 +118,8 @@ struct DayView: View {
             .onAppear {
                 // 検査: 起動引数 -kakeraOpen katachi などで、その画面を開いた状態で始める
                 let args = ProcessInfo.processInfo.arguments
+                // 検査: -kakeraResetPhotoAdds で「別の日から足した写真」の印を空にして始める（UI テストを毎回同じ所から）
+                if args.contains("-kakeraResetPhotoAdds") { PhotoAdds.removeAll() }
                 if let i = args.firstIndex(of: "-kakeraOpen"), args.index(after: i) < args.endIndex {
                     web = AppStart(rawValue: args[args.index(after: i)])
                 }
@@ -192,7 +209,31 @@ struct DayView: View {
 
     // MARK: きょうの一覧（かけら＋場所を時刻順）
 
-    private var timeline: [TimelineItem] { DayPage.merge(kakera: kakera, basho: basho) }
+    private var timeline: [TimelineItem] { DayPage.merge(kakera: kakera, basho: basho, photos: timelinePhotos) }
+
+    /// 一覧の写真: その日に撮ったもの（外したものを除く）＋別の日から足したもの（この日の同じ時刻に置く）
+    private var timelinePhotos: [TimelinePhoto] {
+        guard photos.day == day, loadedDay == day else { return [] } // 外した印を読み終えるまで出さない（外した写真が一瞬出ない）
+        let refs = DayPage.photoRefs(dayRefs: photos.assets.map(\.localIdentifier), hidden: hiddenPhotos,
+                                     added: addedAssets.map(\.localIdentifier))
+        let own = Set(refs.own), extra = Set(refs.added)
+        return photos.assets.filter { own.contains($0.localIdentifier) }.map {
+            TimelinePhoto(asset: $0, shownAt: $0.creationDate ?? .distantPast, added: false)
+        } + addedAssets.filter { extra.contains($0.localIdentifier) }.map {
+            TimelinePhoto(asset: $0, shownAt: DayPage.shownAt(taken: $0.creationDate ?? .distantPast, on: day), added: true)
+        }
+    }
+
+    /// 足した印（UserDefaults）から写真を引く。消えた写真・見えない写真（限定アクセスの外）は黙って飛ばす
+    private static func fetchAdded(_ day: String) -> [PHAsset] {
+        let refs = PhotoAdds.refs(on: day)
+        let st = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        guard !refs.isEmpty, st == .authorized || st == .limited else { return [] }
+        let r = PHAsset.fetchAssets(withLocalIdentifiers: refs, options: nil)
+        var list: [PHAsset] = []
+        r.enumerateObjects { a, _, _ in list.append(a) }
+        return list
+    }
 
     @ViewBuilder
     private var timelineSection: some View {
@@ -219,18 +260,20 @@ struct DayView: View {
         if let dayError {
             Text(dayError).font(Theme.gothic(12)).foregroundStyle(Theme.accent).padding(.vertical, 4)
         }
-        // かけらの行を押すと直す画面。⚠️ Button にすると中のリンク・リンクカードが押せないので、行は onTapGesture で開く
-        VStack(alignment: .leading, spacing: 0) {
-            ForEach(items) { item in
-                row(item)
-                    .ruledRow(first: item.id == items.first?.id)
-            }
+        if API.shared.isConfigured(.kakera) {
+            PhotoAccessNote(status: photos.status) { Task { await photos.requestAccess() } }
         }
-        .modifier(TimelineRail())
+        // かけらの行を押すと直す画面。⚠️ Button にすると中のリンク・リンクカードが押せないので、行は onTapGesture で開く
+        // 行は LazyVStack の直の子にする（写真の多い日も、見えている行の絵だけを読む）。縦線は行ごとに引いてつなげる
+        ForEach(items) { item in
+            row(item, in: items)
+                .ruledRow(first: item.id == items.first?.id)
+                .modifier(TimelineRail())
+        }
     }
 
     @ViewBuilder
-    private func row(_ item: TimelineItem) -> some View {
+    private func row(_ item: TimelineItem, in items: [TimelineItem]) -> some View {
         switch item {
         case .kakera(let k):
             TimelineRow(item: item, cards: cards) { pendingDelete = k }
@@ -238,6 +281,69 @@ struct DayView: View {
                 .accessibilityAddTraits(.isButton)
         case .basho(let b):
             TimelineRow(item: item, cards: cards) { removeBasho(b) }
+        case .photo(let p):
+            TimelineRow(item: item, cards: cards) { hidePhoto(p) }
+                .onTapGesture {
+                    let list = items.compactMap { if case .photo(let q) = $0 { return q } else { return nil } }
+                    viewer = ViewerStart(photos: list, index: list.firstIndex(of: p) ?? 0)
+                }
+                .accessibilityAddTraits(.isButton)
+        }
+    }
+
+    // MARK: 写真（外す・戻す・別の日から足す）
+
+    /// 写真の ×: その日に撮ったものは外した印（D1）、足したものは足した印（端末）を取る。ライブラリからは消さない
+    private func hidePhoto(_ p: TimelinePhoto) {
+        let target = day
+        if p.added {
+            PhotoAdds.remove(p.ref, on: target)
+            addedAssets.removeAll { $0.localIdentifier == p.ref }
+            return
+        }
+        hiddenPhotos.insert(p.ref)
+        Task {
+            do {
+                try await API.shared.hide(kind: "photo", ref: p.ref, on: target)
+            } catch {
+                if target == day { hiddenPhotos.remove(p.ref) }
+                alert = "写真を外せませんでした: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    /// 「写真を追加」で選んだ写真: 外したものなら印を取って戻す。別の日に撮ったものはこの日の一覧に足す
+    private func addPicked(_ refs: [String]) {
+        let target = day
+        Task {
+            if !photos.canRead { await photos.requestAccess() }
+            guard photos.canRead else {
+                alert = "写真へのアクセスが無いので、写真を一覧に足せません"
+                return
+            }
+            let found = PHAsset.fetchAssets(withLocalIdentifiers: refs, options: nil)
+            var assets: [PHAsset] = []
+            found.enumerateObjects { a, _, _ in assets.append(a) }
+            var missing = refs.count - assets.count
+            for a in assets {
+                let ref = a.localIdentifier
+                if hiddenPhotos.contains(ref) {
+                    do {
+                        try await API.shared.unhide(kind: "photo", ref: ref)
+                        if target == day { hiddenPhotos.remove(ref) }
+                    } catch {
+                        alert = "写真を戻せませんでした: \(error.localizedDescription)"
+                    }
+                } else if let d = a.creationDate, JST.dayKey(d) != target {
+                    PhotoAdds.add(ref, on: target)
+                } else if a.creationDate == nil {
+                    missing += 1
+                }
+                // その日に撮って外していない写真は、もう一覧にある
+            }
+            guard target == day else { return }
+            addedAssets = Self.fetchAdded(target)
+            if missing > 0 { Toast.shared.say("見えない写真がありました（限定アクセスの外・撮影日時なし）") }
         }
     }
 
@@ -369,9 +475,12 @@ struct DayView: View {
         async let k: Result<(kakera: [Kakera], cards: LinkCards), Error> = capture { try await API.shared.kakera(on: target) }
         async let b: Result<[Basho], Error> = capture { try await API.shared.basho(on: target) }
         async let f: Result<Kibun?, Error> = capture { try await API.shared.kibun(on: target) }
+        async let h: Result<Set<String>, Error> = capture { try await API.shared.hiddenRefs(on: target) }
         async let m: Void = minato.load(target)
-        let (kr, br, fr, _) = await (k, b, f, m)
+        let (kr, br, fr, hr, _) = await (k, b, f, h, m)
         guard target == day else { return } // 読み込み中に日付が変わった
+        hiddenPhotos = (try? hr.get()) ?? []
+        addedAssets = Self.fetchAdded(target)
         switch kr {
         case .success(let r): kakera = r.kakera; cards = r.cards; kakeraError = nil
         case .failure(let e): kakera = []; cards = [:]; kakeraError = API.shared.isConfigured(.kakera) ? e.localizedDescription : nil
@@ -439,4 +548,11 @@ struct DayView: View {
     private func makeFromPlace(_ p: Place) {
         draft = .new(body: p.name + "\n", at: p.firstAt, materialKey: p.markKey)
     }
+}
+
+/// 全画面の写真の開き方（どの写真の並びの何枚目から）
+struct ViewerStart: Identifiable {
+    let id = UUID()
+    let photos: [TimelinePhoto]
+    let index: Int
 }
