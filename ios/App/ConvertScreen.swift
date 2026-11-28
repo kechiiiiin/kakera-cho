@@ -43,6 +43,7 @@ enum NameMarks {
             style(&w)
             switch m.status {
             case "exception":
+                w.foregroundColor = Theme.ink
                 w.underlineStyle = .init(pattern: .dot, color: Color(uiColor: UIColor(hex: 0xC7C2B6)))
             case "reject":
                 w.foregroundColor = Theme.accent
@@ -50,9 +51,13 @@ enum NameMarks {
                 w.underlineStyle = .init(pattern: .solid, color: Theme.accent)
                 w.font = Theme.gothic(15, weight: .bold)
             case "edit":
+                w.foregroundColor = Theme.ink
                 w.backgroundColor = Color(uiColor: UIColor(hex: 0xECE9E1))
                 w.underlineStyle = .init(pattern: .dash, color: Theme.ink)
             default:
+                // 辞書どおり（Web の .mk-dict は灰の下線）。実画面で下線が落ちることがあるので、淡い地も付けて見分ける
+                w.foregroundColor = Theme.ink
+                w.backgroundColor = Color(uiColor: UIColor(hex: 0xEDEAE3))
                 w.underlineStyle = .init(pattern: .solid, color: Color(uiColor: UIColor(hex: 0xA7A296)))
             }
             if pressable, m.status != "exception", let u = url(seg: seg, id: m.id) { w.link = u }
@@ -115,6 +120,7 @@ struct MarkedBody: View {
                 case .para(_, let r, let inner):
                     Text(paragraph(r))
                         .font(Theme.gothic(15)).foregroundStyle(Theme.ink).lineSpacing(5)
+                        .tint(Theme.ink)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     ForEach(inner, id: \.self) { k in PhotoSwitch(off: hidden.contains(k)) { onToggle(k) } }
@@ -125,8 +131,21 @@ struct MarkedBody: View {
         }
     }
 
-    /// 段落の中の切れ（text・url・raw・link・リンクの中の画像）。リンクは淡い点線だけ（印と見分けるため）
-    private func paragraph(_ r: NSRange) -> AttributedString {
+    /// 写真の代替文字（と題）。公開 HTML の alt に出るので見えないままにしない
+    private func altText(_ t: ViewToken) -> AttributedString {
+        var a = inlineText(t.alt ?? [], t.start, t.end)
+        if let title = t.title {
+            a += AttributedString("（")
+            a += NameMarks.attributed(seg.text, spans: seg.spans, range: NSRange(location: title.start, length: title.end - title.start), pressable: true, seg: seg.seg)
+            a += AttributedString("）")
+        }
+        return a
+    }
+
+    private func paragraph(_ r: NSRange) -> AttributedString { inlineText(seg.tokens, r.location, r.location + r.length) }
+
+    /// 段落の中の切れ（text・url・raw・link・リンクの中の画像）。リンクは淡い点線だけ（印と見分けるため）。[a, b) の外の素の文字は落とす
+    private func inlineText(_ tokens: [ViewToken], _ a0: Int, _ b0: Int) -> AttributedString {
         var out = AttributedString()
         func inline(_ tokens: [ViewToken], _ a: Int, _ b: Int) {
             for t in tokens {
@@ -161,7 +180,7 @@ struct MarkedBody: View {
                 }
             }
         }
-        inline(seg.tokens, r.location, r.location + r.length)
+        inline(tokens, a0, b0)
         return out
     }
 
@@ -189,8 +208,8 @@ struct MarkedBody: View {
             if altHasText || t.title != nil {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text("代替文字").font(Theme.gothic(10.5)).foregroundStyle(Theme.muted)
-                    Text(NameMarks.attributed(seg.text, spans: seg.spans, range: NSRange(location: t.start, length: t.end - t.start), pressable: true, seg: seg.seg))
-                        .font(Theme.gothic(13))
+                    Text(altText(t))
+                        .font(Theme.gothic(13)).tint(Theme.ink)
                 }
             }
         }
@@ -493,7 +512,7 @@ struct ConvertScreen: View {
         if let e = titleSeg?.error { warn(e) }
         if let t = titleSeg, !t.text.isEmpty {
             Text(NameMarks.attributed(t.text, spans: t.spans, range: NSRange(location: 0, length: (t.text as NSString).length), pressable: true, seg: t.seg))
-                .font(Theme.gothic(18, weight: .semibold)).foregroundStyle(Theme.ink).id("title")
+                .font(Theme.gothic(18, weight: .semibold)).foregroundStyle(Theme.ink).tint(Theme.ink).id("title")
         } else {
             Text(detail?.katachi.date ?? "").font(Theme.gothic(18)).foregroundStyle(Theme.muted)
         }
@@ -501,7 +520,7 @@ struct ConvertScreen: View {
         if let d = descSeg {
             if let e = d.error { warn(e) }
             Text(NameMarks.attributed(d.text, spans: d.spans, range: NSRange(location: 0, length: (d.text as NSString).length), pressable: true, seg: d.seg))
-                .font(Theme.gothic(13.5)).foregroundStyle(Theme.muted).id("description")
+                .font(Theme.gothic(13.5)).foregroundStyle(Theme.muted).tint(Theme.ink).id("description")
         } else {
             Text("なし（ブログの紹介文が出ます）").font(Theme.gothic(13.5)).foregroundStyle(Theme.muted)
         }
@@ -604,10 +623,10 @@ struct ConvertScreen: View {
         }
     }
 
-    private func label(_ s: String) -> some View { Text(s).sectionHeading() }
+    private func label(_ s: String) -> some View { Text(s).sectionHeading().padding(.top, 6).padding(.bottom, 2) }
 
     private func note(_ s: String) -> some View {
-        Text(s).font(Theme.gothic(11.5)).foregroundStyle(Theme.muted).padding(.vertical, 6).fixedSize(horizontal: false, vertical: true)
+        Text(s).font(Theme.gothic(11.5)).foregroundStyle(Theme.muted).lineSpacing(3).padding(.vertical, 6).fixedSize(horizontal: false, vertical: true)
     }
 
     private func warn(_ s: String) -> some View {
@@ -619,7 +638,7 @@ struct ConvertScreen: View {
     }
 
     private func carry(_ t: AttributedString) -> some View {
-        Text(t).font(Theme.gothic(12.5)).foregroundStyle(Theme.muted).padding(.bottom, 8).fixedSize(horizontal: false, vertical: true)
+        Text(t).font(Theme.gothic(12.5)).foregroundStyle(Theme.muted).lineSpacing(3).padding(.bottom, 8).fixedSize(horizontal: false, vertical: true)
     }
 
     /// 文字の切れ（太字にするか・朱にするか）をつないだ一文

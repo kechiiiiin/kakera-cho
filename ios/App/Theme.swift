@@ -139,7 +139,7 @@ extension View {
 
     /// .page-sub（灰 12.5pt の小さな一行）
     func pageSub() -> some View {
-        self.font(Theme.gothic(12.5)).foregroundStyle(Theme.muted)
+        self.font(Theme.gothic(12.5)).foregroundStyle(Theme.muted).lineSpacing(3)
     }
 
     /// 罫で区切った並びの一行（上に罫。最後の行は lastRule で下にも罫）
@@ -187,12 +187,14 @@ struct CTAButtonStyle: ButtonStyle {
 /// .icon-btn / .btn-ghost: 1pt の罫の枠・灰の文字
 struct GhostButtonStyle: ButtonStyle {
     var compact = false
+    var fullWidth = false
     @Environment(\.isEnabled) private var enabled
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(Theme.gothic(12, weight: .medium))
             .foregroundStyle(Theme.muted)
             .padding(.horizontal, compact ? 0 : 14).frame(minWidth: 36, minHeight: 36)
+            .frame(maxWidth: fullWidth ? .infinity : nil)
             .overlay(RoundedRectangle(cornerRadius: Theme.radius).strokeBorder(Theme.line, lineWidth: Theme.hairline))
             .contentShape(Rectangle())
             .opacity(enabled ? (configuration.isPressed ? 0.7 : 1) : 0.4)

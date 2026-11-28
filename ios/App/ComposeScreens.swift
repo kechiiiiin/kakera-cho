@@ -292,10 +292,10 @@ struct AssembleScreen: View {
             .padding(.top, 22)
             .accessibilityIdentifier("toConvert")
         Text("次の画面で、名前を公開用に置き換えます（タイトルと説明にも）。かけらは実名のまま残ります。")
-            .font(Theme.gothic(11.5)).foregroundStyle(Theme.muted).padding(.top, 8).fixedSize(horizontal: false, vertical: true)
+            .font(Theme.gothic(11.5)).foregroundStyle(Theme.muted).lineSpacing(3).padding(.top, 8).fixedSize(horizontal: false, vertical: true)
         if d.nikki != nil {
             Text("既にある日記を、この内容で丸ごと上書きします（差分の追記ではありません）。X には再投稿されません。")
-                .font(Theme.gothic(11.5)).foregroundStyle(Theme.muted).padding(.top, 4).fixedSize(horizontal: false, vertical: true)
+                .font(Theme.gothic(11.5)).foregroundStyle(Theme.muted).lineSpacing(3).padding(.top, 4).fixedSize(horizontal: false, vertical: true)
         }
     }
 

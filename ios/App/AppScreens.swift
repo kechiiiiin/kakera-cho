@@ -49,6 +49,9 @@ struct AppScreens: View {
         .background(Theme.paper.ignoresSafeArea())
         .environment(nav)
         .toastOverlay()
+        #if DEBUG
+        .task { await debugPush() }
+        #endif
         .onChange(of: nav.requestStart) { _, s in
             guard let s else { return }
             nav.popToRoot()
@@ -56,6 +59,28 @@ struct AppScreens: View {
             nav.requestStart = nil
         }
     }
+
+    #if DEBUG
+    /// 検査: 起動引数 -kakeraPush read:<id>,assemble:<id>,convert:<id>,nameMap,word:<言葉> で行き先まで開く（スクリーンショット用）
+    private func debugPush() async {
+        let args = ProcessInfo.processInfo.arguments
+        guard let i = args.firstIndex(of: "-kakeraPush"), args.index(after: i) < args.endIndex else { return }
+        for item in args[args.index(after: i)].split(separator: ",").map(String.init) {
+            let p = item.split(separator: ":", maxSplits: 1).map(String.init)
+            switch p.first {
+            case "read": nav.push(.read(p[1]))
+            case "assemble": nav.push(.assemble(p[1]))
+            case "convert":
+                guard let d = try? await KakeraStore.shared.loadDetail(p[1]) else { continue }
+                let order = OrderRules.initialOrder(kakera: d.kakera.map { ($0.id, $0.writtenAt) }, publishedIds: d.publishedIds)
+                nav.push(.convert(katachiId: p[1], order: order, title: d.katachi.title))
+            case "nameMap": nav.push(.nameMap)
+            case "word": nav.push(.word(p[1]))
+            default: break
+            }
+        }
+    }
+    #endif
 
     private var topbar: some View {
         VStack(spacing: 0) {
@@ -408,7 +433,7 @@ struct ReadScreen: View {
 
         if editing {
             Button("かけらを足す") { picking = true }
-                .buttonStyle(GhostButtonStyle()).frame(maxWidth: .infinity).padding(.top, 20)
+                .buttonStyle(GhostButtonStyle(fullWidth: true)).padding(.top, 20)
                 .accessibilityIdentifier("addKakera")
         }
         Button(d.nikki != nil ? "日記に書き足す" : "日記にする") { nav.push(.assemble(id)) }
@@ -417,7 +442,7 @@ struct ReadScreen: View {
             .accessibilityIdentifier("toAssemble")
         if editing && d.nikki == nil {
             Button("かたちを解く") { confirmDissolve = true }
-                .buttonStyle(GhostButtonStyle()).frame(maxWidth: .infinity).padding(.top, 14)
+                .buttonStyle(GhostButtonStyle(fullWidth: true)).padding(.top, 14)
         }
     }
 
@@ -431,7 +456,7 @@ struct ReadScreen: View {
     }
 
     private func note(_ s: String) -> some View {
-        Text(s).font(Theme.gothic(11.5)).foregroundStyle(Theme.muted).padding(.top, 6).fixedSize(horizontal: false, vertical: true)
+        Text(s).font(Theme.gothic(11.5)).foregroundStyle(Theme.muted).lineSpacing(3).padding(.top, 6).fixedSize(horizontal: false, vertical: true)
     }
 
     private func run(_ done: String?, _ f: () async throws -> Void) async {

@@ -128,7 +128,7 @@ struct PageTitle: View {
                 .font(mincho ? Theme.mincho(size + 3) : Theme.gothic(size, weight: .medium))
                 .foregroundStyle(Theme.ink)
                 .fixedSize(horizontal: false, vertical: true)
-            if let sub { Text(sub).pageSub().fixedSize(horizontal: false, vertical: true) }
+            if let sub { Text(sub).pageSub().fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading) }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.bottom, 8)

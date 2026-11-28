@@ -229,6 +229,11 @@ final class MarkdownTextView: UITextView {
         restyle()
     }
 
+    /// 空かどうかで薄い案内文を出し入れする（変換中も。属性には触らない）
+    func updatePlaceholder() {
+        placeholderLabel.isHidden = !textStorage.string.isEmpty
+    }
+
     /// 飾りを付け直す。⚠️ 変換中（markedTextRange がある間）は何もしない
     func restyle() {
         guard markedTextRange == nil else { return }
@@ -413,6 +418,7 @@ final class MarkdownEditorController: NSObject, ObservableObject, UITextViewDele
 
     func textViewDidChange(_ textView: UITextView) {
         refreshUndo()
+        self.textView.updatePlaceholder()
         // ⚠️ 変換中は飾りも知らせもしない（確定したときにもう一度呼ばれる）
         guard textView.markedTextRange == nil else { return }
         self.textView.restyle()

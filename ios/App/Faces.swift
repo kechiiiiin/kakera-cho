@@ -51,6 +51,12 @@ enum Faces {
             var found: [FaceRules.Found] = []
             func run(_ img: CGImage, ox: Int, oy: Int, tw: Int, th: Int) throws {
                 let req = VNDetectFaceRectanglesRequest()
+                #if targetEnvironment(simulator)
+                // シミュレータは既定の計算装置（Neural Engine・GPU）を作れないことがある。CPU で回す（実機は既定のまま）
+                if let cpu = try? req.supportedComputeStageDevices[.main]?.first(where: { if case .cpu = $0 { return true } else { return false } }) {
+                    req.setComputeDevice(cpu, for: .main)
+                }
+                #endif
                 try VNImageRequestHandler(cgImage: img, options: [:]).perform([req])
                 for o in req.results ?? [] {
                     let b = o.boundingBox // 0〜1・左下が原点

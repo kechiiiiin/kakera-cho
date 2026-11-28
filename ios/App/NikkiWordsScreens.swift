@@ -237,6 +237,7 @@ struct MarkedText: View {
     var body: some View {
         Text(NameMarks.attributed(text, spans: spans, range: NSRange(location: 0, length: (text as NSString).length), pressable: false))
             .fixedSize(horizontal: false, vertical: true)
+            .tint(Theme.ink)
     }
 }
 
