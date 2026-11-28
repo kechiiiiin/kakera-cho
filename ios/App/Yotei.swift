@@ -38,6 +38,14 @@ struct Yotei: Hashable {
         let to = c.toAfter ? "翌日まで" : JST.time(c.end)
         return "\(from)〜\(to)"
     }
+
+    /// 1日のページの行の下の小さな字（始まりは行の左の時・分にあるので、終わりだけ）: 「14:00まで」「翌日まで」「前日から・01:30まで」。終日は nil
+    func untilLabel(on day: String) -> String? {
+        if isAllDay { return nil }
+        let c = clipped(to: day)
+        let to = c.toAfter ? "翌日まで" : "\(JST.time(c.end))まで"
+        return c.fromBefore ? "前日から・\(to)" : to
+    }
 }
 
 /// 端末のカレンダー。許可を求めるのは画面の「予定を並べる」を押してから（理由を先に出す）
@@ -153,10 +161,12 @@ struct CalendarAccessNote: View {
                     .font(Theme.gothic(12)).foregroundStyle(Theme.muted).lineSpacing(3)
                     .fixedSize(horizontal: false, vertical: true)
                 Button("予定を並べる") { onRequest() }
-                    .buttonStyle(LinkButtonStyle(color: Theme.accent))
+                    .buttonStyle(CTAButtonStyle())
+                    .padding(.top, 4)
                     .accessibilityIdentifier("allowTimelineEvents")
             }
-            .padding(.vertical, 8)
+            .noteBox()
+            .padding(.vertical, 6)
         case .fullAccess:
             EmptyView()
         default:

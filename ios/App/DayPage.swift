@@ -4,6 +4,7 @@ import PhotosUI
 import SwiftUI
 
 // 1日のページの部品（かけら帳1日のページ設計・段階1〜2）: きょうの一覧（かけら＋場所＋写真を時刻順）・入力欄。
+// 見た目は 2026-11-28 の刷新「C 丸 時間の帳」: 一覧は時ごとの段（左に時、行の左に分）、入力は下の帯（か｜場｜写・丸い欄・朱の ＋）。
 // 気分のハンコは 2026-11-28 に画面から外した（D1 の day・/api/day はそのまま残す）。
 // Web の src/lib/kakera/day-input.ts（場所の検査）・day-db.ts（Place の形）・
 // src/pages/api/day/[date].ts・src/pages/api/place/ と対になる。並べ方と時刻の初期値は DayPage に置いて XCTest で確かめる。
@@ -118,12 +119,6 @@ enum TimelineItem: Identifiable, Hashable {
     }
 }
 
-enum EntryKind: String, CaseIterable, Identifiable {
-    case kakera, basho
-    var id: String { rawValue }
-    var label: String { self == .kakera ? "かけら" : "場所" }
-}
-
 enum DayPage {
     /// かけら・場所・写真を時刻順に1本にする（同じ分は 予定→場所→写真→かけら）
     static func merge(kakera: [Kakera], basho: [Basho], photos: [TimelinePhoto] = [], yotei: [TimelineYotei] = []) -> [TimelineItem] {
@@ -207,226 +202,388 @@ enum BashoGeocoder {
     }
 }
 
-// MARK: - きょうの一覧
+// MARK: - きょうの一覧（時の段・C 丸「時間の帳」）
 
-/// 種類の印（罫と墨の小さな記号）: かけらは墨の小さな四角、場所は墨の輪、自動で残した場所は輪の中に点、写真は墨の枠の四角、予定は墨の短い横棒
-struct KindMark: View {
-    let item: TimelineItem
+/// 時の段の一行: 一つの項目か、同じ時の中で続けて撮った写真の並び（横に並べる）
+enum HourRow: Identifiable, Hashable {
+    case item(TimelineItem)
+    case photos([TimelinePhoto])
 
-    var body: some View {
-        Group {
-            switch item {
-            case .kakera:
-                Rectangle().fill(Theme.ink).frame(width: 5, height: 5)
-            case .basho(let b) where b.source == "visit":
-                // 自動で残した場所: 墨の輪の中に点（手入力の輪と見分ける）
-                Circle().strokeBorder(Theme.ink, lineWidth: 1.2).frame(width: 9, height: 9)
-                    .overlay(Circle().fill(Theme.ink).frame(width: 3, height: 3))
-            case .basho:
-                Circle().strokeBorder(Theme.ink, lineWidth: 1.2).frame(width: 8, height: 8)
-            case .photo:
-                Rectangle().strokeBorder(Theme.ink, lineWidth: 1.2).frame(width: 8, height: 8)
-            case .yotei:
-                Rectangle().fill(Theme.ink).frame(width: 9, height: 1.5)
-            }
+    var id: String {
+        switch self {
+        case .item(let i): return i.id
+        case .photos(let ps): return "photos-\(ps.first?.ref ?? "")"
         }
-        .frame(width: 10, height: 10)
+    }
+
+    var date: Date {
+        switch self {
+        case .item(let i): return i.date
+        case .photos(let ps): return ps.first?.shownAt ?? .distantPast
+        }
+    }
+
+    /// 時刻の全体（「08:40」「終日」）。画面には時と分に分けて出し、読み上げと UI テストはこちらで探す
+    var timeLabel: String {
+        switch self {
+        case .item(let i): return i.timeLabel
+        case .photos: return JST.time(date)
+        }
+    }
+
+    /// 行の左の分（「40」）。終日の予定は空
+    var minuteLabel: String {
+        if case .item(let i) = self, i.isAllDay { return "" }
+        return String(JST.time(date).suffix(2))
     }
 }
 
-/// 一覧の一行: 時刻｜種類の印｜内容｜×。左の縦線は一覧の側（TimelineList）が引く
-struct TimelineRow: View {
+/// 時（「08」・終日は「終日」）ごとの段
+struct HourBlock: Identifiable, Hashable {
+    let label: String
+    var rows: [HourRow]
+    var id: String { label }
+}
+
+/// 段を一本に並べた一行（LazyVStack の直の子）。id は日・時・行で作る（同じ予定の回は日をまたいでも行の id が同じなので、
+/// 日を移ったとき前の日の行の姿が残らないように）
+struct HourLine: Identifiable {
+    let id: String
+    /// 段の最初の行だけ時を出す
+    let hour: String?
+    let row: HourRow
+    let first: Bool
+    let last: Bool
+}
+
+extension DayPage {
+    static func lines(_ blocks: [HourBlock], day: String) -> [HourLine] {
+        blocks.flatMap { b in
+            b.rows.enumerated().map { i, r in
+                HourLine(id: "\(day)|\(b.label)|\(r.id)", hour: i == 0 ? b.label : nil, row: r,
+                         first: i == 0, last: i == b.rows.count - 1)
+            }
+        }
+    }
+
+    /// 並べた一覧を時ごとの段にする。終日の予定は先頭の「終日」の段。同じ時の中で続けて並ぶ写真は一つの行にまとめる
+    /// （間にかけら等が挟まれば分ける＝時刻の順を崩さない）
+    static func hours(_ items: [TimelineItem]) -> [HourBlock] {
+        var blocks: [HourBlock] = []
+        for item in items {
+            let label = item.isAllDay ? "終日" : String(JST.time(item.date).prefix(2))
+            if blocks.last?.label != label { blocks.append(HourBlock(label: label, rows: [])) }
+            let b = blocks.count - 1
+            if case .photo(let p) = item {
+                if case .photos(let ps)? = blocks[b].rows.last {
+                    blocks[b].rows[blocks[b].rows.count - 1] = .photos(ps + [p])
+                } else {
+                    blocks[b].rows.append(.photos([p]))
+                }
+            } else {
+                blocks[b].rows.append(.item(item))
+            }
+        }
+        return blocks
+    }
+}
+
+/// 行の右の薄い ×（今までの「消す・外す」）
+struct RowDeleteButton: View {
+    let id: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "xmark").font(.system(size: 9.5, weight: .regular))
+                .frame(width: 32, height: 26)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(LinkButtonStyle(color: Theme.muted.opacity(0.55)))
+        .accessibilityLabel("消す")
+        .accessibilityIdentifier("delete-\(id)")
+    }
+}
+
+/// 段の中の一行（写真以外）: 分｜（地図の番号）札・内容／小さな字｜×。予定は丸い札、場所は朱の丸い札、かけらは札なし
+struct DayItemRow: View {
     let item: TimelineItem
+    let day: String
     let cards: LinkCards
     /// 地図のピンと同じ番号（座標のある行だけ）
     var number: Int? = nil
     let onDelete: () -> Void
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(item.timeLabel).font(item.isAllDay ? Theme.gothic(11) : Theme.mono(11)).foregroundStyle(Theme.muted)
-                if case .kakera(let k) = item, k.katachiId != nil {
-                    Text("かたち").font(Theme.mono(9.5)).foregroundStyle(Theme.muted.opacity(0.8))
-                }
-                if case .photo(let p) = item, p.added, let taken = p.takenAt {
-                    // 別の日に撮って足した写真は、撮った日を小さく添える
-                    Text(JST.shortDate(taken)).font(Theme.mono(9.5)).foregroundStyle(Theme.muted.opacity(0.8))
-                }
-            }
-            .frame(width: 40, alignment: .leading)
-            .padding(.top, 4)
-            ZStack {
-                if let number { PinNumber(number: number).accessibilityIdentifier("rowNumber-\(number)") }
-            }
-            .frame(width: 16)
-            .padding(.top, 3)
-            KindMark(item: item).padding(.top, 6)
+        HStack(alignment: .top, spacing: 0) {
             content.frame(maxWidth: .infinity, alignment: .leading)
-            Button(action: onDelete) {
-                Image(systemName: "xmark").font(.system(size: 10, weight: .regular))
-                    .frame(width: 30, height: 30)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(LinkButtonStyle(color: Theme.muted))
-            .accessibilityLabel("消す")
-            .accessibilityIdentifier("delete-\(item.id)")
+            RowDeleteButton(id: item.id, action: onDelete).padding(.top, -2).padding(.bottom, -6)
         }
-        .padding(.vertical, 12)
-        .frame(minHeight: 44)
         .contentShape(Rectangle())
+    }
+
+    @ViewBuilder
+    private var numberMark: some View {
+        if let number { PinNumber(number: number, size: 15).accessibilityIdentifier("rowNumber-\(number)") }
     }
 
     @ViewBuilder
     private var content: some View {
         switch item {
         case .kakera(let k):
-            RichTextView(k.body, cards: cards)
+            VStack(alignment: .leading, spacing: 3) {
+                RichTextView(k.body, cards: cards)
+                if k.katachiId != nil {
+                    Text("かたち").font(Theme.mono(9.5)).foregroundStyle(Theme.muted.opacity(0.8))
+                }
+            }
         case .basho(let b):
-            VStack(alignment: .leading, spacing: 3) {
-                Text(b.name).font(Theme.gothic(15)).foregroundStyle(Theme.ink)
-                    .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .center, spacing: 6) {
+                    numberMark
+                    Fuda(text: "場所", accent: true)
+                    Text(b.name).font(Theme.gothic(15)).foregroundStyle(Theme.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if b.source == "visit" {
-                    Text("自動").font(Theme.mono(9.5)).foregroundStyle(Theme.muted)
+                    Text("自動").font(Theme.gothic(11)).foregroundStyle(Theme.muted)
                 } else if b.lat == nil {
-                    Text("位置なし").font(Theme.mono(9.5)).foregroundStyle(Theme.muted)
+                    Text("位置なし").font(Theme.gothic(11)).foregroundStyle(Theme.muted)
                 }
             }
-            .padding(.top, 1)
         case .yotei(let y):
-            VStack(alignment: .leading, spacing: 3) {
-                Text(y.yotei.title).font(Theme.gothic(15)).foregroundStyle(Theme.ink)
-                    .fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: 8) {
-                    if !y.yotei.isAllDay {
-                        Text(y.rangeLabel).font(Theme.mono(11)).foregroundStyle(Theme.muted)
-                    }
-                    if let place = y.yotei.locationName {
-                        Text(place).font(Theme.gothic(11)).foregroundStyle(Theme.muted).lineLimit(1)
-                    }
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .center, spacing: 6) {
+                    numberMark
+                    Fuda(text: "予定")
+                    Text(y.yotei.title).font(Theme.gothic(15)).foregroundStyle(Theme.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                let sub = [y.yotei.untilLabel(on: day), y.yotei.locationName].compactMap { $0 }
+                if !sub.isEmpty {
+                    Text(sub.joined(separator: "・")).font(Theme.gothic(11)).foregroundStyle(Theme.muted).lineLimit(1)
                 }
             }
-            .padding(.top, 1)
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier("yotei-\(y.yotei.title)")
-        case .photo(let p):
-            // 小さな絵（多い日でも重くならないよう、この大きさで読む）
-            AssetThumb(asset: p.asset, side: TimelineRow.thumbSide)
-                .clipShape(RoundedRectangle(cornerRadius: Theme.radius))
-                .overlay(RoundedRectangle(cornerRadius: Theme.radius).strokeBorder(Theme.line, lineWidth: Theme.hairline))
-                .accessibilityLabel("写真 \(JST.time(p.shownAt))")
-                .accessibilityIdentifier("photoThumb-\(p.ref)")
+        case .photo:
+            EmptyView() // 写真は DayPhotoStrip（同じ時の中で横に並べる）
+        }
+    }
+}
+
+/// 同じ時の中で続けて撮った写真の並び（角丸の絵・左から時刻順・幅に収まらなければ折り返す）。
+/// 押すと全画面、右上の薄い × で外す、地図の番号は左下、別の日から足した写真は撮った日を下に添える
+struct DayPhotoStrip: View {
+    let photos: [TimelinePhoto]
+    let numbers: [String: Int]
+    let onOpen: (TimelinePhoto) -> Void
+    let onHide: (TimelinePhoto) -> Void
+
+    static let side: CGFloat = 56
+
+    var body: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: Self.side, maximum: Self.side), spacing: 6, alignment: .leading)],
+                  alignment: .leading, spacing: 6) {
+            ForEach(photos, id: \.ref) { p in thumb(p) }
         }
     }
 
-    static let thumbSide: CGFloat = 72
-}
-
-/// 一覧の左に通す縦線（時刻の列の左端・1pt の罫）
-struct TimelineRail: ViewModifier {
-    func body(content: Content) -> some View {
-        content
-            .padding(.leading, 12)
-            .overlay(alignment: .leading) {
-                Rectangle().fill(Theme.line).frame(width: Theme.hairline)
+    private func thumb(_ p: TimelinePhoto) -> some View {
+        let item = TimelineItem.photo(p)
+        return AssetThumb(asset: p.asset, side: Self.side)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous).strokeBorder(Theme.line, lineWidth: Theme.hairline))
+            .contentShape(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+            .onTapGesture { onOpen(p) }
+            .accessibilityAddTraits(.isButton)
+            .accessibilityLabel("写真 \(JST.time(p.shownAt))")
+            .accessibilityIdentifier("photoThumb-\(p.ref)")
+            .overlay(alignment: .bottomLeading) {
+                VStack(alignment: .leading, spacing: 2) {
+                    if let n = numbers[item.id] {
+                        PinNumber(number: n, size: 15).accessibilityIdentifier("rowNumber-\(n)")
+                    }
+                    if p.added, let taken = p.takenAt {
+                        // 別の日に撮って足した写真は、撮った日を小さく添える
+                        Text(JST.shortDate(taken)).font(Theme.mono(9)).foregroundStyle(.white)
+                            .padding(.horizontal, 5).padding(.vertical, 0.5)
+                            .background(.black.opacity(0.5), in: Capsule())
+                    }
+                }
+                .padding(4)
+            }
+            .overlay(alignment: .topTrailing) {
+                Button { onHide(p) } label: {
+                    Image(systemName: "xmark").font(.system(size: 7.5, weight: .semibold))
+                        .foregroundStyle(Theme.muted)
+                        .frame(width: 17, height: 17)
+                        .background(Theme.paper.opacity(0.85), in: Circle())
+                        .padding(4)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("消す")
+                .accessibilityIdentifier("delete-\(item.id)")
             }
     }
 }
 
-// MARK: - 入力欄
-
-/// かけら｜場所 の切り替え（罫の枠の二つ割り。選んでいる方は墨の文字と下線）
-struct EntryKindToggle: View {
-    @Binding var kind: EntryKind
+/// 段の一行の組み立て: 左に時（段の最初の行だけ）・分、右に中身。段の頭に罫1本
+struct HourRowFrame<Content: View>: View {
+    let hour: String?
+    let minute: String
+    /// 「08:40」（読み上げ用・分の字に付ける）
+    let time: String
+    let first: Bool
+    let last: Bool
+    @ViewBuilder var content: () -> Content
 
     var body: some View {
+        HStack(alignment: .top, spacing: 0) {
+            Text(hour ?? "").font(hour == "終日" ? Theme.gothic(10.5) : Theme.mono(11)).foregroundStyle(Theme.muted)
+                .frame(width: 38, alignment: .leading)
+                .padding(.top, 2)
+            Text(minute).font(Theme.mono(10)).foregroundStyle(Theme.muted)
+                .frame(width: 22, alignment: .leading)
+                .padding(.top, 4)
+                .accessibilityLabel(time)
+            content().padding(.leading, 8)
+        }
+        .padding(.top, first ? 14 : 7)
+        .padding(.bottom, last ? 12 : 7)
+        .overlay(alignment: .top) { if first { Rule() } }
+    }
+}
+
+// MARK: - 下の帯（いつも出る・キーボードの上に上がる）
+
+enum EntryKind: String, CaseIterable, Identifiable {
+    case kakera, basho
+    var id: String { rawValue }
+    /// 下の帯の丸い切り替えの字
+    var label: String { self == .kakera ? "か" : "場" }
+    var placeholder: String { self == .kakera ? "かけらを書く" : "場所の名前" }
+}
+
+/// 下の帯: 「か｜場｜写」の丸い切り替え・丸い入力欄（中に時刻。押すと変えられる）・朱の丸い ＋。
+/// ＋ は、文字があれば一覧へ追加（かけら・場所）、かけらで空のままなら書く画面（EditorView）。「写」は写真ピッカー。
+/// **追加はボタンだけ**（onSubmit を付けない。日本語入力の確定の Enter で追加しない。かけらの欄の Enter は改行）
+struct EntryDock: View {
+    @Binding var kind: EntryKind
+    @Binding var at: Date
+    @Binding var text: String
+    /// 今日で、時刻をまだ触っていない（欄の時刻は今に付いていく）
+    let followsNow: Bool
+    let range: ClosedRange<Date>
+    let adding: Bool
+    /// その日を読み終えた（読み終える前は一覧へ足させない）
+    let enabled: Bool
+    /// かけら帳につながる（書く画面・写真）
+    let configured: Bool
+    var focused: FocusState<Bool>.Binding
+    @Binding var pickedPhotos: [PhotosPickerItem]
+    let onTimeChanged: () -> Void
+    let onAdd: () -> Void
+    let onWrite: () -> Void
+
+    private var isEmpty: Bool { text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    private var canPress: Bool {
+        guard configured, !adding else { return false }
+        return isEmpty ? kind == .kakera : enabled
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Rule()
+            HStack(alignment: .bottom, spacing: 8) {
+                segment
+                field
+                Button {
+                    if isEmpty { onWrite() } else { onAdd() }
+                } label: {
+                    if adding { ProgressView().tint(Theme.paper).controlSize(.small) } else { Image(systemName: "plus") }
+                }
+                .buttonStyle(RoundAddButtonStyle())
+                .disabled(!canPress)
+                .accessibilityLabel(isEmpty ? "書く" : "追加")
+                .accessibilityIdentifier("entryAdd")
+            }
+            .padding(.horizontal, 14).padding(.top, 9).padding(.bottom, 8)
+        }
+        .background(Theme.paper.ignoresSafeArea(edges: .bottom))
+    }
+
+    /// か｜場｜写（選んでいる方は墨の塗りに地の字。写は押すとピッカー）
+    private var segment: some View {
         HStack(spacing: 0) {
             ForEach(EntryKind.allCases) { k in
                 let on = kind == k
                 Button { kind = k } label: {
-                    Text(k.label)
-                        .font(Theme.gothic(12.5, weight: on ? .semibold : .regular))
-                        .foregroundStyle(on ? Theme.ink : Theme.muted)
-                        .frame(width: 64, height: 34)
-                        .background(on ? Theme.line.opacity(0.45) : Theme.paper)
+                    Text(k.label).font(Theme.gothic(12.5, weight: on ? .semibold : .regular))
+                        .foregroundStyle(on ? Theme.paper : Theme.muted)
+                        .frame(width: 32, height: 38)
+                        .background(on ? Theme.ink : Color.clear)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(k == .kakera ? "かけら" : "場所")
                 .accessibilityAddTraits(on ? .isSelected : [])
                 .accessibilityIdentifier("entryKind-\(k.rawValue)")
-                if k == .kakera { Rectangle().fill(Theme.line).frame(width: Theme.hairline, height: 34) }
             }
+            // 写真ピッカー。外した写真なら一覧に戻し、別の日の写真ならこの日の一覧に足す（アップロードはしない）
+            PhotosPicker(selection: $pickedPhotos, matching: .images, photoLibrary: .shared()) {
+                Text("写").font(Theme.gothic(12.5)).foregroundStyle(Theme.muted)
+                    .frame(width: 32, height: 38)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(!configured)
+            .accessibilityLabel("写真を追加")
+            .accessibilityIdentifier("addPhotos")
         }
-        .clipShape(RoundedRectangle(cornerRadius: Theme.radius))
-        .overlay(RoundedRectangle(cornerRadius: Theme.radius).strokeBorder(Theme.line, lineWidth: Theme.hairline))
+        .clipShape(Capsule())
+        .overlay(Capsule().strokeBorder(Theme.line, lineWidth: Theme.hairline))
+        .padding(.bottom, 1)
     }
-}
 
-/// 入力欄: かけら｜場所・時刻・テキスト・追加、その下に「写真を追加」。
-/// **追加はボタンだけ**（onSubmit を付けない。日本語入力の確定の Enter で追加しない。かけらの欄の Enter は改行）
-struct EntryBox: View {
-    @Binding var kind: EntryKind
-    @Binding var at: Date
-    @Binding var text: String
-    let range: ClosedRange<Date>
-    let adding: Bool
-    let enabled: Bool
-    var focused: FocusState<Bool>.Binding
-    /// 「写真を追加」で選んだもの（DayView が受け取って空に戻す）
-    @Binding var pickedPhotos: [PhotosPickerItem]
-    let onAdd: () -> Void
-
-    private var canAdd: Bool { enabled && !adding && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                EntryKindToggle(kind: $kind)
-                Spacer(minLength: 4)
-                DatePicker("時刻", selection: $at, in: range, displayedComponents: .hourAndMinute)
-                    .labelsHidden()
-                    .tint(Theme.accent)
-                    .environment(\.timeZone, JST.timeZone)
-                    .environment(\.locale, Locale(identifier: "ja_JP"))
-                    .accessibilityIdentifier("entryTime")
-            }
-            // 追加は欄の右に置く（キーボードが出ても欄と一緒に見える）
-            HStack(alignment: .bottom, spacing: 8) {
-                Group {
-                    if kind == .kakera {
-                        TextField("かけらを書く", text: $text, axis: .vertical).lineLimit(1...6)
-                    } else {
-                        TextField("場所の名前（例: 駅前の公園）", text: $text).submitLabel(.done)
-                    }
-                }
-                .focused(focused)
-                .font(Theme.gothic(15))
-                .foregroundStyle(Theme.ink)
-                .padding(.horizontal, 10).padding(.vertical, 9)
-                .frame(minHeight: 38)
-                .overlay(RoundedRectangle(cornerRadius: Theme.radius).strokeBorder(Theme.line, lineWidth: Theme.hairline))
-                .accessibilityIdentifier("entryText")
-                Button(action: onAdd) {
-                    if adding { ProgressView().controlSize(.small) } else { Text("追加") }
-                }
-                .buttonStyle(CTAButtonStyle())
-                .disabled(!canAdd)
-                .accessibilityIdentifier("entryAdd")
-            }
-            HStack(spacing: 10) {
-                // 写真ピッカー。外した写真なら一覧に戻し、別の日の写真ならこの日の一覧に足す（アップロードはしない）
-                PhotosPicker(selection: $pickedPhotos, matching: .images, photoLibrary: .shared()) {
-                    Text("写真を追加")
-                }
-                .buttonStyle(LinkButtonStyle(color: Theme.accent))
-                .disabled(!enabled)
-                .accessibilityIdentifier("addPhotos")
-                if kind == .basho {
-                    Text("名前から位置を探して一緒に残します").font(Theme.gothic(11)).foregroundStyle(Theme.muted)
-                }
-            }
+    private var field: some View {
+        HStack(alignment: .bottom, spacing: 6) {
+            // か｜場 を切り替えても同じ欄のまま（キーボードを下げない）。場所の改行は足すときに空白にする（DayView.addEntry）
+            TextField(kind.placeholder, text: $text, axis: .vertical)
+            .lineLimit(1...(kind == .kakera ? 5 : 2))
+            .focused(focused)
+            .font(Theme.gothic(15))
+            .foregroundStyle(Theme.ink)
+            .padding(.vertical, 10)
+            .accessibilityIdentifier("entryText")
+            timeChip.padding(.bottom, 6)
         }
-        .padding(.top, 16)
+        .padding(.leading, 16).padding(.trailing, 8)
+        .frame(minHeight: 40)
+        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(Theme.line, lineWidth: Theme.hairline))
+    }
+
+    /// 欄の中の時刻（等幅）。押すと時刻の選び方が開く（システムの DatePicker を透明にして重ねる）
+    private var timeChip: some View {
+        TimelineView(.everyMinute) { ctx in
+            let shown = followsNow ? ctx.date : at
+            Text(JST.time(shown))
+                .font(Theme.mono(12)).foregroundStyle(Theme.ink)
+                .padding(.horizontal, 6).frame(minHeight: 28)
+                .overlay {
+                    DatePicker("時刻", selection: Binding(get: { followsNow ? Date() : at }, set: { at = $0; onTimeChanged() }),
+                               in: range, displayedComponents: .hourAndMinute)
+                        .labelsHidden()
+                        .environment(\.timeZone, JST.timeZone)
+                        .environment(\.locale, Locale(identifier: "ja_JP"))
+                        .colorMultiply(.clear)
+                }
+                .clipped()
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("時刻 \(JST.time(shown))")
+                .accessibilityIdentifier("entryTime")
+        }
     }
 }
 
@@ -543,10 +700,12 @@ struct PhotoAccessNote: View {
                     .font(Theme.gothic(12)).foregroundStyle(Theme.muted).lineSpacing(3)
                     .fixedSize(horizontal: false, vertical: true)
                 Button("写真を並べる") { onRequest() }
-                    .buttonStyle(LinkButtonStyle(color: Theme.accent))
+                    .buttonStyle(CTAButtonStyle())
+                    .padding(.top, 4)
                     .accessibilityIdentifier("allowTimelinePhotos")
             }
-            .padding(.vertical, 8)
+            .noteBox()
+            .padding(.vertical, 6)
         case .denied, .restricted:
             HStack(spacing: 8) {
                 Text("写真へのアクセスが無いので、写真は並びません").font(Theme.gothic(11)).foregroundStyle(Theme.muted)

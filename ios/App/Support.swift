@@ -27,6 +27,7 @@ enum JST {
     private static let timeFormatter = formatter("HH:mm")
     private static let titleFormatter = formatter("M月d日（E）", locale: "ja_JP")
     private static let shortDateFormatter = formatter("M/d")
+    private static let weekdayFormatter = formatter("E", locale: "ja_JP")
     private static let isoPlain: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime]
@@ -63,6 +64,9 @@ enum JST {
     /// 「11/20」（別の日の写真に添える）
     static func shortDate(_ d: Date) -> String { shortDateFormatter.string(from: d) }
     static func title(_ key: String) -> String { dayRange(key).map { titleFormatter.string(from: $0.start) } ?? key }
+    /// 上の帯の日付「11/28」と曜日「土」
+    static func navDate(_ key: String) -> String { dayRange(key).map { shortDateFormatter.string(from: $0.start) } ?? key }
+    static func weekday(_ key: String) -> String { dayRange(key).map { weekdayFormatter.string(from: $0.start) } ?? "" }
 }
 
 /// ULID（Crockford Base32・26文字）。かけらの id は端末で採番する（Web 版の src/lib/ulid.ts と同じ形）

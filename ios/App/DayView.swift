@@ -2,9 +2,11 @@ import Photos
 import PhotosUI
 import SwiftUI
 
-/// 日ごとの画面（1日1ページの手帳・かけら帳1日のページ設計）: 日付を左右で移る（既定は今日）。並びは
-/// 日付 → きょうの一覧（かけら＋場所を時刻順・左に縦線）→ 入力欄 → 思い出す材料（写真・行った場所・港の材料）→ 書く。
-/// 見た目は Web 版の書く側（.topbar・.page-date・.frag-list）。API は Web と同じ（/api/kakera・/api/day/:date・/api/place）
+/// 日ごとの画面（1日1ページの手帳・かけら帳1日のページ設計）: 日付を左右で移る（既定は今日）。
+/// 見た目は 2026-11-28 の刷新「C 丸 時間の帳」（設計書の「見た目の刷新」）。並びは
+/// 上の帯（かけら帳・‹ 日付 ›・☰）→ 見出し「きょう n件」→ 時ごとの段の一覧 → きょうの地図 → 思い出す材料（写真・行った場所・港の材料）、
+/// 下の帯（か｜場｜写・丸い入力欄・朱の ＋）はいつも出てキーボードの上に上がる。
+/// API は Web と同じ（/api/kakera・/api/day/:date・/api/place）
 struct DayView: View {
     @State private var day = JST.todayKey
     @State private var kakera: [Kakera] = []
@@ -22,8 +24,9 @@ struct DayView: View {
     @State private var entryAt = Date()
     @State private var entryText = ""
     @State private var entryDay: String?
+    /// 下の帯の時刻を手で変えた（変えるまでは、今日なら今の時刻に付いていく）
+    @State private var entryTimeTouched = false
     @State private var adding = false
-    /// 入力欄に書いている間は「書く」の帯を出さない（キーボードの上に乗って欄を隠すので）
     @FocusState private var entryFocused: Bool
     /// 一覧から外した写真（D1 の timeline_hidden・kind=photo）。読めなければ空（全部出す）
     @State private var hiddenPhotos: Set<String> = []
@@ -60,12 +63,8 @@ struct DayView: View {
         NavigationStack {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    dateHeader
                     timelineSection
                     if API.shared.isConfigured(.kakera) {
-                        EntryBox(kind: $entryKind, at: $entryAt, text: $entryText, range: DayPage.entryRange(day: day),
-                                 adding: adding, enabled: loadedKakera && loadedDay == day, focused: $entryFocused,
-                                 pickedPhotos: $pickedPhotos) { addEntry() }
                         ChizuSection(pins: pins, track: kiseki, steps: minato.daySummary)
                     }
                     MaterialsHeader(minato: minato, canCollect: API.shared.isConfigured(.minato)) {
@@ -75,8 +74,8 @@ struct DayView: View {
                     PlacesNote(places: places, used: used) { makeFromPlace($0) }
                     minatoSection
                 }
-                .padding(.horizontal, 18)
-                .padding(.top, 20)
+                .padding(.horizontal, 20)
+                .padding(.top, 4)
                 .padding(.bottom, 24)
             }
             .background(Theme.paper.ignoresSafeArea())
@@ -88,13 +87,13 @@ struct DayView: View {
             .toolbar(.hidden, for: .navigationBar)
             .safeAreaInset(edge: .top, spacing: 0) { topbar }
             .scrollDismissesKeyboard(.interactively)
-            .safeAreaInset(edge: .bottom, spacing: 0) { if !entryFocused { writeBar } }
+            .safeAreaInset(edge: .bottom, spacing: 0) { entryDock }
             .overlay {
                 if let busy {
                     HStack(spacing: 10) { ProgressView(); Text(busy).font(Theme.gothic(13)).foregroundStyle(Theme.ink) }
                         .padding(.horizontal, 18).padding(.vertical, 14)
-                        .background(Theme.paper, in: RoundedRectangle(cornerRadius: Theme.radius))
-                        .overlay(RoundedRectangle(cornerRadius: Theme.radius).strokeBorder(Theme.line, lineWidth: Theme.hairline))
+                        .background(Theme.paper, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous).strokeBorder(Theme.line, lineWidth: Theme.hairline))
                 }
             }
             .task(id: "\(day)#\(configVersion)") { await reload() }
@@ -158,82 +157,98 @@ struct DayView: View {
         }
     }
 
-    // MARK: 上部（.topbar: 「かけら帳」と下罫）
+    // MARK: 上の帯（かけら帳・‹ 日付 ›・☰）
+
+    private var configured: Bool { API.shared.isConfigured(.kakera) }
 
     private var topbar: some View {
         VStack(spacing: 0) {
-            HStack(alignment: .center, spacing: 8) {
-                Text("かけら帳").font(Theme.gothic(16, weight: .semibold)).tracking(16 * 0.02).foregroundStyle(Theme.ink)
-                Spacer()
-                // かたち・日記・ことばへ。Web のタブ（nav.tabs: 灰 12.5pt・500）と同じ字で
-                ForEach([(AppStart.katachi, "かたち"), (.nikki, "日記"), (.words, "ことば")], id: \.0) { start, label in
-                    Button { web = start } label: {
-                        Text(label).font(Theme.gothic(12.5, weight: .medium)).tracking(12.5 * 0.02)
-                            .padding(.horizontal, 5).frame(minHeight: 36)
-                    }
-                    .buttonStyle(LinkButtonStyle(color: Theme.muted))
-                    .disabled(!API.shared.isConfigured(.kakera))
-                    .accessibilityIdentifier("open-\(start.rawValue)")
+            ZStack {
+                HStack(spacing: 8) {
+                    Text("かけら帳").font(Theme.gothic(18, weight: .semibold)).tracking(18 * 0.02).foregroundStyle(Theme.ink)
+                    Spacer()
+                    menu
                 }
-                Button { showSearch = true } label: {
-                    Image(systemName: "magnifyingglass").font(.system(size: 15, weight: .regular))
-                        .frame(width: 36, height: 36)
-                }
-                .buttonStyle(LinkButtonStyle(color: Theme.muted))
-                .disabled(!API.shared.isConfigured(.kakera))
-                .accessibilityLabel("さがす")
-                .accessibilityIdentifier("openSearch")
-                Button { showSettings = true } label: {
-                    Image(systemName: "gearshape").font(.system(size: 15, weight: .regular))
-                        .frame(width: 36, height: 36)
-                }
-                .buttonStyle(LinkButtonStyle(color: Theme.muted))
-                .accessibilityLabel("設定")
-                .accessibilityIdentifier("openSettings")
+                dateNav
             }
-            .padding(.horizontal, 18).padding(.top, 4).padding(.bottom, 6)
+            .padding(.leading, 20).padding(.trailing, 8).padding(.top, 2).padding(.bottom, 4)
             Rule()
         }
         .background(Theme.paper.ignoresSafeArea(edges: .top))
     }
 
-    // MARK: 日付（.page-date と .page-sub）
-
-    /// 等幅の日付と、その下にその日の歩数（港の health。無ければ出さない）。天気は出さない（2026-11-28）
-    private var dateHeader: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .center, spacing: 6) {
-                // 押すと月カレンダー
-                Button { showMonth = true } label: {
-                    Text(JST.title(day))
-                        .font(Theme.mono(19, weight: .medium))
-                        .foregroundStyle(Theme.ink)
-                        .lineLimit(1).minimumScaleFactor(0.7)
-                }
-                .buttonStyle(.plain)
-                .disabled(!API.shared.isConfigured(.kakera))
-                .accessibilityHint("月のカレンダーを開く")
-                .accessibilityIdentifier("dayTitle")
-                Spacer(minLength: 4)
-                if !isToday {
-                    Button("今日") { day = JST.todayKey }
-                        .buttonStyle(LinkButtonStyle(color: Theme.accent))
-                        .padding(.trailing, 4)
-                }
-                Button { move(-1) } label: { Image(systemName: "chevron.left").font(.system(size: 13)) }
-                    .buttonStyle(GhostButtonStyle(compact: true))
-                    .accessibilityLabel("前の日").accessibilityIdentifier("prevDay")
-                Button { move(1) } label: { Image(systemName: "chevron.right").font(.system(size: 13)) }
-                    .buttonStyle(GhostButtonStyle(compact: true))
-                    .disabled(isToday)
-                    .accessibilityLabel("次の日").accessibilityIdentifier("nextDay")
+    /// ‹ 11/28 土 ›。日付を押すと月カレンダー。未来へは進めない（› は薄くなって押せない）
+    private var dateNav: some View {
+        HStack(spacing: 2) {
+            Button { move(-1) } label: {
+                Image(systemName: "chevron.left").font(.system(size: 14, weight: .light)).frame(width: 34, height: 36)
             }
-            if let s = minato.daySummary {
-                Text(s).pageSub()
+            .buttonStyle(LinkButtonStyle(color: Theme.muted))
+            .accessibilityLabel("前の日").accessibilityIdentifier("prevDay")
+            Button { showMonth = true } label: {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(JST.navDate(day)).font(Theme.mono(15, weight: .medium)).foregroundStyle(Theme.ink)
+                    Text(JST.weekday(day)).font(Theme.gothic(12)).foregroundStyle(Theme.muted)
+                }
+                .padding(.horizontal, 4).frame(minHeight: 36)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(!configured)
+            .accessibilityLabel(JST.title(day))
+            .accessibilityHint("月のカレンダーを開く")
+            .accessibilityIdentifier("dayTitle")
+            Button { move(1) } label: {
+                Image(systemName: "chevron.right").font(.system(size: 14, weight: .light)).frame(width: 34, height: 36)
+            }
+            .buttonStyle(LinkButtonStyle(color: Theme.muted))
+            .disabled(isToday)
+            .opacity(isToday ? 0.35 : 1)
+            .accessibilityLabel("次の日").accessibilityIdentifier("nextDay")
+        }
+    }
+
+    /// ☰: かたちにする・かたち・日記・ことば・さがす・設定（それぞれ今までの画面へ）
+    private var menu: some View {
+        Menu {
+            Button("かたちにする") { web = .compose }.disabled(!configured).accessibilityIdentifier("open-compose")
+            Divider()
+            ForEach([(AppStart.katachi, "かたち"), (.nikki, "日記"), (.words, "ことば")], id: \.0) { start, label in
+                Button(label) { web = start }.disabled(!configured).accessibilityIdentifier("open-\(start.rawValue)")
+            }
+            Button("さがす") { showSearch = true }.disabled(!configured).accessibilityIdentifier("openSearch")
+            Divider()
+            Button("設定") { showSettings = true }.accessibilityIdentifier("openSettings")
+        } label: {
+            Image(systemName: "line.3.horizontal").font(.system(size: 17, weight: .light))
+                .foregroundStyle(Theme.muted)
+                .frame(width: 40, height: 40)
+                .contentShape(Rectangle())
+        }
+        .accessibilityLabel("メニュー")
+        .accessibilityIdentifier("openMenu")
+    }
+
+    /// 見出し「きょう n件」と、今日以外のときの朱の「今日へ」。歩数（港）は地図の下の一行に出ないときだけここに
+    private func head(count: Int) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(isToday ? "きょう" : "この日").font(Theme.gothic(13.5, weight: .semibold)).foregroundStyle(Theme.ink)
+            Text("\(count)件").font(Theme.gothic(12)).foregroundStyle(Theme.muted)
+                .accessibilityIdentifier("dayCount")
+            if let s = minato.daySummary, ChizuContent.summary(track: kiseki, steps: s) == nil {
+                Text(s).font(Theme.mono(11)).foregroundStyle(Theme.muted)
                     .lineLimit(1).minimumScaleFactor(0.8)
                     .accessibilityIdentifier("daySummary")
             }
+            Spacer(minLength: 4)
+            if !isToday {
+                Button("今日へ") { day = JST.todayKey }
+                    .buttonStyle(LinkButtonStyle(color: Theme.accent))
+                    .accessibilityIdentifier("goToday")
+            }
         }
+        .frame(minHeight: 38)
+        .padding(.top, 12).padding(.bottom, 4)
     }
 
     private func move(_ days: Int) {
@@ -305,15 +320,8 @@ struct DayView: View {
     private var timelineSection: some View {
         let items = timeline
         let numbers = Dictionary(uniqueKeysWithValues: pins.map { ($0.itemID, $0.number) })
-        MajorHead(title: isToday ? "きょう" : "この日", count: items.count, top: 28) {
-            // Web の「かたちにする」（.link-btn・黒の文字だけ）。かけらたちから選んで並べる（ComposeScreen）
-            Button("かたちにする") { web = .compose }
-                .buttonStyle(LinkButtonStyle())
-                .disabled(!API.shared.isConfigured(.kakera))
-                .accessibilityIdentifier("open-compose")
-        }
-            .padding(.bottom, items.isEmpty ? 10 : 0)
-        if !API.shared.isConfigured(.kakera) {
+        head(count: items.count)
+        if !configured {
             VStack(alignment: .leading, spacing: 8) {
                 Text("かけら帳につなぐサービストークンが入っていません。").font(Theme.gothic(14)).foregroundStyle(Theme.ink)
                 Button("設定を開く") { showSettings = true }.buttonStyle(LinkButtonStyle(color: Theme.accent))
@@ -322,42 +330,53 @@ struct DayView: View {
             Text(kakeraError).font(Theme.gothic(13)).foregroundStyle(Theme.accent)
         } else if loadedKakera && items.isEmpty {
             Text("この日の記録はまだありません").font(Theme.gothic(14)).foregroundStyle(Theme.muted)
-                .padding(.vertical, 6)
+                .padding(.vertical, 14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .overlay(alignment: .top) { Rule() }
         }
         if let dayError {
             Text(dayError).font(Theme.gothic(12)).foregroundStyle(Theme.accent).padding(.vertical, 4)
         }
-        if API.shared.isConfigured(.kakera) {
+        if configured {
             CalendarAccessNote(status: calendar.status) { Task { await calendar.requestAccess(); seedEventsIfAsked() } }
             PhotoAccessNote(status: photos.status) { Task { await photos.requestAccess() } }
         }
-        // かけらの行を押すと直す画面。⚠️ Button にすると中のリンク・リンクカードが押せないので、行は onTapGesture で開く
-        // 行は LazyVStack の直の子にする（写真の多い日も、見えている行の絵だけを読む）。縦線は行ごとに引いてつなげる
-        ForEach(items) { item in
-            row(item, in: items, number: numbers[item.id])
-                .ruledRow(first: item.id == items.first?.id)
-                .modifier(TimelineRail())
+        // 時ごとの段。行は LazyVStack の直の子にする（写真の多い日も、見えている行の絵だけを読む）。段の頭に罫1本
+        let photoList = items.compactMap { if case .photo(let q) = $0 { return q } else { return nil } }
+        ForEach(DayPage.lines(DayPage.hours(items), day: day)) { line in
+            HourRowFrame(hour: line.hour, minute: line.row.minuteLabel, time: line.row.timeLabel,
+                         first: line.first, last: line.last) {
+                hourRow(line.row, photoList: photoList, numbers: numbers)
+            }
         }
     }
 
     @ViewBuilder
-    private func row(_ item: TimelineItem, in items: [TimelineItem], number: Int?) -> some View {
+    private func hourRow(_ r: HourRow, photoList: [TimelinePhoto], numbers: [String: Int]) -> some View {
+        switch r {
+        case .photos(let ps):
+            DayPhotoStrip(photos: ps, numbers: numbers,
+                          onOpen: { p in viewer = ViewerStart(photos: photoList, index: photoList.firstIndex(of: p) ?? 0) },
+                          onHide: { hidePhoto($0) })
+        case .item(let item):
+            row(item, number: numbers[item.id])
+        }
+    }
+
+    // かけらの行を押すと直す画面。⚠️ Button にすると中のリンク・リンクカードが押せないので、行は onTapGesture で開く
+    @ViewBuilder
+    private func row(_ item: TimelineItem, number: Int?) -> some View {
         switch item {
         case .kakera(let k):
-            TimelineRow(item: item, cards: cards, number: number) { pendingDelete = k }
+            DayItemRow(item: item, day: day, cards: cards, number: number) { pendingDelete = k }
                 .onTapGesture { draft = .edit(k) }
                 .accessibilityAddTraits(.isButton)
         case .basho(let b):
-            TimelineRow(item: item, cards: cards, number: number) { removeBasho(b) }
+            DayItemRow(item: item, day: day, cards: cards, number: number) { removeBasho(b) }
         case .yotei(let y):
-            TimelineRow(item: item, cards: cards, number: number) { hideYotei(y) }
+            DayItemRow(item: item, day: day, cards: cards, number: number) { hideYotei(y) }
         case .photo(let p):
-            TimelineRow(item: item, cards: cards, number: number) { hidePhoto(p) }
-                .onTapGesture {
-                    let list = items.compactMap { if case .photo(let q) = $0 { return q } else { return nil } }
-                    viewer = ViewerStart(photos: list, index: list.firstIndex(of: p) ?? 0)
-                }
-                .accessibilityAddTraits(.isButton)
+            DayItemRow(item: item, day: day, cards: cards, number: number) { hidePhoto(p) } // 使わない（写真は段の並びで出す）
         }
     }
 
@@ -449,8 +468,7 @@ struct DayView: View {
         let target = day
         let text = entryText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !adding else { return }
-        let range = DayPage.entryRange(day: target)
-        let at = min(max(entryAt, range.lowerBound), range.upperBound)
+        let at = effectiveEntryAt
         let kind = entryKind
         adding = true
         Task {
@@ -470,6 +488,7 @@ struct DayView: View {
                 guard target == day else { return }
                 entryText = ""
                 entryAt = DayPage.defaultEntryDate(day: day, items: timeline)
+                entryTimeTouched = false
             } catch {
                 alert = "追加できませんでした: \(error.localizedDescription)"
             }
@@ -500,31 +519,21 @@ struct DayView: View {
         }
     }
 
-    /// 「書く」: Web で前へ進める一つの行動に使う .btn-cta（朱の枠と文字・塗らない）を、下の罫の上に幅いっぱいで
-    private var writeBar: some View {
-        VStack(spacing: 0) {
-            Rule()
-            Button {
-                draft = .new(at: newKakeraDate())
-            } label: {
-                Text("書く").font(Theme.gothic(14, weight: .semibold))
-            }
-            .buttonStyle(CTAButtonStyle(fullWidth: true))
-            .disabled(!API.shared.isConfigured(.kakera))
-            .accessibilityIdentifier("write")
-            .padding(.horizontal, 18)
-            .padding(.top, 10)
-            .padding(.bottom, 6)
-        }
-        .background(Theme.paper.ignoresSafeArea(edges: .bottom))
+    /// 下の帯の時刻（今日で触っていなければ今。その日の範囲に収める）
+    private var effectiveEntryAt: Date {
+        let range = DayPage.entryRange(day: day)
+        let at = isToday && !entryTimeTouched ? Date() : entryAt
+        return min(max(at, range.lowerBound), range.upperBound)
     }
 
-    /// 今日なら今。過去の日なら、その日の最後のかけらの1分後（無ければ 12:00）。後で直せる
-    private func newKakeraDate() -> Date {
-        if isToday { return Date() }
-        guard let r = JST.dayRange(day) else { return Date() }
-        if let last = kakera.last?.writtenDate, last.addingTimeInterval(60) < r.end { return last.addingTimeInterval(60) }
-        return r.start.addingTimeInterval(12 * 3600)
+    /// 下の帯（いつも出る・キーボードの上に上がる）。空のまま ＋ なら書く画面を帯の時刻で開く
+    private var entryDock: some View {
+        EntryDock(kind: $entryKind, at: $entryAt, text: $entryText, followsNow: isToday && !entryTimeTouched,
+                  range: DayPage.entryRange(day: day), adding: adding, enabled: loadedKakera && loadedDay == day,
+                  configured: configured, focused: $entryFocused, pickedPhotos: $pickedPhotos,
+                  onTimeChanged: { entryTimeTouched = true },
+                  onAdd: { addEntry() },
+                  onWrite: { entryFocused = false; draft = .new(at: effectiveEntryAt) })
     }
 
     // MARK: 港の材料
@@ -580,6 +589,7 @@ struct DayView: View {
         // 入力欄の時刻は日を移ったときだけ初期値に戻す（引っぱって読み直しても、選んだ時刻は動かさない）
         if entryDay != target {
             entryDay = target
+            entryTimeTouched = false
             entryAt = DayPage.defaultEntryDate(day: target, items: timeline)
         }
     }

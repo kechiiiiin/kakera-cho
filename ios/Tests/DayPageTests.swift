@@ -73,6 +73,43 @@ final class DayPageTests: XCTestCase {
         XCTAssertEqual(items.first?.timeLabel, "終日")
     }
 
+    // MARK: 見た目の刷新（C 丸 時間の帳）: 時ごとの段
+
+    func testHoursGroupsByHourWithAllDayFirst() {
+        let ys = DayPage.yotei([
+            yotei("holiday", "2026-11-27T00:00:00+09:00", "2026-11-27T23:59:59+09:00", allDay: true),
+            yotei("visit", "2026-11-27T13:00:00+09:00", "2026-11-27T14:00:00+09:00"),
+        ], on: "2026-11-27", hidden: [])
+        let items = DayPage.merge(
+            kakera: [kakera("K1", "2026-11-27T08:40:00+09:00"), kakera("K2", "2026-11-27T13:42:00+09:00"),
+                     kakera("K3", "2026-11-27T17:30:00+09:00")],
+            basho: [basho("B", "2026-11-27T13:20:00+09:00")], yotei: ys
+        )
+        let blocks = DayPage.hours(items)
+        XCTAssertEqual(blocks.map(\.label), ["終日", "08", "13", "17"])
+        XCTAssertEqual(blocks[2].rows.map(\.minuteLabel), ["00", "20", "42"])
+        XCTAssertEqual(blocks[0].rows.map(\.minuteLabel), [""]) // 終日の予定は分を出さない
+        XCTAssertEqual(blocks.flatMap(\.rows).map(\.id), items.map(\.id)) // 段に分けても並びは変わらない
+        // 一本に並べた行: 時は段の頭だけ、id は日ごとに違う（日を移ったとき前の日の行が残らない）
+        let lines = DayPage.lines(blocks, day: "2026-11-27")
+        XCTAssertEqual(lines.map(\.hour), ["終日", "08", "13", nil, nil, "17"])
+        XCTAssertEqual(lines.filter(\.first).count, 4)
+        XCTAssertNotEqual(lines.first?.id, DayPage.lines(blocks, day: "2026-11-28").first?.id)
+    }
+
+    func testYoteiUntilLabel() {
+        XCTAssertEqual(yotei("m", "2026-11-27T13:00:00+09:00", "2026-11-27T14:00:00+09:00").untilLabel(on: "2026-11-27"), "14:00まで")
+        let bus = yotei("bus", "2026-11-26T22:00:00+09:00", "2026-11-27T01:30:00+09:00")
+        XCTAssertEqual(bus.untilLabel(on: "2026-11-27"), "前日から・01:30まで")
+        XCTAssertEqual(bus.untilLabel(on: "2026-11-26"), "翌日まで")
+        XCTAssertNil(yotei("h", "2026-11-27T00:00:00+09:00", "2026-11-27T23:59:59+09:00", allDay: true).untilLabel(on: "2026-11-27"))
+    }
+
+    func testNavDate() {
+        XCTAssertEqual(JST.navDate("2026-11-28"), "11/28")
+        XCTAssertEqual(JST.weekday("2026-11-28"), "土")
+    }
+
     // MARK: 段階4 地図・訪問
 
     private func bashoAt(_ id: String, _ at: String, _ lat: Double?, _ lng: Double?) -> Basho {
