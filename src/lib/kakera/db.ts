@@ -565,10 +565,10 @@ export async function getWordDetail(db: D1Database, rawWord: string): Promise<Wo
 /* ---------------- 検索（第二段・かたちの全文検索。設計 §3／migrations/0001） ---------------- */
 
 /** trigram は3文字未満のクエリを扱えないので、その手前は LIKE に落とす。 */
-const MIN_TRIGRAM_LEN = 3;
+export const MIN_TRIGRAM_LEN = 3;
 
 /** 文字数（サロゲートペアも1文字と数える）。 */
-function charLength(s: string): number {
+export function charLength(s: string): number {
   return Array.from(s).length;
 }
 
@@ -577,12 +577,12 @@ function charLength(s: string): number {
  * FTS5 のクエリ構文（" * AND OR NEAR 等）をそのまま渡すと構文エラーで 500 になるため、
  * ダブルクォートで包んで中の " を "" にエスケープしてから MATCH に渡す。
  */
-function escapeFtsPhrase(q: string): string {
+export function escapeFtsPhrase(q: string): string {
   return '"' + q.replace(/"/g, '""') + '"';
 }
 
 /** LIKE の特殊文字（% _ \）をエスケープする。 */
-function escapeLikePattern(q: string): string {
+export function escapeLikePattern(q: string): string {
   return q.replace(/[\\%_]/g, (c) => '\\' + c);
 }
 
