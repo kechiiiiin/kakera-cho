@@ -14,6 +14,7 @@
 #   make shots-events  段階3（予定）の実画面。カレンダーの許可を取り消して許可の流れから通し、最後に拒否の画面も見る（build/stage3-*.png）
 #   make shots-chizu  段階4（地図・訪問）の実画面。位置の許可を取り消してから回す（build/stage4-*.png・stage4-google-url.txt）
 #   make shots-tsuki  段階5（月カレンダー・検索・書き出し）の実画面（build/stage5-*.png）
+#   make shots-kiseki  移動の軌跡の実画面。擬似の軌跡（福岡〜北九州・福岡市内）を送って地図の線・全画面・下の一行を見る（build/track-*.png）
 #   make run-local-minato-prod  かけら帳はローカル・港は本番（読むだけ。トークンはアプリのキーチェーンに入っていること）
 #   make archive    TestFlight 向けアーカイブ（Release・自動署名）。サービストークンをこの Mac のキーチェーンから埋め込む
 #   make export-testflight  .ipa を build/export/ に書き出す（送らない）
@@ -40,7 +41,7 @@ ARCHIVE = build/Kakera.xcarchive
 KC_SERVICE ?= kakera-token
 SECRETS = Secrets.xcconfig
 
-.PHONY: shots shots-photos shots-events shots-chizu shots-tsuki generate test fixtures roundtrip sim run-local run-local-minato-prod icon clean archive upload export-testflight release require-team require-asc-key
+.PHONY: shots shots-photos shots-events shots-chizu shots-tsuki shots-kiseki generate test fixtures roundtrip sim run-local run-local-minato-prod icon clean archive upload export-testflight release require-team require-asc-key
 
 generate:
 	xcodegen generate
@@ -128,6 +129,12 @@ shots-tsuki: generate
 	@mkdir -p build
 	@xcrun simctl boot "$(PHONE_SIM)" 2>/dev/null || true
 	@set -o pipefail; $(SHOTS_TEST) -only-testing:KakeraUITests/DayPageTsukiShots test 2>&1 | tee build/shots-tsuki.log | \
+	  grep -E "(error):|Executed [0-9]+ tests|TEST (SUCCEEDED|FAILED)"
+
+shots-kiseki: generate
+	@mkdir -p build
+	@xcrun simctl boot "$(PHONE_SIM)" 2>/dev/null || true
+	@set -o pipefail; $(SHOTS_TEST) -only-testing:KakeraUITests/DayPageKisekiShots test 2>&1 | tee build/shots-kiseki.log | \
 	  grep -E "(error):|Executed [0-9]+ tests|TEST (SUCCEEDED|FAILED)"
 
 # 港は本番（minato.kechiiiiin.com・トークン付き）を読む。かけらの書き込みはローカルのかけら帳へ
