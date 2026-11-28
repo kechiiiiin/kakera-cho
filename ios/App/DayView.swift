@@ -47,6 +47,8 @@ struct DayView: View {
     @State private var busy: String?
     @State private var alert: String?
     @State private var showSettings = false
+    @State private var showMonth = false
+    @State private var showSearch = false
     /// かたち・日記・ことば・かたちにする（ネイティブの画面・AppScreens.swift）を全画面で開いているとき
     @State private var web: AppStart?
     @State private var configVersion = 0
@@ -122,6 +124,8 @@ struct DayView: View {
                 EditorView(draft: d, cards: cards) { Task { await reload() } }
             }
             .sheet(isPresented: $showSettings, onDismiss: { configVersion += 1 }) { SettingsView() }
+            .sheet(isPresented: $showMonth) { TsukiSheet(current: day) { day = $0 } }
+            .sheet(isPresented: $showSearch) { DaySearchSheet { day = $0 } }
             // 閉じたら、かたちの札が付いた・外れたかけらを読み直す
             .fullScreenCover(item: $web, onDismiss: { Task { await reload() } }) { start in
                 AppScreens(start: start)
@@ -169,6 +173,14 @@ struct DayView: View {
                     .disabled(!API.shared.isConfigured(.kakera))
                     .accessibilityIdentifier("open-\(start.rawValue)")
                 }
+                Button { showSearch = true } label: {
+                    Image(systemName: "magnifyingglass").font(.system(size: 15, weight: .regular))
+                        .frame(width: 36, height: 36)
+                }
+                .buttonStyle(LinkButtonStyle(color: Theme.muted))
+                .disabled(!API.shared.isConfigured(.kakera))
+                .accessibilityLabel("さがす")
+                .accessibilityIdentifier("openSearch")
                 Button { showSettings = true } label: {
                     Image(systemName: "gearshape").font(.system(size: 15, weight: .regular))
                         .frame(width: 36, height: 36)
@@ -189,11 +201,17 @@ struct DayView: View {
     private var dateHeader: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .center, spacing: 6) {
-                Text(JST.title(day))
-                    .font(Theme.mono(19, weight: .medium))
-                    .foregroundStyle(Theme.ink)
-                    .lineLimit(1).minimumScaleFactor(0.7)
-                    .accessibilityIdentifier("dayTitle")
+                // 押すと月カレンダー
+                Button { showMonth = true } label: {
+                    Text(JST.title(day))
+                        .font(Theme.mono(19, weight: .medium))
+                        .foregroundStyle(Theme.ink)
+                        .lineLimit(1).minimumScaleFactor(0.7)
+                }
+                .buttonStyle(.plain)
+                .disabled(!API.shared.isConfigured(.kakera))
+                .accessibilityHint("月のカレンダーを開く")
+                .accessibilityIdentifier("dayTitle")
                 Spacer(minLength: 4)
                 if !isToday {
                     Button("今日") { day = JST.todayKey }

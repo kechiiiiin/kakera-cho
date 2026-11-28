@@ -137,6 +137,41 @@ final class DayPageTests: XCTestCase {
         XCTAssertEqual(String(id.prefix(10)), String(ULID.make(date("2026-11-27T14:05:00+09:00")).prefix(10)))
     }
 
+    // MARK: 段階5 月カレンダー・検索
+
+    func testTsukiCells() {
+        // 2026-11-01 は日曜（空き升なし）、2026-12-01 は火曜（空き2つ）
+        let nov = Tsuki.cells("2026-11")
+        XCTAssertEqual(nov.first!, "2026-11-01")
+        XCTAssertEqual(nov.count, 30)
+        let dec = Tsuki.cells("2026-12")
+        XCTAssertEqual(Array(dec.prefix(3)), [nil, nil, "2026-12-01"])
+        XCTAssertEqual(dec.last!, "2026-12-31")
+        XCTAssertEqual(Tsuki.cells("2028-02").compactMap { $0 }.count, 29)
+        XCTAssertEqual(Tsuki.shift("2026-12", by: 1), "2027-01")
+        XCTAssertEqual(Tsuki.shift("2026-01", by: -1), "2025-12")
+        XCTAssertEqual(Tsuki.title("2026-03"), "2026年3月")
+        XCTAssertEqual(Tsuki.monthKey("2026-11-27"), "2026-11")
+    }
+
+    func testDaySearchDecodeAndMerge() throws {
+        let json = #"{"results":[],"kakera":[{"id":"K1","written_at":"2026-11-03T18:30:00+09:00","excerpt":"銀杏"},{"id":"K0","written_at":"2026-11-03T09:00:00+09:00","excerpt":"銀杏2"}],"places":[{"id":"P1","at":"2026-11-03T10:00:00+09:00","name":"公園"},{"id":"P2","at":"2026-11-20T12:00:00+09:00","name":"駅"}]}"#
+        struct E: Decodable { let kakera: [KakeraHit]?; let places: [PlaceHit]? }
+        let d = JSONDecoder()
+        d.keyDecodingStrategy = .convertFromSnakeCase
+        let e = try d.decode(E.self, from: Data(json.utf8))
+        let hits = DayHit.merge(kakera: e.kakera ?? [], places: e.places ?? [])
+        XCTAssertEqual(hits.map(\.id), ["b-P2", "k-K1", "b-P1", "k-K0"])
+        XCTAssertEqual(hits[1].day, "2026-11-03")
+        XCTAssertEqual(hits[1].time, "18:30")
+        // かたち一覧の検索だけを返す古い形（kakera・places が無い）でも読める
+        let old = try d.decode(E.self, from: Data(#"{"results":[]}"#.utf8))
+        XCTAssertTrue(DayHit.merge(kakera: old.kakera ?? [], places: old.places ?? []).isEmpty)
+        let days = try d.decode([DaySummaryRow].self, from: Data(#"[{"date":"2026-11-25","kakera":0,"places":0,"mood":"疲"}]"#.utf8))
+        XCTAssertFalse(days[0].written)
+        XCTAssertEqual(days[0].mood, "疲")
+    }
+
     func testPhotoRefs() {
         let r = DayPage.photoRefs(dayRefs: ["a", "b", "c"], hidden: ["b"], added: ["x", "a", "x", "y"])
         XCTAssertEqual(r.own, ["a", "c"])

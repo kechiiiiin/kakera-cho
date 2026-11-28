@@ -127,6 +127,12 @@ struct ChizuSection: View {
     let pins: [ChizuPin]
     @State private var position: MapCameraPosition = .automatic
 
+    /// ピンが1つだけの日は寄りすぎるので、約2km四方を見せる。2つ以上は全部が入る範囲（自動）
+    static func camera(_ pins: [ChizuPin]) -> MapCameraPosition {
+        guard pins.count == 1, let p = pins.first else { return .automatic }
+        return .region(MKCoordinateRegion(center: p.coordinate, latitudinalMeters: 2000, longitudinalMeters: 2000))
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             SectionHead(title: "きょうの地図", count: pins.count)
@@ -163,6 +169,7 @@ struct ChizuSection: View {
                 }
             }
         }
-        .onChange(of: pins) { _, _ in position = .automatic }
+        .onAppear { position = Self.camera(pins) }
+        .onChange(of: pins) { _, p in position = Self.camera(p) }
     }
 }

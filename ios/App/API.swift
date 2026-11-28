@@ -141,6 +141,8 @@ private struct KakeraEnvelope: Decodable { let kakera: Kakera }
 private struct DayEnvelope: Decodable { struct Day: Decodable { let date: String; let mood: String? }; let day: Day }
 private struct BashoListEnvelope: Decodable { let places: [Basho] }
 private struct BashoEnvelope: Decodable { let place: Basho }
+private struct DaysEnvelope: Decodable { let days: [DaySummaryRow] }
+private struct DaySearchEnvelope: Decodable { let kakera: [KakeraHit]?; let places: [PlaceHit]? }
 private struct HiddenEnvelope: Decodable { struct Row: Decodable { let kind: String; let ref: String; let date: String }; let hidden: [Row] }
 private struct PhotoUploaded: Decodable { let key: String; let url: String }
 private struct KatachiListEnvelope: Decodable { let katachi: [KatachiSummary] }
@@ -267,6 +269,23 @@ final class API: @unchecked Sendable {
     func hidden(on day: String) async throws -> [String: Set<String>] {
         let r: HiddenEnvelope = try await call(.kakera, "GET", "/api/timeline-hidden", query: [URLQueryItem(name: "date", value: day)])
         return Dictionary(grouping: r.hidden, by: \.kind).mapValues { Set($0.map(\.ref)) }
+    }
+
+    /// 月カレンダー: その月の日ごとの かけら・場所の数と気分（どれかがある日だけ）
+    func days(month: String) async throws -> [DaySummaryRow] {
+        let r: DaysEnvelope = try await call(.kakera, "GET", "/api/days", query: [URLQueryItem(name: "month", value: month)])
+        return r.days
+    }
+
+    /// 1日のページの検索: かけら（全部）の本文と場所の名前（日付つき）。かたち一覧の検索（search）とは別の配列を読む
+    func daySearch(_ q: String) async throws -> (kakera: [KakeraHit], places: [PlaceHit]) {
+        let r: DaySearchEnvelope = try await call(.kakera, "GET", "/api/search", query: [URLQueryItem(name: "q", value: q)])
+        return (r.kakera ?? [], r.places ?? [])
+    }
+
+    /// 全期間の書き出し（テキスト）
+    func exportText() async throws -> String {
+        String(decoding: try await raw(.kakera, "GET", "/api/export"), as: UTF8.self)
     }
 
     /// 一覧から外す（写真のライブラリ・カレンダーからは消さない）

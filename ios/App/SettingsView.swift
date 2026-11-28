@@ -7,6 +7,9 @@ struct SettingsView: View {
     @State private var clientID = ""
     @State private var clientSecret = ""
     @State private var message: String?
+    @State private var exportFile: ExportFile?
+    @State private var exporting = false
+    @State private var exportError: String?
 
     var body: some View {
         NavigationStack {
@@ -20,6 +23,21 @@ struct SettingsView: View {
 
                     SectionHead(title: "行った場所")
                     VisitSettingSection()
+
+                    SectionHead(title: "書き出し")
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 10) {
+                            Button("全期間を書き出す") { Task { await export() } }
+                                .buttonStyle(GhostButtonStyle())
+                                .disabled(exporting || !API.shared.isConfigured(.kakera))
+                                .accessibilityIdentifier("exportAll")
+                            if exporting { ProgressView().controlSize(.small) }
+                        }
+                        Text("日ごとに 日付・気分・場所・かけら をテキスト（.txt）にして渡します。予定と写真は端末にしか無いので入りません。")
+                            .font(Theme.gothic(11)).foregroundStyle(Theme.muted).lineSpacing(3)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if let exportError { Text(exportError).font(Theme.gothic(11)).foregroundStyle(Theme.accent) }
+                    }
 
                     SectionHead(title: "Access のサービストークン")
                     VStack(alignment: .leading, spacing: 10) {
@@ -50,6 +68,22 @@ struct SettingsView: View {
             }
             .background(Theme.paper.ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
+            .sheet(item: $exportFile) { f in ShareSheet(items: [f.url]).presentationDetents([.medium, .large]) }
+        }
+    }
+
+    /// 全期間をテキストにして一時ファイルに置き、共有シートで渡す
+    private func export() async {
+        exporting = true
+        defer { exporting = false }
+        do {
+            let text = try await API.shared.exportText()
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent("kakera-\(JST.todayKey).txt")
+            try Data(text.utf8).write(to: url, options: .atomic)
+            exportError = nil
+            exportFile = ExportFile(url: url)
+        } catch {
+            exportError = "書き出せませんでした: \(error.localizedDescription)"
         }
     }
 
@@ -83,4 +117,10 @@ struct SettingsView: View {
             message = error.localizedDescription
         }
     }
+}
+
+/// 書き出したファイル（共有シートに渡す）
+struct ExportFile: Identifiable {
+    let url: URL
+    var id: String { url.path }
 }
