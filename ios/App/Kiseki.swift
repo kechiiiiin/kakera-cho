@@ -221,6 +221,11 @@ enum ChizuContent {
         }
     }
 
+    /// 地図を作り直す鍵（ピンと軌跡の中身が変わったら変わる）
+    static func identity(pins: [ChizuPin], track: [TrackPoint]) -> String {
+        pins.map { "\($0.itemID)@\($0.lat),\($0.lng)" }.joined(separator: "|") + "#" + track.map(\.id).joined(separator: ",")
+    }
+
     /// 地図の下の一行: 軌跡の移動距離と港の歩数（どちらかが無ければその分だけ）。軌跡が無い日は出さない（今のまま）
     static func summary(track: [TrackPoint], steps: String?) -> String? {
         guard track.count >= 2 else { return nil }

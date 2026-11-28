@@ -155,6 +155,9 @@ struct ChizuSection: View {
                 // 動かさない地図（ページを縦に送る指が地図を引きずらないように）。押すと全画面で動かせる地図
                 Map(position: $position, interactionModes: []) { ChizuContent.content(pins: pins, track: track) }
                 .mapStyle(.standard(pointsOfInterest: .excludingAll))
+                // 線（MapPolyline）は中身が変わっても描き直されないことがある（日を移ると前の日の線が残った）ので、
+                // ピンか軌跡が変わったら地図ごと作り直す
+                .id(ChizuContent.identity(pins: pins, track: track))
                 .frame(height: 260)
                 .clipShape(RoundedRectangle(cornerRadius: Theme.radius))
                 .overlay(RoundedRectangle(cornerRadius: Theme.radius).strokeBorder(Theme.line, lineWidth: Theme.hairline))
