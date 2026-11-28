@@ -1,8 +1,0 @@
-/* iOS アプリの同梱（kapp.html）だけに足す見た目。Web 版の src/styles/app.css はそのまま読み、ここでは上書きを最小にする。
- *   - Web の上の帯（「かけら帳」とタブ）は出さない。アプリ側の帯（ios/App/AppWebView.swift の「‹ かけら」）が続きになる
- *     （2026-11-24 本人「別サイトに行っているような違和感」）。--topbar-h は 0 になり、書く欄の貼り付きも上端に揃う
- *   - WebView の上下の安全域は SwiftUI 側で避けている
- */
-header.topbar { display: none; }
-/* かたちにする画面の「‹ かけらへ戻る」は Web 版のかけら画面へ行くので出さない（戻るはアプリの帯の「‹ かけら」） */
-#app[data-view="compose"] .back-row { display: none; }
