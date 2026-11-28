@@ -69,7 +69,30 @@ targets:
         BUNDLE_LOADER: "$(TEST_HOST)"
         TARGETED_DEVICE_FAMILY: "1"
 
+  # 実画面の通し（make shots・ローカルの Worker が要るので make test には入れない）
+  KakeraUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: UITests
+    dependencies:
+      - target: Kakera
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: jp.kechiiiiin.kakera.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: Kakera
+        TARGETED_DEVICE_FAMILY: "1"
+
 schemes:
+  KakeraShots:
+    build:
+      targets:
+        Kakera: all
+    test:
+      config: Debug
+      targets:
+        - KakeraUITests
   Kakera:
     build:
       targets:

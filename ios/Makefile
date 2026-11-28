@@ -9,6 +9,7 @@
 #   make run-local  シミュレータで起動し、ローカルの Worker（かけら帳 astro dev :4321・港 ~/work/minato の npm run dev :8793）に向ける
 #                   読んだ記事は港の tayori から読む（アプリは便りを直接呼ばない）。港をローカルで回すと出どころの秘密が無いので
 #                   cron の材料はスキップになる（vault-log は MINATO_URL=http://127.0.0.1:8793 node scripts/send-to-minato.mjs で入る）
+#   make shots      1日のページを実画面で通す UI テスト（ローカルのかけら帳 :4321 が要る）。スクリーンショットは build/stage1-*.png
 #   make run-local-minato-prod  かけら帳はローカル・港は本番（読むだけ。トークンはアプリのキーチェーンに入っていること）
 #   make archive    TestFlight 向けアーカイブ（Release・自動署名）。サービストークンをこの Mac のキーチェーンから埋め込む
 #   make export-testflight  .ipa を build/export/ に書き出す（送らない）
@@ -35,7 +36,7 @@ ARCHIVE = build/Kakera.xcarchive
 KC_SERVICE ?= kakera-token
 SECRETS = Secrets.xcconfig
 
-.PHONY: generate test fixtures roundtrip sim run-local run-local-minato-prod icon clean archive upload export-testflight release require-team require-asc-key
+.PHONY: shots generate test fixtures roundtrip sim run-local run-local-minato-prod icon clean archive upload export-testflight release require-team require-asc-key
 
 generate:
 	xcodegen generate
@@ -75,6 +76,16 @@ run-local: sim
 	@xcrun simctl boot "$(PHONE_SIM)" 2>/dev/null || true
 	xcrun simctl install "$(PHONE_SIM)" $(APP)
 	xcrun simctl launch --terminate-running-process "$(PHONE_SIM)" $(BUNDLE) -kakeraBaseURL $(LOCAL_KAKERA) -minatoBaseURL $(LOCAL_MINATO)
+
+# 写真の許可は先に与えておく（許可の確認が出ると操作が止まる）。KAKERA_SHOTS は TEST_RUNNER_ で UI テストへ渡る
+shots: generate
+	@mkdir -p build
+	@xcrun simctl list devices | grep -q "$(PHONE_SIM) (" || xcrun simctl create "$(PHONE_SIM)" "$(PHONE_TYPE)" > /dev/null
+	@xcrun simctl boot "$(PHONE_SIM)" 2>/dev/null || true
+	-@xcrun simctl privacy "$(PHONE_SIM)" grant photos $(BUNDLE) 2>/dev/null
+	@set -o pipefail; TEST_RUNNER_KAKERA_SHOTS="$(CURDIR)/build" xcodebuild -project $(PROJECT) -scheme KakeraShots \
+	  -destination 'platform=iOS Simulator,name=$(PHONE_SIM)' -configuration Debug -derivedDataPath build-sim CODE_SIGN_IDENTITY=- \
+	  test 2>&1 | tee build/shots.log | grep -E "(error):|XCTAssert|Executed [0-9]+ tests|TEST (SUCCEEDED|FAILED)"
 
 # 港は本番（minato.kechiiiiin.com・トークン付き）を読む。かけらの書き込みはローカルのかけら帳へ
 run-local-minato-prod: sim
