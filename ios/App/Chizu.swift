@@ -1,0 +1,168 @@
+import MapKit
+import SwiftUI
+
+// 1日のページの地図（かけら帳1日のページ設計・段階4）: 座標のある行（場所・位置つきの予定・位置つきの写真。外した行は除く）を
+// 一覧の上から 1, 2, 3… と番号を振ってピンにし、時刻順に線で結ぶ。Web には対応する画面が無い（地図は iPhone だけ）。
+// 場所の座標は Web の place（src/lib/kakera/day-db.ts の lat / lng）、予定・写真の座標は端末から読む。
+
+/// 地図のピン（一覧の行と同じ番号）
+struct ChizuPin: Identifiable, Hashable {
+    let number: Int
+    /// 一覧の行の id（TimelineItem.id）
+    let itemID: String
+    let lat: Double
+    let lng: Double
+    let title: String
+
+    var id: String { itemID }
+    var coordinate: CLLocationCoordinate2D { .init(latitude: lat, longitude: lng) }
+}
+
+enum Chizu {
+    /// 一覧の並び（時刻順）のまま、座標のある行に 1 から番号を振る。
+    /// 予定は位置が無くても場所の文字をジオコーディングした座標（geocoded・場所の文字 → 座標）があれば使う
+    static func pins(_ items: [TimelineItem], geocoded: [String: GeoPoint] = [:]) -> [ChizuPin] {
+        var out: [ChizuPin] = []
+        for item in items {
+            guard let (p, title) = point(item, geocoded: geocoded) else { continue }
+            out.append(ChizuPin(number: out.count + 1, itemID: item.id, lat: p.lat, lng: p.lng, title: title))
+        }
+        return out
+    }
+
+    private static func point(_ item: TimelineItem, geocoded: [String: GeoPoint]) -> (GeoPoint, String)? {
+        switch item {
+        case .basho(let b):
+            guard let lat = b.lat, let lng = b.lng else { return nil }
+            return (GeoPoint(lat: lat, lng: lng), b.name)
+        case .photo(let p):
+            guard let l = p.location else { return nil }
+            return (GeoPoint(l.coordinate), "写真 \(JST.time(p.shownAt))")
+        case .yotei(let y):
+            if let l = y.yotei.location { return (GeoPoint(l.coordinate), y.yotei.title) }
+            if let name = y.yotei.locationName, let g = geocoded[name] { return (g, y.yotei.title) }
+            return nil
+        case .kakera:
+            return nil
+        }
+    }
+
+    /// Google マップの経由地の上限（API の決まり）
+    static let maxWaypoints = 9
+    /// 移動の手段（電車と徒歩の暮らしに合わせて transit。Google マップ側で変えられる）
+    static let travelMode = "transit"
+
+    /// 「Google マップでルート」の URL。ピンが2つ未満なら nil。経由地は9まで（多ければ均等に間引く）
+    static func googleMapsURL(_ pins: [ChizuPin]) -> URL? {
+        guard pins.count >= 2, let first = pins.first, let last = pins.last else { return nil }
+        let middle = Array(pins.dropFirst().dropLast())
+        var c = URLComponents(string: "https://www.google.com/maps/dir/")!
+        c.queryItems = [
+            URLQueryItem(name: "api", value: "1"),
+            URLQueryItem(name: "origin", value: latLng(first)),
+            URLQueryItem(name: "destination", value: latLng(last)),
+            URLQueryItem(name: "waypoints", value: thin(middle, to: maxWaypoints).map(latLng).joined(separator: "|")),
+            URLQueryItem(name: "travelmode", value: travelMode),
+        ]
+        return c.url
+    }
+
+    /// 均等に間引く（先頭と末尾は残す）
+    static func thin<T>(_ list: [T], to n: Int) -> [T] {
+        guard list.count > n, n > 0 else { return list }
+        if n == 1 { return [list[list.count / 2]] }
+        return (0..<n).map { i in list[Int((Double(i) * Double(list.count - 1) / Double(n - 1)).rounded())] }
+    }
+
+    private static func latLng(_ p: ChizuPin) -> String { String(format: "%.6f,%.6f", p.lat, p.lng) }
+}
+
+/// 座標（緯度・経度）。ジオコーディングの控えにも使う
+struct GeoPoint: Hashable {
+    let lat: Double
+    let lng: Double
+
+    init(lat: Double, lng: Double) { self.lat = lat; self.lng = lng }
+    init(_ c: CLLocationCoordinate2D) { self.init(lat: c.latitude, lng: c.longitude) }
+}
+
+/// 予定の場所の文字 → 座標の控え（メモリだけ・取れなかったものも覚えて引き直さない）
+@MainActor
+enum YoteiGeocodeCache {
+    private static var cache: [String: GeoPoint?] = [:]
+
+    static func known(_ names: [String]) -> [String: GeoPoint] {
+        var out: [String: GeoPoint] = [:]
+        for n in names { if let g = cache[n] ?? nil { out[n] = g } }
+        return out
+    }
+
+    /// まだ引いていない名前だけ引く
+    static func lookup(_ names: [String]) async -> [String: GeoPoint] {
+        for n in Set(names) where cache[n] == nil {
+            let c = await BashoGeocoder.coordinate(for: n)
+            cache[n] = .some(c.map { GeoPoint(lat: $0.lat, lng: $0.lng) })
+        }
+        return known(names)
+    }
+}
+
+/// 番号の丸（一覧の行と地図のピンで同じ見た目）
+struct PinNumber: View {
+    let number: Int
+    var size: CGFloat = 16
+
+    var body: some View {
+        Text("\(number)")
+            .font(Theme.mono(size * 0.6, weight: .semibold))
+            .foregroundStyle(Theme.ink)
+            .frame(width: size, height: size)
+            .background(Circle().fill(Theme.paper))
+            .overlay(Circle().strokeBorder(Theme.ink, lineWidth: 1))
+    }
+}
+
+/// 「きょうの地図」。ピンが無い日は一行だけ
+struct ChizuSection: View {
+    let pins: [ChizuPin]
+    @State private var position: MapCameraPosition = .automatic
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionHead(title: "きょうの地図", count: pins.count)
+                .padding(.bottom, -10)
+            if pins.isEmpty {
+                Text("この日は位置の分かる記録がありません").font(Theme.gothic(12)).foregroundStyle(Theme.muted)
+                    .accessibilityIdentifier("chizuEmpty")
+            } else {
+                // 動かさない地図（ページを縦に送る指が地図を引きずらないように）。全部のピンが入る範囲を自動で見せる
+                Map(position: $position, interactionModes: []) {
+                    if pins.count >= 2 {
+                        MapPolyline(coordinates: pins.map(\.coordinate))
+                            .stroke(Theme.ink.opacity(0.7), lineWidth: 2)
+                    }
+                    ForEach(pins) { p in
+                        Annotation(p.title, coordinate: p.coordinate, anchor: .center) {
+                            PinNumber(number: p.number, size: 22)
+                                .accessibilityIdentifier("pin-\(p.number)")
+                        }
+                        .annotationTitles(.hidden)
+                    }
+                }
+                .mapStyle(.standard(pointsOfInterest: .excludingAll))
+                .frame(height: 260)
+                .clipShape(RoundedRectangle(cornerRadius: Theme.radius))
+                .overlay(RoundedRectangle(cornerRadius: Theme.radius).strokeBorder(Theme.line, lineWidth: Theme.hairline))
+                .accessibilityIdentifier("chizu")
+                .accessibilityValue(pins.map { String($0.number) }.joined(separator: ","))
+                if let url = Chizu.googleMapsURL(pins) {
+                    Link("Google マップでルート", destination: url)
+                        .buttonStyle(LinkButtonStyle(color: Theme.accent))
+                        .accessibilityIdentifier("googleMapsRoute")
+                        .accessibilityValue(url.absoluteString)
+                }
+            }
+        }
+        .onChange(of: pins) { _, _ in position = .automatic }
+    }
+}

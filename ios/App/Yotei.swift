@@ -93,7 +93,7 @@ final class CalendarMaterials {
 
     #if DEBUG
     /// 検査だけ: 起動引数 -kakeraSeedEvents YYYY-MM-DD で、検証用のカレンダー「かけら帳の検証」に予定を入れ直す
-    /// （終日・時刻つき・場所つき・繰り返し・日をまたぐもの）。ほかのカレンダーには触らない
+    /// （終日・時刻つき・場所つき・場所の文字だけ・繰り返し・日をまたぐもの）。ほかのカレンダーには触らない
     func seedForTesting(day: String) {
         guard canRead, let r = JST.dayRange(day) else { return }
         let name = "かけら帳の検証"
@@ -132,6 +132,7 @@ final class CalendarMaterials {
         add("打ち合わせ", h(10), h(11.5), place: "東京駅", geo: CLLocation(latitude: 35.6812, longitude: 139.7671))
         add("昼の約束", h(12.5), h(13))
         add("夜の勉強会", h(22), h(25)) // 22:00〜翌 01:00
+        add("夕方の買い物", h(18), h(19), place: "新宿駅") // 位置なし・場所の文字だけ（端末でジオコーディングする）
         try? store.commit()
         reload()
     }

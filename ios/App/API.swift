@@ -251,8 +251,9 @@ final class API: @unchecked Sendable {
     }
 
     /// 場所を足す。id は端末で採番した ULID、at は +09:00 付き。座標が取れなければ送らない
-    func createBasho(id: String, at: String, name: String, coordinate: (lat: Double, lng: Double)?) async throws -> Basho {
-        var b: [String: Any] = ["id": id, "at": at, "name": name, "source": "manual"]
+    func createBasho(id: String, at: String, name: String, coordinate: (lat: Double, lng: Double)?,
+                     source: String = "manual") async throws -> Basho {
+        var b: [String: Any] = ["id": id, "at": at, "name": name, "source": source]
         if let c = coordinate { b["lat"] = c.lat; b["lng"] = c.lng }
         let r: BashoEnvelope = try await call(.kakera, "POST", "/api/place", json: b)
         return r.place

@@ -18,6 +18,9 @@ struct SettingsView: View {
                         Button("閉じる") { dismiss() }.buttonStyle(LinkButtonStyle())
                     }
 
+                    SectionHead(title: "行った場所")
+                    VisitSettingSection()
+
                     SectionHead(title: "Access のサービストークン")
                     VStack(alignment: .leading, spacing: 10) {
                         row("いまの Client ID", AccessTokenStore.hint ?? "なし")

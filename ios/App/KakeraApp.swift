@@ -7,6 +7,13 @@ struct KakeraApp: App {
         ServerConfig.applyLaunchOverride()
         #endif
         LaunchConfig.applyIfPresent()
+        // 行った場所の自動記録: オンなら訪問の監視を続け、溜まっているものを送る（位置で起こされたときもここを通る）
+        Task { @MainActor in
+            #if DEBUG
+            await VisitRecorder.shared.applyLaunchArguments()
+            #endif
+            VisitRecorder.shared.resume()
+        }
     }
 
     var body: some Scene {

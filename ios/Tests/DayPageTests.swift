@@ -1,3 +1,4 @@
+import CoreLocation
 import XCTest
 @testable import Kakera
 
@@ -74,6 +75,66 @@ final class DayPageTests: XCTestCase {
         XCTAssertEqual(items.map(\.id).map { $0.components(separatedBy: "|").first! },
                        ["yotei-EV-holiday", "yotei-EV-bus", "kakera-K0", "yotei-EV-lunch", "basho-B", "kakera-K"])
         XCTAssertEqual(items.first?.timeLabel, "終日")
+    }
+
+    // MARK: 段階4 地図・訪問
+
+    private func bashoAt(_ id: String, _ at: String, _ lat: Double?, _ lng: Double?) -> Basho {
+        Basho(id: id, at: at, name: "場所 \(id)", lat: lat, lng: lng, source: "manual", createdAt: at, updatedAt: at)
+    }
+
+    func testPinsNumberRowsWithCoordinatesInListOrder() {
+        let withGeo = Yotei(ref: "EV-a|x", title: "会議", start: date("2026-11-27T10:00:00+09:00"), end: date("2026-11-27T11:00:00+09:00"),
+                            isAllDay: false, locationName: "どこか", location: nil)
+        let noGeo = Yotei(ref: "EV-b|x", title: "電話", start: date("2026-11-27T09:00:00+09:00"), end: date("2026-11-27T09:10:00+09:00"),
+                          isAllDay: false, locationName: "わからない所", location: nil)
+        let items = DayPage.merge(
+            kakera: [kakera("K", "2026-11-27T08:00:00+09:00")],
+            basho: [bashoAt("B1", "2026-11-27T07:00:00+09:00", 35.0, 139.0), bashoAt("B2", "2026-11-27T12:00:00+09:00", nil, nil),
+                    bashoAt("B3", "2026-11-27T15:00:00+09:00", 35.5, 139.5)],
+            yotei: DayPage.yotei([withGeo, noGeo], on: "2026-11-27", hidden: [])
+        )
+        let pins = Chizu.pins(items, geocoded: ["どこか": GeoPoint(lat: 35.2, lng: 139.2)])
+        // かけら・座標の無い場所・引けなかった予定は飛ばし、残りに上から 1, 2, 3
+        XCTAssertEqual(pins.map(\.itemID), ["basho-B1", "yotei-EV-a|x", "basho-B3"])
+        XCTAssertEqual(pins.map(\.number), [1, 2, 3])
+        XCTAssertEqual(pins[1].lat, 35.2)
+    }
+
+    private func pin(_ n: Int) -> ChizuPin { ChizuPin(number: n, itemID: "p\(n)", lat: 35 + Double(n) / 100, lng: 139 + Double(n) / 100, title: "") }
+
+    func testGoogleMapsURL() throws {
+        XCTAssertNil(Chizu.googleMapsURL([pin(1)]), "ピンが2つ未満なら出さない")
+        let two = try XCTUnwrap(Chizu.googleMapsURL([pin(1), pin(2)]))
+        XCTAssertEqual(two.absoluteString,
+                       "https://www.google.com/maps/dir/?api=1&origin=35.010000,139.010000&destination=35.020000,139.020000&waypoints=&travelmode=transit")
+        let many = try XCTUnwrap(Chizu.googleMapsURL((1...15).map(pin)))
+        let q = try XCTUnwrap(URLComponents(url: many, resolvingAgainstBaseURL: false)?.queryItems)
+        let waypoints = try XCTUnwrap(q.first { $0.name == "waypoints" }?.value).split(separator: "|")
+        XCTAssertEqual(waypoints.count, 9, "経由地は9まで")
+        XCTAssertEqual(waypoints.first, "35.020000,139.020000")
+        XCTAssertEqual(waypoints.last, "35.140000,139.140000")
+        XCTAssertEqual(q.first { $0.name == "origin" }?.value, "35.010000,139.010000")
+        XCTAssertEqual(q.first { $0.name == "destination" }?.value, "35.150000,139.150000")
+    }
+
+    func testThinEvenly() {
+        XCTAssertEqual(Chizu.thin(Array(0..<13), to: 9), [0, 2, 3, 5, 6, 8, 9, 11, 12])
+        XCTAssertEqual(Chizu.thin([1, 2, 3], to: 9), [1, 2, 3])
+    }
+
+    func testVisitIDIsStableULIDPerVisit() {
+        let at = date("2026-11-27T14:05:31+09:00")
+        let c = CLLocationCoordinate2D(latitude: 35.68123, longitude: 139.76712)
+        let id = Houmon.visitID(arrival: at, coordinate: c)
+        XCTAssertEqual(id.count, 26)
+        XCTAssertNotNil(id.range(of: "^[0-9A-HJKMNP-TV-Z]{26}$", options: .regularExpression), "Web の isUlid を通る形")
+        // 同じ訪問（同じ分・約100m以内）は同じ id
+        XCTAssertEqual(id, Houmon.visitID(arrival: at.addingTimeInterval(10), coordinate: .init(latitude: 35.6814, longitude: 139.7669)))
+        XCTAssertNotEqual(id, Houmon.visitID(arrival: at.addingTimeInterval(120), coordinate: c))
+        XCTAssertNotEqual(id, Houmon.visitID(arrival: at, coordinate: .init(latitude: 35.70, longitude: 139.76712)))
+        // 時刻の部分は到着の分（ULID の並びが時刻順になる）
+        XCTAssertEqual(String(id.prefix(10)), String(ULID.make(date("2026-11-27T14:05:00+09:00")).prefix(10)))
     }
 
     func testPhotoRefs() {

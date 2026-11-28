@@ -253,7 +253,7 @@ struct KibunStamps: View {
 
 // MARK: - きょうの一覧
 
-/// 種類の印（罫と墨の小さな記号）: かけらは墨の小さな四角、場所は墨の輪、写真は墨の枠の四角、予定は墨の短い横棒
+/// 種類の印（罫と墨の小さな記号）: かけらは墨の小さな四角、場所は墨の輪、自動で残した場所は輪の中に点、写真は墨の枠の四角、予定は墨の短い横棒
 struct KindMark: View {
     let item: TimelineItem
 
@@ -262,6 +262,10 @@ struct KindMark: View {
             switch item {
             case .kakera:
                 Rectangle().fill(Theme.ink).frame(width: 5, height: 5)
+            case .basho(let b) where b.source == "visit":
+                // 自動で残した場所: 墨の輪の中に点（手入力の輪と見分ける）
+                Circle().strokeBorder(Theme.ink, lineWidth: 1.2).frame(width: 9, height: 9)
+                    .overlay(Circle().fill(Theme.ink).frame(width: 3, height: 3))
             case .basho:
                 Circle().strokeBorder(Theme.ink, lineWidth: 1.2).frame(width: 8, height: 8)
             case .photo:
@@ -278,6 +282,8 @@ struct KindMark: View {
 struct TimelineRow: View {
     let item: TimelineItem
     let cards: LinkCards
+    /// 地図のピンと同じ番号（座標のある行だけ）
+    var number: Int? = nil
     let onDelete: () -> Void
 
     var body: some View {
@@ -294,6 +300,11 @@ struct TimelineRow: View {
             }
             .frame(width: 40, alignment: .leading)
             .padding(.top, 4)
+            ZStack {
+                if let number { PinNumber(number: number).accessibilityIdentifier("rowNumber-\(number)") }
+            }
+            .frame(width: 16)
+            .padding(.top, 3)
             KindMark(item: item).padding(.top, 6)
             content.frame(maxWidth: .infinity, alignment: .leading)
             Button(action: onDelete) {
@@ -319,7 +330,9 @@ struct TimelineRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(b.name).font(Theme.gothic(15)).foregroundStyle(Theme.ink)
                     .fixedSize(horizontal: false, vertical: true)
-                if b.lat == nil {
+                if b.source == "visit" {
+                    Text("自動").font(Theme.mono(9.5)).foregroundStyle(Theme.muted)
+                } else if b.lat == nil {
                     Text("位置なし").font(Theme.mono(9.5)).foregroundStyle(Theme.muted)
                 }
             }

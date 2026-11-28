@@ -39,6 +39,10 @@
 	</dict>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>その日の予定を、1日のページの一覧に時刻の位置で並べるために使います。端末のカレンダーから読むだけで、保存も送信もしません（一覧から外した印だけを残します）。</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>「行った場所を自動で残す」をオンにしたとき、しばらく居た場所（訪問）を見つけて、着いた時刻と地名をその日の一覧に足すために使います。</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>アプリを閉じている間に行った場所も残すために使います。訪問を見つけたときだけ、着いた時刻・地名・座標をかけら帳に送ります。オフにすれば止まり、手入力の場所はそのまま使えます。</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>その日に撮った写真と、写真の位置情報から分かる行った場所を「思い出す材料」として並べ、選んだ写真をかけらに添えるために使います（位置情報は端末の中で地名にするだけで、サーバーへは送りません）。</string>
 	<key>UIApplicationSceneManifest</key>

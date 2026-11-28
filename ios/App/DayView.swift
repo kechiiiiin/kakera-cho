@@ -36,6 +36,8 @@ struct DayView: View {
     @State private var pendingDelete: Kakera?
     @State private var photos = PhotoMaterials()
     @State private var calendar = CalendarMaterials()
+    /// 位置の無い予定の、場所の文字から引いた座標（メモリの控えから）
+    @State private var yoteiGeo: [String: GeoPoint] = [:]
     /// 一覧から外した予定の回（D1 の timeline_hidden・kind=event）
     @State private var hiddenEvents: Set<String> = []
     @State private var places = PlaceMaterials()
@@ -63,6 +65,7 @@ struct DayView: View {
                         EntryBox(kind: $entryKind, at: $entryAt, text: $entryText, range: DayPage.entryRange(day: day),
                                  adding: adding, enabled: loadedKakera && loadedDay == day, focused: $entryFocused,
                                  pickedPhotos: $pickedPhotos) { addEntry() }
+                        ChizuSection(pins: pins)
                     }
                     MaterialsHeader(minato: minato, canCollect: API.shared.isConfigured(.minato)) {
                         Task { await minato.collectNow() }
@@ -94,9 +97,15 @@ struct DayView: View {
                 }
             }
             .task(id: "\(day)#\(configVersion)") { await reload() }
+            // 位置の無い予定は場所の文字から座標を引く（控えにあるものは引き直さない）
+            .task(id: "\(day)#\(calendar.events.count)#\(loadedDay ?? "")") { await geocodeYotei() }
+            .onReceive(NotificationCenter.default.publisher(for: .kakeraPlacesChanged)) { _ in
+                Task { await reloadBasho() }
+            }
             .onChange(of: day) { _, _ in kibun = nil; loadedDay = nil }
             .onChange(of: scenePhase) { _, p in
                 if p == .active {
+                    Task { await VisitRecorder.shared.flush() } // 溜まっている訪問を送る
                     calendar.load(day)
                     photos.load(day)
                     places.load(day: day, assets: photos.assets)
@@ -166,6 +175,7 @@ struct DayView: View {
                 }
                 .buttonStyle(LinkButtonStyle(color: Theme.muted))
                 .accessibilityLabel("設定")
+                .accessibilityIdentifier("openSettings")
             }
             .padding(.horizontal, 18).padding(.top, 4).padding(.bottom, 6)
             Rule()
@@ -214,6 +224,23 @@ struct DayView: View {
 
     // MARK: きょうの一覧（かけら＋場所を時刻順）
 
+    /// 地図のピン（一覧の上から番号）と、行 id → 番号
+    private var pins: [ChizuPin] { Chizu.pins(timeline, geocoded: yoteiGeo) }
+
+    private func geocodeYotei() async {
+        let names = calendar.events.filter { $0.location == nil }.compactMap(\.locationName)
+        guard !names.isEmpty else { return }
+        yoteiGeo = YoteiGeocodeCache.known(names)
+        let found = await YoteiGeocodeCache.lookup(names)
+        yoteiGeo = found
+    }
+
+    /// 自動で残した場所を送り終えたら、場所だけ読み直す
+    private func reloadBasho() async {
+        let target = day
+        if let list = try? await API.shared.basho(on: target), target == day { basho = list }
+    }
+
     private var timeline: [TimelineItem] {
         DayPage.merge(kakera: kakera, basho: basho, photos: timelinePhotos, yotei: timelineYotei)
     }
@@ -251,6 +278,7 @@ struct DayView: View {
     @ViewBuilder
     private var timelineSection: some View {
         let items = timeline
+        let numbers = Dictionary(uniqueKeysWithValues: pins.map { ($0.itemID, $0.number) })
         MajorHead(title: isToday ? "きょう" : "この日", count: items.count, top: 28) {
             // Web の「かたちにする」（.link-btn・黒の文字だけ）。かけらたちから選んで並べる（ComposeScreen）
             Button("かたちにする") { web = .compose }
@@ -280,25 +308,25 @@ struct DayView: View {
         // かけらの行を押すと直す画面。⚠️ Button にすると中のリンク・リンクカードが押せないので、行は onTapGesture で開く
         // 行は LazyVStack の直の子にする（写真の多い日も、見えている行の絵だけを読む）。縦線は行ごとに引いてつなげる
         ForEach(items) { item in
-            row(item, in: items)
+            row(item, in: items, number: numbers[item.id])
                 .ruledRow(first: item.id == items.first?.id)
                 .modifier(TimelineRail())
         }
     }
 
     @ViewBuilder
-    private func row(_ item: TimelineItem, in items: [TimelineItem]) -> some View {
+    private func row(_ item: TimelineItem, in items: [TimelineItem], number: Int?) -> some View {
         switch item {
         case .kakera(let k):
-            TimelineRow(item: item, cards: cards) { pendingDelete = k }
+            TimelineRow(item: item, cards: cards, number: number) { pendingDelete = k }
                 .onTapGesture { draft = .edit(k) }
                 .accessibilityAddTraits(.isButton)
         case .basho(let b):
-            TimelineRow(item: item, cards: cards) { removeBasho(b) }
+            TimelineRow(item: item, cards: cards, number: number) { removeBasho(b) }
         case .yotei(let y):
-            TimelineRow(item: item, cards: cards) { hideYotei(y) }
+            TimelineRow(item: item, cards: cards, number: number) { hideYotei(y) }
         case .photo(let p):
-            TimelineRow(item: item, cards: cards) { hidePhoto(p) }
+            TimelineRow(item: item, cards: cards, number: number) { hidePhoto(p) }
                 .onTapGesture {
                     let list = items.compactMap { if case .photo(let q) = $0 { return q } else { return nil } }
                     viewer = ViewerStart(photos: list, index: list.firstIndex(of: p) ?? 0)
