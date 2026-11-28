@@ -3,7 +3,7 @@ import PhotosUI
 import SwiftUI
 
 /// 日ごとの画面（1日1ページの手帳・かけら帳1日のページ設計）: 日付を左右で移る（既定は今日）。並びは
-/// 日付 → 気分のハンコ → きょうの一覧（かけら＋場所を時刻順・左に縦線）→ 入力欄 → 思い出す材料（写真・行った場所・港の材料）→ 書く。
+/// 日付 → きょうの一覧（かけら＋場所を時刻順・左に縦線）→ 入力欄 → 思い出す材料（写真・行った場所・港の材料）→ 書く。
 /// 見た目は Web 版の書く側（.topbar・.page-date・.frag-list）。API は Web と同じ（/api/kakera・/api/day/:date・/api/place）
 struct DayView: View {
     @State private var day = JST.todayKey
@@ -11,14 +11,12 @@ struct DayView: View {
     @State private var cards: LinkCards = [:]
     @State private var kakeraError: String?
     @State private var loadedKakera = false
-    /// 気分（押していない日は nil）。日を移ったらすぐ外し、読めたらその日のものを出す
-    @State private var kibun: Kibun?
     @State private var basho: [Basho] = []
     /// その日の移動の軌跡（GET /api/track・時刻順）。読めなければ空（地図は今のまま）
     @State private var kiseki: [TrackPoint] = []
-    /// 気分・場所が読めなかったとき（かけらは読めていることがある）
+    /// 場所が読めなかったとき（かけらは読めていることがある）
     @State private var dayError: String?
-    /// 気分・場所を読み終えた日（違う日のハンコを押させない）
+    /// 場所を読み終えた日（読み終える前は入力欄で足させない）
     @State private var loadedDay: String?
     @State private var entryKind: EntryKind = .kakera
     @State private var entryAt = Date()
@@ -63,7 +61,6 @@ struct DayView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     dateHeader
-                    KibunStamps(selected: kibun, enabled: API.shared.isConfigured(.kakera) && loadedDay == day) { tapKibun($0) }
                     timelineSection
                     if API.shared.isConfigured(.kakera) {
                         EntryBox(kind: $entryKind, at: $entryAt, text: $entryText, range: DayPage.entryRange(day: day),
@@ -109,7 +106,7 @@ struct DayView: View {
             .onReceive(NotificationCenter.default.publisher(for: .kakeraTrackChanged)) { _ in
                 Task { await reloadKiseki() }
             }
-            .onChange(of: day) { _, _ in kibun = nil; loadedDay = nil; kiseki = [] }
+            .onChange(of: day) { _, _ in loadedDay = nil; kiseki = [] }
             .onChange(of: scenePhase) { _, p in
                 if p == .active {
                     Task { await VisitRecorder.shared.flush() } // 溜まっている訪問と軌跡の点を送る
@@ -445,24 +442,7 @@ struct DayView: View {
         }
     }
 
-    // MARK: 気分・追加・削除
-
-    /// 押した気分を付ける。同じものをもう一度押すと外す。先に画面を変え、失敗したら戻す
-    private func tapKibun(_ k: Kibun) {
-        let target = day
-        let before = kibun
-        let next: Kibun? = before == k ? nil : k
-        kibun = next
-        Task {
-            do {
-                let saved = try await API.shared.setKibun(next, on: target)
-                if target == day { kibun = saved }
-            } catch {
-                if target == day { kibun = before }
-                alert = "気分を残せませんでした: \(error.localizedDescription)"
-            }
-        }
-    }
+    // MARK: 追加・削除
 
     /// 入力欄の追加。かけらは本文そのまま POST /api/kakera、場所は端末で座標を引いてから POST /api/place
     private func addEntry() {
@@ -572,12 +552,11 @@ struct DayView: View {
         places.load(day: target, assets: photos.assets)
         async let k: Result<(kakera: [Kakera], cards: LinkCards), Error> = capture { try await API.shared.kakera(on: target) }
         async let b: Result<[Basho], Error> = capture { try await API.shared.basho(on: target) }
-        async let f: Result<Kibun?, Error> = capture { try await API.shared.kibun(on: target) }
         calendar.load(target)
         async let h: Result<[String: Set<String>], Error> = capture { try await API.shared.hidden(on: target) }
         async let m: Void = minato.load(target)
         async let t: [TrackPoint]? = try? API.shared.track(on: target)
-        let (kr, br, fr, hr, _, tr) = await (k, b, f, h, m, t)
+        let (kr, br, hr, _, tr) = await (k, b, h, m, t)
         guard target == day else { return } // 読み込み中に日付が変わった
         kiseki = tr ?? []
         let hiddenAll = (try? hr.get()) ?? [:]
@@ -590,13 +569,12 @@ struct DayView: View {
         }
         loadedKakera = true
         let configured = API.shared.isConfigured(.kakera)
-        switch (br, fr) {
-        case (.success(let places), .success(let mood)):
-            basho = places; kibun = mood; dayError = nil
-        case (.failure(let e), _), (_, .failure(let e)):
-            basho = (try? br.get()) ?? []
-            kibun = (try? fr.get()) ?? nil
-            dayError = configured && kakeraError == nil ? "気分・場所を読めませんでした（\(e.localizedDescription)）" : nil
+        switch br {
+        case .success(let places):
+            basho = places; dayError = nil
+        case .failure(let e):
+            basho = []
+            dayError = configured && kakeraError == nil ? "場所を読めませんでした（\(e.localizedDescription)）" : nil
         }
         loadedDay = target
         // 入力欄の時刻は日を移ったときだけ初期値に戻す（引っぱって読み直しても、選んだ時刻は動かさない）

@@ -1,14 +1,14 @@
 import SwiftUI
 
-// 月カレンダー（かけら帳1日のページ設計・段階5）: 日付の見出しを押すと出るシート。書いた日（かけらか場所がある日）に印、気分を小さく。
+// 月カレンダー（かけら帳1日のページ設計・段階5）: 日付の見出しを押すと出るシート。書いた日（かけらか場所がある日）に印。
+// 気分の小さな字は 2026-11-28 に外した（/api/days は mood も返すが読まない）。
 // Web の GET /api/days?month=YYYY-MM（src/pages/api/days.ts・src/lib/kakera/day-search.ts の monthDays）を読む。
 
-/// その月の日ごと（Web の DaySummary と同じ形）
+/// その月の日ごと（Web の DaySummary のうち使う分。mood は読まない）
 struct DaySummaryRow: Decodable, Hashable {
     let date: String
     let kakera: Int
     let places: Int
-    let mood: String?
 
     var written: Bool { kakera + places > 0 }
 }
@@ -82,7 +82,6 @@ struct TsukiSheet: View {
             Rule().padding(.top, 6)
             HStack(spacing: 14) {
                 HStack(spacing: 5) { Circle().fill(Theme.ink).frame(width: 4, height: 4); Text("書いた日") }
-                HStack(spacing: 5) { Text("嬉").font(Theme.gothic(10)).foregroundStyle(Theme.accent); Text("気分") }
             }
             .font(Theme.gothic(11)).foregroundStyle(Theme.muted).padding(.top, 8)
             if let error { Text(error).font(Theme.gothic(12)).foregroundStyle(Theme.accent).padding(.top, 8) }
@@ -116,7 +115,6 @@ struct TsukiSheet: View {
                     .foregroundStyle(future ? Theme.line : Theme.ink)
                 HStack(spacing: 2) {
                     if s?.written == true { Circle().fill(Theme.ink).frame(width: 4, height: 4) }
-                    if let m = s?.mood { Text(m).font(Theme.gothic(9.5)).foregroundStyle(Theme.accent) }
                 }
                 .frame(height: 12)
             }
@@ -129,7 +127,7 @@ struct TsukiSheet: View {
         }
         .buttonStyle(.plain)
         .disabled(future)
-        .accessibilityLabel("\(Int(d.suffix(2)) ?? 0)日" + (s?.written == true ? "・書いた日" : "") + (s?.mood.map { "・気分 \($0)" } ?? ""))
+        .accessibilityLabel("\(Int(d.suffix(2)) ?? 0)日" + (s?.written == true ? "・書いた日" : ""))
         .accessibilityIdentifier("cal-\(d)")
     }
 }

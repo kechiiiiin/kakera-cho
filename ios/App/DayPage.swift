@@ -3,20 +3,10 @@ import Photos
 import PhotosUI
 import SwiftUI
 
-// 1日のページの部品（かけら帳1日のページ設計・段階1〜2）: 気分のハンコ・きょうの一覧（かけら＋場所＋写真を時刻順）・入力欄。
-// Web の src/lib/kakera/day-input.ts（気分の5つ・場所の検査）・day-db.ts（Day / Place の形）・
+// 1日のページの部品（かけら帳1日のページ設計・段階1〜2）: きょうの一覧（かけら＋場所＋写真を時刻順）・入力欄。
+// 気分のハンコは 2026-11-28 に画面から外した（D1 の day・/api/day はそのまま残す）。
+// Web の src/lib/kakera/day-input.ts（場所の検査）・day-db.ts（Place の形）・
 // src/pages/api/day/[date].ts・src/pages/api/place/ と対になる。並べ方と時刻の初期値は DayPage に置いて XCTest で確かめる。
-
-/// 気分のハンコ（Web の MOODS と同じ5つ・同じ並び）
-enum Kibun: String, CaseIterable, Identifiable {
-    case ureshii = "嬉"
-    case tanoshii = "楽"
-    case odayaka = "穏"
-    case tsukare = "疲"
-    case kanashii = "哀"
-
-    var id: String { rawValue }
-}
 
 /// 行った場所（D1 の place・Web の Place と同じ形）。座標は端末でジオコーディングしたもの（取れなければ nil）
 struct Basho: Codable, Identifiable, Hashable {
@@ -214,40 +204,6 @@ enum BashoGeocoder {
     private static func valid(_ c: CLLocationCoordinate2D) -> (lat: Double, lng: Double)? {
         guard CLLocationCoordinate2DIsValid(c), !(c.latitude == 0 && c.longitude == 0) else { return nil }
         return (c.latitude, c.longitude)
-    }
-}
-
-// MARK: - 気分のハンコ
-
-/// 嬉・楽・穏・疲・哀 の丸印。押した一つだけ朱の丸印になる。もう一度押すと外れる
-struct KibunStamps: View {
-    let selected: Kibun?
-    let enabled: Bool
-    let onTap: (Kibun) -> Void
-
-    var body: some View {
-        HStack(spacing: 10) {
-            ForEach(Kibun.allCases) { k in
-                let on = selected == k
-                Button { onTap(k) } label: {
-                    Text(k.rawValue)
-                        .font(Theme.gothic(15, weight: on ? .semibold : .regular))
-                        .foregroundStyle(on ? Theme.accent : Theme.muted)
-                        .frame(width: 40, height: 40)
-                        .background(Circle().fill(on ? Theme.accent.opacity(0.06) : Theme.paper))
-                        .overlay(Circle().strokeBorder(on ? Theme.accent : Theme.line, lineWidth: on ? 1.5 : Theme.hairline))
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .disabled(!enabled)
-                .opacity(enabled ? 1 : 0.4)
-                .accessibilityLabel("気分 \(k.rawValue)")
-                .accessibilityAddTraits(on ? .isSelected : [])
-                .accessibilityIdentifier("kibun-\(k.rawValue)")
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(.top, 18)
     }
 }
 

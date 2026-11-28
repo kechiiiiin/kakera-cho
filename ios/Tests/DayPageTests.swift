@@ -3,7 +3,7 @@ import XCTest
 @testable import Kakera
 
 /// 1日のページ（かけら帳1日のページ設計・段階1）: きょうの一覧の並び・入力欄の時刻の初期値と範囲・API の形の読み。
-/// Web の src/lib/kakera/day-input.ts（気分の5つ）・day-db.ts（Place の形）と対になる。
+/// Web の src/lib/kakera/day-db.ts（Place の形）と対になる。気分のハンコは 2026-11-28 に画面から外した。
 final class DayPageTests: XCTestCase {
     private func kakera(_ id: String, _ at: String, katachi: String? = nil) -> Kakera {
         Kakera(id: id, body: "本文 \(id)", writtenAt: at, katachiId: katachi, updatedAt: at)
@@ -14,10 +14,6 @@ final class DayPageTests: XCTestCase {
     }
 
     private func date(_ s: String) -> Date { JST.parse(s)! }
-
-    func testKibunSameAsWeb() {
-        XCTAssertEqual(Kibun.allCases.map(\.rawValue), ["嬉", "楽", "穏", "疲", "哀"])
-    }
 
     func testMergeIsTimeOrderedAcrossKinds() {
         let items = DayPage.merge(
@@ -167,9 +163,10 @@ final class DayPageTests: XCTestCase {
         // かたち一覧の検索だけを返す古い形（kakera・places が無い）でも読める
         let old = try d.decode(E.self, from: Data(#"{"results":[]}"#.utf8))
         XCTAssertTrue(DayHit.merge(kakera: old.kakera ?? [], places: old.places ?? []).isEmpty)
-        let days = try d.decode([DaySummaryRow].self, from: Data(#"[{"date":"2026-11-25","kakera":0,"places":0,"mood":"疲"}]"#.utf8))
+        // mood は Web から返ってくるが読まない（気分の表示は外した）
+        let days = try d.decode([DaySummaryRow].self, from: Data(#"[{"date":"2026-11-25","kakera":0,"places":0,"mood":"疲"},{"date":"2026-11-26","kakera":1,"places":0,"mood":null}]"#.utf8))
         XCTAssertFalse(days[0].written)
-        XCTAssertEqual(days[0].mood, "疲")
+        XCTAssertTrue(days[1].written)
     }
 
     func testPhotoRefs() {

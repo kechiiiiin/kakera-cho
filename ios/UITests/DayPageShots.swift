@@ -1,6 +1,6 @@
 import XCTest
 
-/// 1日のページ（段階1）を実画面で通す: 一覧に既存のかけらが時刻順に出る・気分の付け外し・場所とかけらの追加と削除。
+/// 1日のページ（段階1）を実画面で通す: 一覧に既存のかけらが時刻順に出る・気分のハンコが無い・場所とかけらの追加と削除。
 /// ローカルのかけら帳（astro dev :4321・DEV_BYPASS_AUTH）に向けて起動し、要所でスクリーンショットを
 /// TEST_RUNNER_KAKERA_SHOTS（make shots が ios/build を渡す）に stage1-*.png で書く。`make test` には入れない（ローカルの Worker が要る）
 final class DayPageShots: XCTestCase {
@@ -41,8 +41,6 @@ final class DayPageShots: XCTestCase {
         app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", t)).firstMatch
     }
 
-    private func isOn(_ id: String) -> Bool { app.buttons[id].isSelected }
-
     func testDayPage() throws {
         XCTAssertTrue(app.buttons["prevDay"].waitForExistence(timeout: 20))
         app.buttons["prevDay"].tap()
@@ -61,21 +59,8 @@ final class DayPageShots: XCTestCase {
         }
         app.swipeDown(); app.swipeDown(); app.swipeDown()
 
-        // 気分: 押す → もう一度で外れる → 付け直す。日を移って戻っても残る
-        let calm = app.buttons["kibun-穏"]
-        XCTAssertTrue(calm.waitForExistence(timeout: 5))
-        calm.tap()
-        XCTAssertTrue(waitFor { self.isOn("kibun-穏") })
-        shot("2-kibun")
-        calm.tap()
-        XCTAssertTrue(waitFor { !self.isOn("kibun-穏") })
-        app.buttons["kibun-嬉"].tap()
-        XCTAssertTrue(waitFor { self.isOn("kibun-嬉") })
-        sleep(1)
-        app.buttons["nextDay"].tap()
-        XCTAssertTrue(waitFor { !self.isOn("kibun-嬉") })
-        app.buttons["prevDay"].tap()
-        XCTAssertTrue(waitFor { self.isOn("kibun-嬉") }, "日を移って戻ったら気分が残っている")
+        // 気分のハンコは出さない（2026-11-28 に外した）
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "kibun-")).count, 0)
 
         // 場所を足す（Return では足さない）
         let field = byID("entryText")

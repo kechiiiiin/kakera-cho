@@ -138,7 +138,6 @@ enum JSONValue: Decodable, Hashable {
 private struct KakeraList: Decodable { let kakera: [Kakera] }
 private struct CardsEnvelope: Decodable { let cards: LinkCards? }
 private struct KakeraEnvelope: Decodable { let kakera: Kakera }
-private struct DayEnvelope: Decodable { struct Day: Decodable { let date: String; let mood: String? }; let day: Day }
 private struct BashoListEnvelope: Decodable { let places: [Basho] }
 private struct BashoEnvelope: Decodable { let place: Basho }
 private struct TrackListEnvelope: Decodable { let points: [TrackPoint] }
@@ -234,19 +233,8 @@ final class API: @unchecked Sendable {
         _ = try await raw(.kakera, "DELETE", "/api/kakera/\(id)")
     }
 
-    // MARK: 1日のページ（気分・場所・一覧から外した印。Web の src/pages/api/day/・place/・timeline-hidden.ts）
-
-    /// その日の気分（押していない日は nil）
-    func kibun(on day: String) async throws -> Kibun? {
-        let r: DayEnvelope = try await call(.kakera, "GET", "/api/day/\(day)")
-        return r.day.mood.flatMap(Kibun.init(rawValue:))
-    }
-
-    /// 気分を付ける・外す（nil）
-    func setKibun(_ kibun: Kibun?, on day: String) async throws -> Kibun? {
-        let r: DayEnvelope = try await call(.kakera, "PUT", "/api/day/\(day)", json: ["mood": kibun.map { $0.rawValue as Any } ?? NSNull()])
-        return r.day.mood.flatMap(Kibun.init(rawValue:))
-    }
+    // MARK: 1日のページ（場所・軌跡・一覧から外した印。Web の src/pages/api/place/・track.ts・timeline-hidden.ts）
+    // 気分（/api/day）は 2026-11-28 に画面から外したので呼ばない（Web の口とデータはそのまま）
 
     /// その日（JST）の場所（時刻順）
     func basho(on day: String) async throws -> [Basho] {
@@ -289,7 +277,7 @@ final class API: @unchecked Sendable {
         return Dictionary(grouping: r.hidden, by: \.kind).mapValues { Set($0.map(\.ref)) }
     }
 
-    /// 月カレンダー: その月の日ごとの かけら・場所の数と気分（どれかがある日だけ）
+    /// 月カレンダー: その月の日ごとの かけら・場所の数（気分も返ってくるが読まない）
     func days(month: String) async throws -> [DaySummaryRow] {
         let r: DaysEnvelope = try await call(.kakera, "GET", "/api/days", query: [URLQueryItem(name: "month", value: month)])
         return r.days
