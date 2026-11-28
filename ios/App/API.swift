@@ -138,6 +138,9 @@ enum JSONValue: Decodable, Hashable {
 private struct KakeraList: Decodable { let kakera: [Kakera] }
 private struct CardsEnvelope: Decodable { let cards: LinkCards? }
 private struct KakeraEnvelope: Decodable { let kakera: Kakera }
+private struct DayEnvelope: Decodable { struct Day: Decodable { let date: String; let mood: String? }; let day: Day }
+private struct BashoListEnvelope: Decodable { let places: [Basho] }
+private struct BashoEnvelope: Decodable { let place: Basho }
 private struct PhotoUploaded: Decodable { let key: String; let url: String }
 private struct KatachiListEnvelope: Decodable { let katachi: [KatachiSummary] }
 private struct DetailEnvelope: Decodable {
@@ -224,6 +227,38 @@ final class API: @unchecked Sendable {
 
     func deleteKakera(id: String) async throws {
         _ = try await raw(.kakera, "DELETE", "/api/kakera/\(id)")
+    }
+
+    // MARK: 1日のページ（気分・場所・一覧から外した印。Web の src/pages/api/day/・place/・timeline-hidden.ts）
+
+    /// その日の気分（押していない日は nil）
+    func kibun(on day: String) async throws -> Kibun? {
+        let r: DayEnvelope = try await call(.kakera, "GET", "/api/day/\(day)")
+        return r.day.mood.flatMap(Kibun.init(rawValue:))
+    }
+
+    /// 気分を付ける・外す（nil）
+    func setKibun(_ kibun: Kibun?, on day: String) async throws -> Kibun? {
+        let r: DayEnvelope = try await call(.kakera, "PUT", "/api/day/\(day)", json: ["mood": kibun.map { $0.rawValue as Any } ?? NSNull()])
+        return r.day.mood.flatMap(Kibun.init(rawValue:))
+    }
+
+    /// その日（JST）の場所（時刻順）
+    func basho(on day: String) async throws -> [Basho] {
+        let r: BashoListEnvelope = try await call(.kakera, "GET", "/api/place", query: [URLQueryItem(name: "date", value: day)])
+        return r.places
+    }
+
+    /// 場所を足す。id は端末で採番した ULID、at は +09:00 付き。座標が取れなければ送らない
+    func createBasho(id: String, at: String, name: String, coordinate: (lat: Double, lng: Double)?) async throws -> Basho {
+        var b: [String: Any] = ["id": id, "at": at, "name": name, "source": "manual"]
+        if let c = coordinate { b["lat"] = c.lat; b["lng"] = c.lng }
+        let r: BashoEnvelope = try await call(.kakera, "POST", "/api/place", json: b)
+        return r.place
+    }
+
+    func deleteBasho(id: String) async throws {
+        _ = try await raw(.kakera, "DELETE", "/api/place/\(id)")
     }
 
     /// 写真（JPEG）を上げる。戻りは本文に書く相対 URL（/api/photo/kakera/...）。Web 版と同じ multipart の形

@@ -86,28 +86,14 @@ final class MinatoMaterials {
         await load(target)
     }
 
-    // MARK: その日の一行（天気・気温・歩数）
+    // MARK: その日の一行（歩数）
 
-    /// 例「霧雨　15.2℃ / 6℃　19,138歩」。どれも無ければ nil
+    /// 例「19,138歩」。無ければ nil。
+    /// 天気・気温は出さない（かけら帳1日のページ設計・2026-11-28 啓輔さん）。港の天気の材料はそのまま「思い出す材料」に残る
     var daySummary: String? {
-        var parts: [String] = []
-        if let w = groups.first(where: { $0.source == "weather" })?.items.first {
-            let label = w.title.split(separator: "・").first.map(String.init)
-            var s = label ?? ""
-            if let hi = w.detail["temperature_max"]?.number, let lo = w.detail["temperature_min"]?.number {
-                s += (s.isEmpty ? "" : "　") + "\(Self.temp(hi)) / \(Self.temp(lo))"
-            }
-            if !s.isEmpty { parts.append(s) }
-        }
-        if let day = groups.first(where: { $0.source == "health" })?.items.first(where: { $0.detail["kind"]?.string == "day" }),
-           let steps = day.detail["metrics"]?.array.first(where: { $0["metric"]?.string == "steps" })?["value"]?.number {
-            parts.append("\(Self.grouped(Int(steps.rounded())))歩")
-        }
-        return parts.isEmpty ? nil : parts.joined(separator: "　")
-    }
-
-    private static func temp(_ v: Double) -> String {
-        v == v.rounded() ? "\(Int(v))℃" : String(format: "%.1f℃", v)
+        guard let day = groups.first(where: { $0.source == "health" })?.items.first(where: { $0.detail["kind"]?.string == "day" }),
+              let steps = day.detail["metrics"]?.array.first(where: { $0["metric"]?.string == "steps" })?["value"]?.number else { return nil }
+        return "\(Self.grouped(Int(steps.rounded())))歩"
     }
 
     private static func grouped(_ n: Int) -> String {

@@ -1,14 +1,31 @@
 import Photos
 import SwiftUI
 
-/// 日ごとの画面: 日付を左右で移る（既定は今日）。その日のかけら（時刻順・罫で区切った行）と、下に「思い出す材料」
-/// （写真・行った場所・港の材料を、見出しと罫の行の塊で）。見た目は Web 版の書く側（.topbar・.page-date・.frag-list）
+/// 日ごとの画面（1日1ページの手帳・かけら帳1日のページ設計）: 日付を左右で移る（既定は今日）。並びは
+/// 日付 → 気分のハンコ → きょうの一覧（かけら＋場所を時刻順・左に縦線）→ 入力欄 → 思い出す材料（写真・行った場所・港の材料）→ 書く。
+/// 見た目は Web 版の書く側（.topbar・.page-date・.frag-list）。API は Web と同じ（/api/kakera・/api/day/:date・/api/place）
 struct DayView: View {
     @State private var day = JST.todayKey
     @State private var kakera: [Kakera] = []
     @State private var cards: LinkCards = [:]
     @State private var kakeraError: String?
     @State private var loadedKakera = false
+    /// 気分（押していない日は nil）。日を移ったらすぐ外し、読めたらその日のものを出す
+    @State private var kibun: Kibun?
+    @State private var basho: [Basho] = []
+    /// 気分・場所が読めなかったとき（かけらは読めていることがある）
+    @State private var dayError: String?
+    /// 気分・場所を読み終えた日（違う日のハンコを押させない）
+    @State private var loadedDay: String?
+    @State private var entryKind: EntryKind = .kakera
+    @State private var entryAt = Date()
+    @State private var entryText = ""
+    @State private var entryDay: String?
+    @State private var adding = false
+    /// 入力欄に書いている間は「書く」の帯を出さない（キーボードの上に乗って欄を隠すので）
+    @FocusState private var entryFocused: Bool
+    /// × で消すかけら（念押しのあと消す）
+    @State private var pendingDelete: Kakera?
     @State private var photos = PhotoMaterials()
     @State private var places = PlaceMaterials()
     @State private var minato = MinatoMaterials()
@@ -29,7 +46,12 @@ struct DayView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     dateHeader
-                    kakeraSection
+                    KibunStamps(selected: kibun, enabled: API.shared.isConfigured(.kakera) && loadedDay == day) { tapKibun($0) }
+                    timelineSection
+                    if API.shared.isConfigured(.kakera) {
+                        EntryBox(kind: $entryKind, at: $entryAt, text: $entryText, range: DayPage.entryRange(day: day),
+                                 adding: adding, enabled: loadedKakera && loadedDay == day, focused: $entryFocused) { addEntry() }
+                    }
                     MaterialsHeader(minato: minato, canCollect: API.shared.isConfigured(.minato)) {
                         Task { await minato.collectNow() }
                     }
@@ -49,7 +71,8 @@ struct DayView: View {
             })
             .toolbar(.hidden, for: .navigationBar)
             .safeAreaInset(edge: .top, spacing: 0) { topbar }
-            .safeAreaInset(edge: .bottom, spacing: 0) { writeBar }
+            .scrollDismissesKeyboard(.interactively)
+            .safeAreaInset(edge: .bottom, spacing: 0) { if !entryFocused { writeBar } }
             .overlay {
                 if let busy {
                     HStack(spacing: 10) { ProgressView(); Text(busy).font(Theme.gothic(13)).foregroundStyle(Theme.ink) }
@@ -59,6 +82,7 @@ struct DayView: View {
                 }
             }
             .task(id: "\(day)#\(configVersion)") { await reload() }
+            .onChange(of: day) { _, _ in kibun = nil; loadedDay = nil }
             .onChange(of: scenePhase) { _, p in
                 if p == .active {
                     photos.load(day)
@@ -84,6 +108,11 @@ struct DayView: View {
                 }
             }
             #endif
+            .confirmationDialog("このかけらを消しますか（元に戻せません）",
+                                isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }),
+                                titleVisibility: .visible, presenting: pendingDelete) { k in
+                Button("消す", role: .destructive) { removeKakera(k) }
+            }
             .alert("うまくいきませんでした", isPresented: Binding(get: { alert != nil }, set: { if !$0 { alert = nil } })) {
                 Button("OK", role: .cancel) {}
             } message: {
@@ -124,7 +153,7 @@ struct DayView: View {
 
     // MARK: 日付（.page-date と .page-sub）
 
-    /// 等幅の日付と、その下にその日の天気・気温・歩数（港の weather・health。無ければ出さない）
+    /// 等幅の日付と、その下にその日の歩数（港の health。無ければ出さない）。天気は出さない（2026-11-28）
     private var dateHeader: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .center, spacing: 6) {
@@ -161,18 +190,21 @@ struct DayView: View {
         day = next
     }
 
-    // MARK: かけら
+    // MARK: きょうの一覧（かけら＋場所を時刻順）
+
+    private var timeline: [TimelineItem] { DayPage.merge(kakera: kakera, basho: basho) }
 
     @ViewBuilder
-    private var kakeraSection: some View {
-        MajorHead(title: "かけら", count: kakera.count, top: 32) {
+    private var timelineSection: some View {
+        let items = timeline
+        MajorHead(title: isToday ? "きょう" : "この日", count: items.count, top: 28) {
             // Web の「かたちにする」（.link-btn・黒の文字だけ）。かけらたちから選んで並べる（ComposeScreen）
             Button("かたちにする") { web = .compose }
                 .buttonStyle(LinkButtonStyle())
                 .disabled(!API.shared.isConfigured(.kakera))
                 .accessibilityIdentifier("open-compose")
         }
-            .padding(.bottom, kakera.isEmpty ? 10 : 0)
+            .padding(.bottom, items.isEmpty ? 10 : 0)
         if !API.shared.isConfigured(.kakera) {
             VStack(alignment: .leading, spacing: 8) {
                 Text("かけら帳につなぐサービストークンが入っていません。").font(Theme.gothic(14)).foregroundStyle(Theme.ink)
@@ -180,16 +212,107 @@ struct DayView: View {
             }
         } else if let kakeraError {
             Text(kakeraError).font(Theme.gothic(13)).foregroundStyle(Theme.accent)
-        } else if loadedKakera && kakera.isEmpty {
-            Text("この日のかけらはまだありません").font(Theme.gothic(14)).foregroundStyle(Theme.muted)
+        } else if loadedKakera && items.isEmpty {
+            Text("この日の記録はまだありません").font(Theme.gothic(14)).foregroundStyle(Theme.muted)
                 .padding(.vertical, 6)
         }
-        // 行を押すと直す画面。⚠️ Button にすると中のリンク・リンクカードが押せないので、行は onTapGesture で開く
-        ForEach(kakera) { k in
-            KakeraRow(kakera: k, cards: cards)
+        if let dayError {
+            Text(dayError).font(Theme.gothic(12)).foregroundStyle(Theme.accent).padding(.vertical, 4)
+        }
+        // かけらの行を押すと直す画面。⚠️ Button にすると中のリンク・リンクカードが押せないので、行は onTapGesture で開く
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(items) { item in
+                row(item)
+                    .ruledRow(first: item.id == items.first?.id)
+            }
+        }
+        .modifier(TimelineRail())
+    }
+
+    @ViewBuilder
+    private func row(_ item: TimelineItem) -> some View {
+        switch item {
+        case .kakera(let k):
+            TimelineRow(item: item, cards: cards) { pendingDelete = k }
                 .onTapGesture { draft = .edit(k) }
                 .accessibilityAddTraits(.isButton)
-                .ruledRow(first: k.id == kakera.first?.id, last: k.id == kakera.last?.id)
+        case .basho(let b):
+            TimelineRow(item: item, cards: cards) { removeBasho(b) }
+        }
+    }
+
+    // MARK: 気分・追加・削除
+
+    /// 押した気分を付ける。同じものをもう一度押すと外す。先に画面を変え、失敗したら戻す
+    private func tapKibun(_ k: Kibun) {
+        let target = day
+        let before = kibun
+        let next: Kibun? = before == k ? nil : k
+        kibun = next
+        Task {
+            do {
+                let saved = try await API.shared.setKibun(next, on: target)
+                if target == day { kibun = saved }
+            } catch {
+                if target == day { kibun = before }
+                alert = "気分を残せませんでした: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    /// 入力欄の追加。かけらは本文そのまま POST /api/kakera、場所は端末で座標を引いてから POST /api/place
+    private func addEntry() {
+        let target = day
+        let text = entryText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, !adding else { return }
+        let range = DayPage.entryRange(day: target)
+        let at = min(max(entryAt, range.lowerBound), range.upperBound)
+        let kind = entryKind
+        adding = true
+        Task {
+            defer { adding = false }
+            do {
+                switch kind {
+                case .kakera:
+                    let k = try await API.shared.createKakera(id: ULID.make(), body: text, writtenAt: JST.writtenAt(at))
+                    if target == day { kakera.append(k) }
+                case .basho:
+                    let name = text.replacingOccurrences(of: "\n", with: " ")
+                    let coordinate = await BashoGeocoder.coordinate(for: name)
+                    let b = try await API.shared.createBasho(id: ULID.make(), at: JST.writtenAt(at), name: name, coordinate: coordinate)
+                    if target == day { basho.append(b) }
+                    if coordinate == nil { Toast.shared.say("位置は見つかりませんでした（名前だけ残しました）") }
+                }
+                guard target == day else { return }
+                entryText = ""
+                entryAt = DayPage.defaultEntryDate(day: day, items: timeline)
+            } catch {
+                alert = "追加できませんでした: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    /// かけらの ×（念押しのあと）。直す画面の「消す」と同じ DELETE /api/kakera/:id
+    private func removeKakera(_ k: Kakera) {
+        Task {
+            do {
+                try await API.shared.deleteKakera(id: k.id)
+                kakera.removeAll { $0.id == k.id }
+            } catch {
+                alert = "消せませんでした: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    /// 場所の ×（念押しなしで消す）
+    private func removeBasho(_ b: Basho) {
+        Task {
+            do {
+                try await API.shared.deleteBasho(id: b.id)
+                basho.removeAll { $0.id == b.id }
+            } catch {
+                alert = "消せませんでした: \(error.localizedDescription)"
+            }
         }
     }
 
@@ -244,14 +367,31 @@ struct DayView: View {
         photos.load(target)
         places.load(day: target, assets: photos.assets)
         async let k: Result<(kakera: [Kakera], cards: LinkCards), Error> = capture { try await API.shared.kakera(on: target) }
+        async let b: Result<[Basho], Error> = capture { try await API.shared.basho(on: target) }
+        async let f: Result<Kibun?, Error> = capture { try await API.shared.kibun(on: target) }
         async let m: Void = minato.load(target)
-        let (kr, _) = await (k, m)
+        let (kr, br, fr, _) = await (k, b, f, m)
         guard target == day else { return } // 読み込み中に日付が変わった
         switch kr {
         case .success(let r): kakera = r.kakera; cards = r.cards; kakeraError = nil
         case .failure(let e): kakera = []; cards = [:]; kakeraError = API.shared.isConfigured(.kakera) ? e.localizedDescription : nil
         }
         loadedKakera = true
+        let configured = API.shared.isConfigured(.kakera)
+        switch (br, fr) {
+        case (.success(let places), .success(let mood)):
+            basho = places; kibun = mood; dayError = nil
+        case (.failure(let e), _), (_, .failure(let e)):
+            basho = (try? br.get()) ?? []
+            kibun = (try? fr.get()) ?? nil
+            dayError = configured && kakeraError == nil ? "気分・場所を読めませんでした（\(e.localizedDescription)）" : nil
+        }
+        loadedDay = target
+        // 入力欄の時刻は日を移ったときだけ初期値に戻す（引っぱって読み直しても、選んだ時刻は動かさない）
+        if entryDay != target {
+            entryDay = target
+            entryAt = DayPage.defaultEntryDate(day: target, items: timeline)
+        }
     }
 
     private func capture<T>(_ f: () async throws -> T) async -> Result<T, Error> {
@@ -298,32 +438,5 @@ struct DayView: View {
     /// 地名を本文にした書きかけ。時刻はその場所の最初の一枚
     private func makeFromPlace(_ p: Place) {
         draft = .new(body: p.name + "\n", at: p.firstAt, materialKey: p.markKey)
-    }
-}
-
-/// かけらの一行（.frag-row: 本文が左で幅いっぱい・全文、時刻は灰 11pt の等幅で右。gap 10・上下 14）。
-/// 本文は Web の RichText と同じ規則で描く（写真は幅いっぱい・行として独立した URL はリンクカード）。
-/// Web の流れにはかたち入りのかけらは出ないが、iOS の日の画面は全部出すので、時刻の下に灰の等幅で小さく「かたち」と添える
-struct KakeraRow: View {
-    let kakera: Kakera
-    let cards: LinkCards
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            RichTextView(kakera.body, cards: cards)
-            VStack(alignment: .trailing, spacing: 3) {
-                Text(JST.time(kakera.writtenDate))
-                    .font(Theme.mono(11))
-                    .foregroundStyle(Theme.muted)
-                if kakera.katachiId != nil {
-                    Text("かたち").font(Theme.mono(9.5)).foregroundStyle(Theme.muted.opacity(0.8))
-                }
-            }
-            .padding(.top, 4)
-            .fixedSize()
-        }
-        .padding(.vertical, 14).padding(.horizontal, 2)
-        .frame(minHeight: 44)
-        .contentShape(Rectangle())
     }
 }
